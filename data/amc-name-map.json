@@ -1,0 +1,282 @@
+[
+  {
+    "overviewName": "HDFC Mutual Fund",
+    "sheetName": "HDFC MF",
+    "slug": "hdfc-mutual-fund"
+  },
+  {
+    "overviewName": "ICICI Prudential Mutual Fund",
+    "sheetName": "ICICI Pru MF",
+    "slug": "icici-prudential-mutual-fund"
+  },
+  {
+    "overviewName": "SBI Mutual Fund",
+    "sheetName": "SBI MF",
+    "slug": "sbi-mutual-fund"
+  },
+  {
+    "overviewName": "Nippon India Mutual Fund",
+    "sheetName": "Nippon India MF",
+    "slug": "nippon-india-mutual-fund"
+  },
+  {
+    "overviewName": "Kotak Mahindra Mutual Fund",
+    "sheetName": "Kotak MF",
+    "slug": "kotak-mahindra-mutual-fund"
+  },
+  {
+    "overviewName": "Axis Mutual Fund",
+    "sheetName": "Axis MF",
+    "slug": "axis-mutual-fund"
+  },
+  {
+    "overviewName": "Mirae Asset Mutual Fund",
+    "sheetName": "Mirae MF",
+    "slug": "mirae-asset-mutual-fund"
+  },
+  {
+    "overviewName": "PPFAS Mutual Fund",
+    "sheetName": "PPFAS MF",
+    "slug": "ppfas-mutual-fund"
+  },
+  {
+    "overviewName": "Aditya Birla Sun Life Mutual Fund",
+    "sheetName": "Aditya Birla SL MF",
+    "slug": "aditya-birla-sun-life-mutual-fund"
+  },
+  {
+    "overviewName": "DSP Mutual Fund",
+    "sheetName": "DSP MF",
+    "slug": "dsp-mutual-fund"
+  },
+  {
+    "overviewName": "Franklin Templeton Mutual Fund",
+    "sheetName": "Franklin Templeton MF",
+    "slug": "franklin-templeton-mutual-fund"
+  },
+  {
+    "overviewName": "Canara Robeco Mutual Fund",
+    "sheetName": "Canara Robeco MF",
+    "slug": "canara-robeco-mutual-fund"
+  },
+  {
+    "overviewName": "Motilal Oswal Mutual Fund",
+    "sheetName": "Motilal Oswal MF",
+    "slug": "motilal-oswal-mutual-fund"
+  },
+  {
+    "overviewName": "UTI Mutual Fund",
+    "sheetName": "UTI MF",
+    "slug": "uti-mutual-fund"
+  },
+  {
+    "overviewName": "Quant Mutual Fund",
+    "sheetName": "Quant MF",
+    "slug": "quant-mutual-fund"
+  },
+  {
+    "overviewName": "Bandhan Mutual Fund",
+    "sheetName": "Bandhan MF",
+    "slug": "bandhan-mutual-fund"
+  },
+  {
+    "overviewName": "Invesco Mutual Fund",
+    "sheetName": "Invesco MF",
+    "slug": "invesco-mutual-fund"
+  },
+  {
+    "overviewName": "Tata Mutual Fund",
+    "sheetName": "Tata MF",
+    "slug": "tata-mutual-fund"
+  },
+  {
+    "overviewName": "HSBC Mutual Fund",
+    "sheetName": "HSBC MF",
+    "slug": "hsbc-mutual-fund"
+  },
+  {
+    "overviewName": "Sundaram Mutual Fund",
+    "sheetName": "Sundaram MF",
+    "slug": "sundaram-mutual-fund"
+  },
+  {
+    "overviewName": "Edelweiss Mutual Fund",
+    "sheetName": "Edelweiss MF",
+    "slug": "edelweiss-mutual-fund"
+  },
+  {
+    "overviewName": "Mahindra Manulife Mutual Fund",
+    "sheetName": "Mahindra Manulife MF",
+    "slug": "mahindra-manulife-mutual-fund"
+  },
+  {
+    "overviewName": "WhiteOak Capital Mutual Fund",
+    "sheetName": "WhiteOak Capital MF",
+    "slug": "whiteoak-capital-mutual-fund"
+  },
+  {
+    "overviewName": "Baroda BNP Paribas Mutual Fund",
+    "sheetName": "Baroda BNP Paribas",
+    "slug": "baroda-bnp-paribas-mutual-fund"
+  },
+  {
+    "overviewName": "PGIM India Mutual Fund",
+    "sheetName": "PGIM India MF",
+    "slug": "pgim-india-mutual-fund"
+  },
+  {
+    "overviewName": "Bajaj Finserv Mutual Fund",
+    "sheetName": "Bajaj Finserv MF",
+    "slug": "bajaj-finserv-mutual-fund"
+  },
+  {
+    "overviewName": "LIC Mutual Fund",
+    "sheetName": "LIC MF",
+    "slug": "lic-mutual-fund"
+  },
+  {
+    "overviewName": "Union Mutual Fund",
+    "sheetName": "Union MF",
+    "slug": "union-mutual-fund"
+  },
+  {
+    "overviewName": "Helios Mutual Fund",
+    "sheetName": "Helios MF",
+    "slug": "helios-mutual-fund"
+  },
+  {
+    "overviewName": "ITI Mutual Fund",
+    "sheetName": "ITI MF",
+    "slug": "iti-mutual-fund"
+  },
+  {
+    "overviewName": "Bank of India Mutual Fund",
+    "sheetName": "Bank of India MF",
+    "slug": "bank-of-india-mutual-fund"
+  },
+  {
+    "overviewName": "360 ONE Mutual Fund",
+    "sheetName": "360 ONE",
+    "slug": "360-one-mutual-fund"
+  },
+  {
+    "overviewName": "JM Financial Mutual Fund",
+    "sheetName": "JM MF",
+    "slug": "jm-financial-mutual-fund"
+  },
+  {
+    "overviewName": "Abakkus Mutual Fund",
+    "sheetName": "Abakkus MF",
+    "slug": "abakkus-mutual-fund"
+  },
+  {
+    "overviewName": "Trust Mutual Fund",
+    "sheetName": "Trust MF",
+    "slug": "trust-mutual-fund"
+  },
+  {
+    "overviewName": "Old Bridge Mutual Fund",
+    "sheetName": "Old Bridge MF",
+    "slug": "old-bridge-mutual-fund"
+  },
+  {
+    "overviewName": "Jio BlackRock Mutual Fund",
+    "sheetName": "Jio BlackRock MF",
+    "slug": "jio-blackrock-mutual-fund"
+  },
+  {
+    "overviewName": "NJ Mutual Fund",
+    "sheetName": "NJ MF",
+    "slug": "nj-mutual-fund"
+  },
+  {
+    "overviewName": "Samco Mutual Fund",
+    "sheetName": "Samco MF",
+    "slug": "samco-mutual-fund"
+  },
+  {
+    "overviewName": "Quantum Mutual Fund",
+    "sheetName": "Quantum MF",
+    "slug": "quantum-mutual-fund"
+  },
+  {
+    "overviewName": "iSIF",
+    "sheetName": "iSIF",
+    "slug": "isif"
+  },
+  {
+    "overviewName": "Groww Mutual Fund",
+    "sheetName": "Groww MF",
+    "slug": "groww-mutual-fund"
+  },
+  {
+    "overviewName": "Taurus Mutual Fund",
+    "sheetName": "Taurus MF",
+    "slug": "taurus-mutual-fund"
+  },
+  {
+    "overviewName": "Quant SIF",
+    "sheetName": "QSIF",
+    "slug": "quant-sif"
+  },
+  {
+    "overviewName": "Navi Mutual Fund",
+    "sheetName": "Navi MF",
+    "slug": "navi-mutual-fund"
+  },
+  {
+    "overviewName": "Capitalmind Mutual Fund",
+    "sheetName": "Capitalmind MF",
+    "slug": "capitalmind-mutual-fund"
+  },
+  {
+    "overviewName": "Diviniti SIF",
+    "sheetName": "Diviniti SIF",
+    "slug": "diviniti-sif"
+  },
+  {
+    "overviewName": "Shriram Mutual Fund",
+    "sheetName": "Shriram MF",
+    "slug": "shriram-mutual-fund"
+  },
+  {
+    "overviewName": "The Wealth Company Mutual Fund",
+    "sheetName": "The Wealth Co. MF",
+    "slug": "the-wealth-company-mutual-fund"
+  },
+  {
+    "overviewName": "DynaSIF",
+    "sheetName": "DynaSIF",
+    "slug": "dynasif"
+  },
+  {
+    "overviewName": "Zerodha Mutual Fund",
+    "sheetName": "Zerodha MF",
+    "slug": "zerodha-mutual-fund"
+  },
+  {
+    "overviewName": "Titanium SIF",
+    "sheetName": "Titanium SIF",
+    "slug": "titanium-sif"
+  },
+  {
+    "overviewName": "Unifi Mutual Fund",
+    "sheetName": "Unifi MF",
+    "slug": "unifi-mutual-fund"
+  },
+  {
+    "overviewName": "Arthaya SIF",
+    "sheetName": "Arthaya SIF",
+    "slug": "arthaya-sif"
+  },
+  {
+    "overviewName": "Arudha SIF",
+    "sheetName": "Arudha SIF",
+    "slug": "arudha-sif"
+  },
+  {
+    "overviewName": "WSIF",
+    "sheetName": "WSIF",
+    "slug": "wsif"
+  }
+]
