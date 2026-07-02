@@ -94,9 +94,13 @@ Visit `http://localhost:3000` for the dashboard and `http://localhost:3000/admin
 
 ## Deploying to Vercel
 
-1. Push this repo to GitHub and import it into Vercel.
+This repo is connected to Vercel via GitHub — pushes to `main` deploy automatically. To set this up
+from scratch on a new project:
+
+1. Push this repo to GitHub and connect it under the Vercel project's Settings → Git.
 2. Add the environment variables from `.env.example` (`DATABASE_URL`, `ADMIN_SECRET`,
-   `DHAN_CLIENT_ID`, `CRON_SECRET`) in the Vercel project settings.
+   `DHAN_CLIENT_ID`, `CRON_SECRET`) in the Vercel project settings. `DATABASE_URL` is set
+   automatically if you provision Postgres via Vercel's Neon marketplace integration.
 3. Deploy. `vercel.json` configures a daily cron (`/api/cron/daily-snapshot`) — Vercel automatically
    sends `CRON_SECRET` as a bearer token to authenticate it.
 4. After the first deploy, run the import script locally against your production `DATABASE_URL` (or
