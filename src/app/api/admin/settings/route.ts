@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { withAdminAuth } from "@/lib/api/with-admin-auth";
+import { withErrorHandling } from "@/lib/api/with-error-handling";
 import { getDhanTokenStatus, setDhanToken } from "@/lib/dhan/token";
 import { invalidateLiveAumCache } from "@/lib/aum/cache";
 
-export const GET = withAdminAuth(async () => {
+export const GET = withErrorHandling(async () => {
   const status = await getDhanTokenStatus();
   return NextResponse.json(status);
 });
 
-export const POST = withAdminAuth(async (request: Request) => {
+export const POST = withErrorHandling(async (request: Request) => {
   const body = await request.json();
   const token = typeof body?.dhanAccessToken === "string" ? body.dhanAccessToken.trim() : "";
 

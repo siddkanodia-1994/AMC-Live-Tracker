@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { adminFetch } from "@/lib/admin-client";
 import { formatRelativeTime } from "@/lib/utils/format";
 
 interface TokenStatus {
@@ -13,23 +12,23 @@ interface TokenStatus {
   updatedAt: string | null;
 }
 
-export function SettingsForm({ secret }: { secret: string }) {
+export function SettingsForm() {
   const [status, setStatus] = useState<TokenStatus | null>(null);
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    adminFetch("/api/admin/settings", secret)
+    fetch("/api/admin/settings")
       .then((res) => res.json())
       .then(setStatus)
       .catch(() => toast.error("Failed to load DHAN token status"));
-  }, [secret]);
+  }, []);
 
   async function handleSave() {
     if (!token.trim()) return;
     setSaving(true);
     try {
-      const res = await adminFetch("/api/admin/settings", secret, {
+      const res = await fetch("/api/admin/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dhanAccessToken: token.trim() }),
