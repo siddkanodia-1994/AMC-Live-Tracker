@@ -20,3 +20,11 @@ export function isDebtInstrument(sector: string, companyName: string): boolean {
 
 // Standard ISIN shape: 2-letter country code + 9 alphanumeric + 1 check digit.
 export const ISIN_FORMAT = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
+
+// US-listed equities (ISIN country prefix "US") are priced via Finnhub +
+// USD/INR conversion — scoped to US specifically (not "any foreign holding")
+// since that's what's been validated end-to-end; other countries (Taiwan,
+// Japan, etc.) remain on last-reported value for now.
+export function isUsListedEquityIsin(isin: string): boolean {
+  return ISIN_FORMAT.test(isin) && isin.startsWith("US");
+}

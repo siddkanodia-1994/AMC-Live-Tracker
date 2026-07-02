@@ -3,7 +3,8 @@ import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, holdings, instrumentMap, liveAumDailySnapshot } from "../db/schema";
 import { fetchLtps, segmentKey } from "../dhan/client";
 import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
-import { isDebtInstrument } from "../excel/instrument-classification";
+import { isDebtInstrument, isUsListedEquityIsin } from "../excel/instrument-classification";
+import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
 import { getCachedLiveAum, setCachedLiveAum } from "./cache";
 import { getAverageAumSinceReport } from "./history";
@@ -105,6 +106,10 @@ async function runComputation(): Promise<ComputedLiveAum> {
   }
 
   const ltpResult = await fetchLtps(requests);
+  const [foreignPrices, usdInrRate] = await Promise.all([
+    getAllForeignPrices().catch(() => new Map<string, number>()),
+    getCachedUsdInrRate().catch(() => null),
+  ]);
 
   const holdingsByAmcId = new Map<number, HoldingLiveView[]>();
   const amcResults: AmcLiveAum[] = [];
@@ -127,10 +132,7 @@ async function runComputation(): Promise<ComputedLiveAum> {
 
       if (isDebtInstrument(h.sector, h.companyName)) debtInstrumentCount++;
 
-      if (!h.isPriceable || !h.isin) {
-        priceSource = "not_priceable";
-        liveMarketValueCr = reportedMarketValueCr;
-      } else {
+      if (h.isPriceable && h.isin) {
         totalPriceable++;
         const key = isinToKey.get(h.isin);
         const price = key ? ltpResult.pricesBySecurityId.get(key) : undefined;
@@ -144,6 +146,24 @@ async function runComputation(): Promise<ComputedLiveAum> {
           liveMarketValueCr = reportedMarketValueCr;
           stalePricedCount++;
         }
+      } else if (h.isin && isUsListedEquityIsin(h.isin)) {
+        // US-listed equity: priced via Finnhub (daily-cached, see foreign-pricing.ts)
+        // + USD/INR conversion, independent of DHAN's health.
+        const priceUsd = foreignPrices.get(h.isin);
+        if (priceUsd !== undefined && usdInrRate !== null) {
+          const priceInr = priceUsd * usdInrRate;
+          priceSource = "foreign_live";
+          livePriceInr = priceInr;
+          liveMarketValueCr = (priceInr * Number(h.shares)) / CRORE;
+          livePricedCount++;
+        } else {
+          priceSource = "stale_fallback";
+          liveMarketValueCr = reportedMarketValueCr;
+          stalePricedCount++;
+        }
+      } else {
+        priceSource = "not_priceable";
+        liveMarketValueCr = reportedMarketValueCr;
       }
 
       liveHoldingsSumCr += liveMarketValueCr;

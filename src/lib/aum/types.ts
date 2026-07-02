@@ -1,4 +1,4 @@
-export type PriceSource = "live" | "not_priceable" | "stale_fallback";
+export type PriceSource = "live" | "foreign_live" | "not_priceable" | "stale_fallback";
 
 export interface HoldingLiveView {
   id: number;

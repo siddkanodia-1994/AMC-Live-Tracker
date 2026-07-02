@@ -12,7 +12,9 @@
     "db:push": "dotenv -e .env.local -- drizzle-kit push",
     "import": "dotenv -e .env.local -- tsx scripts/import-excel.ts",
     "sync-instruments": "dotenv -e .env.local -- tsx scripts/sync-instruments.ts",
-    "backfill-history": "dotenv -e .env.local -- tsx scripts/backfill-history.ts"
+    "backfill-history": "dotenv -e .env.local -- tsx scripts/backfill-history.ts",
+    "sync-foreign-instruments": "dotenv -e .env.local -- tsx scripts/sync-foreign-instruments.ts",
+    "refresh-foreign-prices": "dotenv -e .env.local -- tsx scripts/refresh-foreign-prices.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

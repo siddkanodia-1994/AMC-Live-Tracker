@@ -1,0 +1,25 @@
+name: Refresh US-listed holding prices
+
+# Runs once daily, ~2h after US markets close (20:00 UTC in EDT), so that
+# day's close is settled by the time this fetches ~169 quotes at Finnhub's
+# free-tier rate limit (60/min) — takes a few minutes, well beyond what
+# Vercel's serverless functions allow (60s on Hobby), which is why this runs
+# here instead of through Vercel Cron like the daily AUM snapshot does.
+on:
+  schedule:
+    - cron: "0 22 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx tsx scripts/refresh-foreign-prices.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}

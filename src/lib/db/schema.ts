@@ -90,7 +90,28 @@ export const instrumentMap = pgTable("instrument_map", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// Key-value settings: 'dhan_access_token', 'dhan_token_updated_at', 'current_report_period'.
+// ISIN -> Finnhub ticker symbol, for US-listed holdings. Synced rarely
+// (Finnhub's symbol search resolves ISIN -> symbol directly, no manual
+// mapping needed) — mirrors instrument_map's role but for foreign equities.
+export const foreignInstrumentMap = pgTable("foreign_instrument_map", {
+  isin: text("isin").primaryKey(),
+  symbol: text("symbol").notNull(),
+  companyName: text("company_name"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Daily-refreshed USD price cache for US-listed holdings — refreshed once a
+// day (via cron) rather than fetched live per-request, since Finnhub's quote
+// is only as fresh as the last US market close anyway during IST hours.
+export const foreignPriceCache = pgTable("foreign_price_cache", {
+  isin: text("isin").primaryKey(),
+  priceUsd: numeric("price_usd", { precision: 18, scale: 4 }).notNull(),
+  asOfDate: date("as_of_date").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Key-value settings: 'dhan_access_token', 'dhan_token_updated_at',
+// 'current_report_period', 'usd_inr_rate', 'usd_inr_rate_as_of'.
 export const appSettings = pgTable("app_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
