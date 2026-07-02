@@ -3,8 +3,10 @@ import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, holdings, instrumentMap, liveAumDailySnapshot } from "../db/schema";
 import { fetchLtps, segmentKey } from "../dhan/client";
 import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
+import { isDebtInstrument } from "../excel/instrument-classification";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
 import { getCachedLiveAum, setCachedLiveAum } from "./cache";
+import { getAverageAumSinceReport } from "./history";
 import type {
   AmcLiveAum,
   ComputedLiveAum,
@@ -113,6 +115,8 @@ async function runComputation(): Promise<ComputedLiveAum> {
     const amcHoldingRows = holdingRows.filter((h) => h.amcId === period.amcId);
     const holdingViews: HoldingLiveView[] = [];
     let stalePricedCount = 0;
+    let livePricedCount = 0;
+    let debtInstrumentCount = 0;
     let liveHoldingsSumCr = 0;
 
     for (const h of amcHoldingRows) {
@@ -120,6 +124,8 @@ async function runComputation(): Promise<ComputedLiveAum> {
       let priceSource: PriceSource;
       let liveMarketValueCr: number;
       let livePriceInr: number | null = null;
+
+      if (isDebtInstrument(h.sector, h.companyName)) debtInstrumentCount++;
 
       if (!h.isPriceable || !h.isin) {
         priceSource = "not_priceable";
@@ -132,6 +138,7 @@ async function runComputation(): Promise<ComputedLiveAum> {
           priceSource = "live";
           livePriceInr = price;
           liveMarketValueCr = (price * Number(h.shares)) / CRORE;
+          livePricedCount++;
         } else {
           priceSource = "stale_fallback";
           liveMarketValueCr = reportedMarketValueCr;
@@ -176,7 +183,12 @@ async function runComputation(): Promise<ComputedLiveAum> {
       deltaPct,
       residualPlugCr,
       holdingsCount: amcHoldingRows.length,
+      debtInstrumentCount,
+      livePricedCount,
       stalePricedCount,
+      avgLiveAumCr: null,
+      avgVsReportedPct: null,
+      avgWindowDays: 0,
     });
   }
 
@@ -205,6 +217,16 @@ async function runComputation(): Promise<ComputedLiveAum> {
   };
 
   await writeDailySnapshot(snapshot);
+
+  const averages = await getAverageAumSinceReport(reportPeriod).catch(() => new Map());
+  for (const amc of amcResults) {
+    const avg = averages.get(amc.amcId);
+    if (avg) {
+      amc.avgLiveAumCr = avg.avgLiveAumCr;
+      amc.avgWindowDays = avg.daysCount;
+      amc.avgVsReportedPct = amc.reportedAumCr !== 0 ? avg.avgLiveAumCr / amc.reportedAumCr - 1 : null;
+    }
+  }
 
   return { snapshot, holdingsByAmcId };
 }

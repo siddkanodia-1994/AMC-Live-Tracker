@@ -1,6 +1,7 @@
 import type { WorkBook } from "xlsx";
 import { utils } from "xlsx";
 import { assertHeaderRowAt } from "./find-header-row";
+import { ISIN_FORMAT, isDebtInstrument } from "./instrument-classification";
 import type { ParsedAmcSheet, ParsedHolding } from "./types";
 
 const EQUITY_AUM_HEADER_ROW_INDEX = 2; // row 3 (1-based)
@@ -41,20 +42,6 @@ function normalizeIsin(value: unknown): string | null {
   if (value == null || String(value).trim() === "") return null;
   return String(value).trim();
 }
-
-// Certificates of deposit / commercial paper are commonly filed under an
-// issuer's normal sector (e.g. "Bank"), indistinguishable from that issuer's
-// equity shares by sector alone — but their display name carries a maturity
-// date in parentheses (e.g. "ICICI Bank Ltd. (27-Jan-2027)"), the same
-// convention used for G-Sec/T-Bill rows. Never priceable via DHAN's equity feed.
-const FIXED_MATURITY_DATE_SUFFIX = /\(\s*\d{1,2}[-\s][A-Za-z]{3}[-\s]\d{2,4}\s*\)\s*$/;
-
-function looksLikeFixedMaturityDebtInstrument(companyName: string): boolean {
-  return FIXED_MATURITY_DATE_SUFFIX.test(companyName);
-}
-
-// Standard ISIN shape: 2-letter country code + 9 alphanumeric + 1 check digit.
-const ISIN_FORMAT = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
 
 interface RawRow {
   companyName: string;
@@ -183,10 +170,9 @@ export function parseAmcSheet(wb: WorkBook, sheetName: string): ParsedAmcSheet {
       mcapClassification: first.mcapClassification,
       isin,
       isPriceable:
-        first.sector !== "G-Sec" &&
+        !isDebtInstrument(first.sector, first.companyName) &&
         isin.startsWith("IN") &&
-        !isin.startsWith("INF") && // mutual fund unit ISINs, not equities
-        !looksLikeFixedMaturityDebtInstrument(first.companyName),
+        !isin.startsWith("INF"), // mutual fund unit ISINs, not equities
       marketValueCr,
       shares,
       weightPct,

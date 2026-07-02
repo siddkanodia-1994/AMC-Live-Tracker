@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useLiveAum } from "@/hooks/use-live-aum";
-import { AmcCard } from "./amc-card";
+import { AmcTable } from "./amc-table";
 import { AumTrendChart } from "./aum-trend-chart";
+import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,8 +33,7 @@ export function AmcGrid({
   const filteredAmcs = useMemo(() => {
     if (!data) return [];
     const q = query.trim().toLowerCase();
-    const list = q ? data.amcs.filter((a) => a.overviewName.toLowerCase().includes(q)) : data.amcs;
-    return [...list].sort((a, b) => b.liveAumCr - a.liveAumCr);
+    return q ? data.amcs.filter((a) => a.overviewName.toLowerCase().includes(q)) : data.amcs;
   }, [data, query]);
 
   if (error && !data) {
@@ -48,10 +48,9 @@ export function AmcGrid({
 
   if (isLoading && !data) {
     return (
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 9 }).map((_, i) => (
-          <Skeleton key={i} className="h-36 rounded-xl" />
-        ))}
+      <div className="space-y-4">
+        <Skeleton className="h-16 w-full rounded-xl" />
+        <Skeleton className="h-96 w-full rounded-xl" />
       </div>
     );
   }
@@ -64,7 +63,10 @@ export function AmcGrid({
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-sm text-muted-foreground">Total industry live AUM</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm text-muted-foreground">Total industry live AUM</div>
+            <MarketStatusBadge />
+          </div>
           <div className="text-3xl font-semibold tabular-nums">{formatCr(data.totalLiveAumCr)}</div>
           <div className="text-xs text-muted-foreground">
             Reported: {formatCr(data.totalReportedAumCr)} · Updated {formatRelativeTime(data.computedAt)}
@@ -90,10 +92,12 @@ export function AmcGrid({
         </Card>
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {filteredAmcs.map((amc) => (
-          <AmcCard key={amc.amcId} amc={amc} />
-        ))}
+      <div>
+        <p className="mb-2 text-xs text-muted-foreground">
+          &quot;Avg AUM&quot; is the average of daily live AUM since the last reported month closed
+          (May), used to compare against the last officially reported figure.
+        </p>
+        <AmcTable amcs={filteredAmcs} />
       </div>
 
       {filteredAmcs.length === 0 && (

@@ -25,7 +25,12 @@ export interface AmcLiveAum {
   deltaPct: number;
   residualPlugCr: number;
   holdingsCount: number;
+  debtInstrumentCount: number;
+  livePricedCount: number;
   stalePricedCount: number;
+  avgLiveAumCr: number | null;
+  avgVsReportedPct: number | null;
+  avgWindowDays: number;
 }
 
 export type DhanStatus = "ok" | "degraded" | "unavailable";
