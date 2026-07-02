@@ -7,14 +7,19 @@ export const maxDuration = 30;
 // CRON_SECRET is set — this keeps the endpoint from being triggerable by
 // anyone who finds the URL. computeLiveAum's daily-snapshot side effect is
 // idempotent (unique amcId+snapshotDate), so retries/duplicate invocations
-// are harmless.
+// are harmless. Fails closed if CRON_SECRET is missing (e.g. a preview
+// deployment or an accidental env var deletion) rather than silently
+// accepting unauthenticated requests.
 export async function GET(request: Request) {
   const expected = process.env.CRON_SECRET;
-  if (expected) {
-    const authHeader = request.headers.get("authorization");
-    if (authHeader !== `Bearer ${expected}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  if (!expected) {
+    console.error("CRON_SECRET is not configured — refusing to run the daily snapshot");
+    return NextResponse.json({ error: "CRON_SECRET is not configured" }, { status: 500 });
+  }
+
+  const authHeader = request.headers.get("authorization");
+  if (authHeader !== `Bearer ${expected}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {

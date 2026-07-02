@@ -42,6 +42,13 @@ export interface LiveAumSnapshot {
   reportPeriod: string;
   computedAt: string;
   dhanStatus: DhanStatus;
+  // The specific reason the last DHAN call failed (expired token, rate limit,
+  // network error), when known — null if every DHAN call succeeded, or if
+  // dhanStatus reflects only benign per-instrument gaps (e.g. an illiquid
+  // stock DHAN just doesn't have a quote for) rather than a call-level error.
+  // Prefer this over dhanStatus's generic per-state banner text when present,
+  // since it's the true cause rather than a guess.
+  dhanErrorDetail: string | null;
   // De-duplicated by ISIN across all 56 AMCs — NOT a sum of each AMC's
   // holdingsCount, which would count e.g. a stock held by 50 AMCs 50 times.
   // Always industry-wide (not affected by the Overview page's search filter).

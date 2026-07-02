@@ -258,6 +258,7 @@ async function runComputation(): Promise<ComputedLiveAum> {
     reportPeriod,
     computedAt: new Date().toISOString(),
     dhanStatus,
+    dhanErrorDetail: ltpResult.apiError ?? null,
     distinctHoldingsCount: distinctIsinInfo.size,
     distinctDebtInstrumentCount,
     distinctLivePricedCount,

@@ -72,7 +72,13 @@ export function AmcGrid({
 
   if (!data || !industryTotals) return null;
 
-  const statusMessage = DHAN_STATUS_MESSAGE[data.dhanStatus];
+  // Prefer the specific reason the last DHAN call failed (expired token, rate
+  // limit, network error) over the generic per-status guess — the generic
+  // messages exist only for the case where DHAN's call succeeded but some
+  // individual holdings just don't have a quote (no specific cause to report).
+  const statusMessage = data.dhanErrorDetail
+    ? `DHAN pricing issue: ${data.dhanErrorDetail}`
+    : DHAN_STATUS_MESSAGE[data.dhanStatus];
 
   return (
     <div className="space-y-6">
