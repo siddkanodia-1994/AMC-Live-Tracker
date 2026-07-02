@@ -42,6 +42,12 @@ export interface LiveAumSnapshot {
   reportPeriod: string;
   computedAt: string;
   dhanStatus: DhanStatus;
+  // De-duplicated by ISIN across all 56 AMCs — NOT a sum of each AMC's
+  // holdingsCount, which would count e.g. a stock held by 50 AMCs 50 times.
+  // Always industry-wide (not affected by the Overview page's search filter).
+  distinctHoldingsCount: number;
+  distinctDebtInstrumentCount: number;
+  distinctLivePricedCount: number;
 }
 
 export interface ComputedLiveAum {

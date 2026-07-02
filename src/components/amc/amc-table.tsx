@@ -45,7 +45,17 @@ function SortableHead({
   );
 }
 
-export function AmcTable({ amcs }: { amcs: AmcLiveAum[] }) {
+export function AmcTable({
+  amcs,
+  distinctHoldingsCount,
+  distinctDebtInstrumentCount,
+  distinctLivePricedCount,
+}: {
+  amcs: AmcLiveAum[];
+  distinctHoldingsCount: number;
+  distinctDebtInstrumentCount: number;
+  distinctLivePricedCount: number;
+}) {
   const [sortKey, setSortKey] = useState<SortKey>("liveAumCr");
   const [sortDesc, setSortDesc] = useState(true);
 
@@ -73,9 +83,6 @@ export function AmcTable({ amcs }: { amcs: AmcLiveAum[] }) {
   const totalAvgAumCr = amcs.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
   const totalReportedAumCr = amcs.reduce((sum, a) => sum + a.reportedAumCr, 0);
   const totalAvgVsReportedPct = totalReportedAumCr !== 0 ? totalAvgAumCr / totalReportedAumCr - 1 : null;
-  const totalHoldings = amcs.reduce((sum, a) => sum + a.holdingsCount, 0);
-  const totalDebt = amcs.reduce((sum, a) => sum + a.debtInstrumentCount, 0);
-  const totalLivePriced = amcs.reduce((sum, a) => sum + a.livePricedCount, 0);
 
   return (
     <div className="overflow-x-auto rounded-lg border">
@@ -163,9 +170,15 @@ export function AmcTable({ amcs }: { amcs: AmcLiveAum[] }) {
                 "—"
               )}
             </TableCell>
-            <TableCell className="text-right tabular-nums">{totalHoldings}</TableCell>
-            <TableCell className="text-right tabular-nums">{totalDebt}</TableCell>
-            <TableCell className="text-right tabular-nums">{totalLivePriced}</TableCell>
+            <TableCell className="text-right tabular-nums" title="Distinct stocks held anywhere in the industry — not a sum of each AMC's count">
+              {distinctHoldingsCount}
+            </TableCell>
+            <TableCell className="text-right tabular-nums" title="Distinct debt instruments (G-Secs, bank CDs/CPs) across the industry">
+              {distinctDebtInstrumentCount}
+            </TableCell>
+            <TableCell className="text-right tabular-nums" title="Distinct stocks currently showing a live price, industry-wide">
+              {distinctLivePricedCount}
+            </TableCell>
           </TableRow>
         </TableFooter>
       </Table>

@@ -116,6 +116,13 @@ async function runComputation(): Promise<ComputedLiveAum> {
   let totalFailed = 0;
   let totalPriceable = 0;
 
+  // De-duplicated by ISIN across every AMC, for industry-wide totals — a
+  // stock held by 50 of 56 AMCs is one distinct holding, not 50. Classification
+  // (debt/live) is the same regardless of which AMC holds it, since pricing is
+  // fetched once per ISIN and reused everywhere it appears (see priceableIsins
+  // above), so "first write wins" here is never actually a conflict in practice.
+  const distinctIsinInfo = new Map<string, { isDebt: boolean; isLive: boolean }>();
+
   for (const period of periodRows) {
     const amcHoldingRows = holdingRows.filter((h) => h.amcId === period.amcId);
     const holdingViews: HoldingLiveView[] = [];
@@ -164,6 +171,16 @@ async function runComputation(): Promise<ComputedLiveAum> {
       } else {
         priceSource = "not_priceable";
         liveMarketValueCr = reportedMarketValueCr;
+      }
+
+      if (h.isin) {
+        const isDebt = isDebtInstrument(h.sector, h.companyName);
+        const isLive = priceSource === "live" || priceSource === "foreign_live";
+        const existing = distinctIsinInfo.get(h.isin);
+        distinctIsinInfo.set(h.isin, {
+          isDebt: (existing?.isDebt ?? false) || isDebt,
+          isLive: (existing?.isLive ?? false) || isLive,
+        });
       }
 
       liveHoldingsSumCr += liveMarketValueCr;
@@ -227,6 +244,13 @@ async function runComputation(): Promise<ComputedLiveAum> {
     dhanStatus = "ok";
   }
 
+  let distinctDebtInstrumentCount = 0;
+  let distinctLivePricedCount = 0;
+  for (const info of distinctIsinInfo.values()) {
+    if (info.isDebt) distinctDebtInstrumentCount++;
+    if (info.isLive) distinctLivePricedCount++;
+  }
+
   const snapshot: LiveAumSnapshot = {
     amcs: amcResults,
     totalLiveAumCr: amcResults.reduce((sum, a) => sum + a.liveAumCr, 0),
@@ -234,6 +258,9 @@ async function runComputation(): Promise<ComputedLiveAum> {
     reportPeriod,
     computedAt: new Date().toISOString(),
     dhanStatus,
+    distinctHoldingsCount: distinctIsinInfo.size,
+    distinctDebtInstrumentCount,
+    distinctLivePricedCount,
   };
 
   await writeDailySnapshot(snapshot);
