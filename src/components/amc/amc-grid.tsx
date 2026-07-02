@@ -3,10 +3,13 @@
 import { useMemo, useState } from "react";
 import { useLiveAum } from "@/hooks/use-live-aum";
 import { AmcCard } from "./amc-card";
+import { AumTrendChart } from "./aum-trend-chart";
 import { SearchBar } from "@/components/layout/search-bar";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCr, formatRelativeTime } from "@/lib/utils/format";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
+import type { AumHistoryPoint } from "@/lib/aum/history";
 
 const DHAN_STATUS_MESSAGE: Record<LiveAumSnapshot["dhanStatus"], string | null> = {
   ok: null,
@@ -16,7 +19,13 @@ const DHAN_STATUS_MESSAGE: Record<LiveAumSnapshot["dhanStatus"], string | null> 
     "DHAN pricing is unavailable — every AMC below is showing last reported values. Check the DHAN token in Admin settings.",
 };
 
-export function AmcGrid({ initialData }: { initialData?: LiveAumSnapshot }) {
+export function AmcGrid({
+  initialData,
+  history = [],
+}: {
+  initialData?: LiveAumSnapshot;
+  history?: AumHistoryPoint[];
+}) {
   const { data, error, isLoading } = useLiveAum(initialData);
   const [query, setQuery] = useState("");
 
@@ -68,6 +77,17 @@ export function AmcGrid({ initialData }: { initialData?: LiveAumSnapshot }) {
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
           {statusMessage}
         </div>
+      )}
+
+      {history.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Industry AUM Trend</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <AumTrendChart data={history} />
+          </CardContent>
+        </Card>
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

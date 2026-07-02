@@ -2,13 +2,24 @@
 
 import { useLiveAumDetail, type AmcDetailResponse } from "@/hooks/use-live-aum-detail";
 import { AumDeltaBadge } from "./aum-delta-badge";
+import { AumTrendChart } from "./aum-trend-chart";
 import { HoldingsTable } from "./holdings-table";
 import { SectorBreakdown } from "./sector-breakdown";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCr, formatRelativeTime } from "@/lib/utils/format";
+import type { AumHistoryPoint } from "@/lib/aum/history";
 
-export function AmcDetailView({ slug, initialData }: { slug: string; initialData?: AmcDetailResponse }) {
+export function AmcDetailView({
+  slug,
+  initialData,
+  history,
+}: {
+  slug: string;
+  initialData?: AmcDetailResponse;
+  history: AumHistoryPoint[];
+}) {
   const { data, error, isLoading } = useLiveAumDetail(slug, initialData);
 
   if (error && !data) {
@@ -48,6 +59,15 @@ export function AmcDetailView({ slug, initialData }: { slug: string; initialData
         <Stat label="Cash & other (fixed)" value={formatCr(amc.residualPlugCr)} />
         <Stat label="Holdings" value={`${amc.holdingsCount}${amc.stalePricedCount > 0 ? ` (${amc.stalePricedCount} stale)` : ""}`} />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>AUM Trend</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <AumTrendChart data={history} />
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="holdings">
         <TabsList>
