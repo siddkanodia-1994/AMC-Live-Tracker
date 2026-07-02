@@ -1,13 +1,19 @@
 name: Refresh US-listed holding prices
 
-# Runs once daily, ~2h after US markets close (20:00 UTC in EDT), so that
-# day's close is settled by the time this fetches ~169 quotes at Finnhub's
-# free-tier rate limit (60/min) — takes a few minutes, well beyond what
-# Vercel's serverless functions allow (60s on Hobby), which is why this runs
-# here instead of through Vercel Cron like the daily AUM snapshot does.
+# Runs twice daily: 3:30 AM IST (22:00 UTC, ~2h after US markets close, so
+# that day's close is settled) and 9:30 AM IST (04:00 UTC, shortly before
+# NSE opens) as a redundancy check in case the first run failed. Both just
+# refetch the same US close price when the earlier run already succeeded —
+# the DB write is idempotent (upsert), so re-running is harmless.
+#
+# This runs via GitHub Actions rather than Vercel Cron because fetching
+# ~169 quotes at Finnhub's free-tier rate limit (60/min) takes a few
+# minutes, longer than Vercel's serverless function timeout allows (60s on
+# Hobby), unlike the daily AUM snapshot which fits comfortably in Vercel Cron.
 on:
   schedule:
     - cron: "0 22 * * *"
+    - cron: "0 4 * * *"
   workflow_dispatch: {}
 
 jobs:
