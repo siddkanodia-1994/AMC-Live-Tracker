@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useLiveAum } from "@/hooks/use-live-aum";
 import { AmcTable } from "./amc-table";
+import { AumDeltaBadge } from "./aum-delta-badge";
 import { AumTrendChart } from "./aum-trend-chart";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { SearchBar } from "@/components/layout/search-bar";
@@ -36,6 +37,20 @@ export function AmcGrid({
     return q ? data.amcs.filter((a) => a.overviewName.toLowerCase().includes(q)) : data.amcs;
   }, [data, query]);
 
+  const industryTotals = useMemo(() => {
+    if (!data) return null;
+    const totalAvgAumCr = data.amcs.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
+    const liveDeltaCr = data.totalLiveAumCr - data.totalReportedAumCr;
+    const avgDeltaCr = totalAvgAumCr - data.totalReportedAumCr;
+    return {
+      totalAvgAumCr,
+      liveDeltaCr,
+      liveDeltaPct: data.totalReportedAumCr !== 0 ? liveDeltaCr / data.totalReportedAumCr : 0,
+      avgDeltaCr,
+      avgDeltaPct: data.totalReportedAumCr !== 0 ? avgDeltaCr / data.totalReportedAumCr : 0,
+    };
+  }, [data]);
+
   if (error && !data) {
     return (
       <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
@@ -55,22 +70,52 @@ export function AmcGrid({
     );
   }
 
-  if (!data) return null;
+  if (!data || !industryTotals) return null;
 
   const statusMessage = DHAN_STATUS_MESSAGE[data.dhanStatus];
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="text-sm text-muted-foreground">Total industry live AUM</div>
-            <MarketStatusBadge />
-          </div>
-          <div className="text-3xl font-semibold tabular-nums">{formatCr(data.totalLiveAumCr)}</div>
-          <div className="text-xs text-muted-foreground">
-            Reported: {formatCr(data.totalReportedAumCr)} · Updated {formatRelativeTime(data.computedAt)}
-          </div>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-sm font-normal text-muted-foreground">
+                  Total industry live AUM
+                </CardTitle>
+                <MarketStatusBadge />
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="text-3xl font-semibold tabular-nums">{formatCr(data.totalLiveAumCr)}</div>
+                <AumDeltaBadge deltaCr={industryTotals.liveDeltaCr} deltaPct={industryTotals.liveDeltaPct} />
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Reported: {formatCr(data.totalReportedAumCr)} · Updated {formatRelativeTime(data.computedAt)}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-normal text-muted-foreground">
+                Average industry AUM since last report
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="text-3xl font-semibold tabular-nums">
+                  {formatCr(industryTotals.totalAvgAumCr)}
+                </div>
+                <AumDeltaBadge deltaCr={industryTotals.avgDeltaCr} deltaPct={industryTotals.avgDeltaPct} />
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Reported: {formatCr(data.totalReportedAumCr)} · Averaged since June 1
+              </div>
+            </CardContent>
+          </Card>
         </div>
         <SearchBar value={query} onChange={setQuery} />
       </div>

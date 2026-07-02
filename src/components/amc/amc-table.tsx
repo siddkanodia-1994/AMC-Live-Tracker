@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { formatCr, formatPct } from "@/lib/utils/format";
 import type { AmcLiveAum } from "@/lib/aum/types";
@@ -69,6 +69,14 @@ export function AmcTable({ amcs }: { amcs: AmcLiveAum[] }) {
 
   const headProps = { sortKey, sortDesc, onToggle: toggleSort };
 
+  const totalLiveAumCr = amcs.reduce((sum, a) => sum + a.liveAumCr, 0);
+  const totalAvgAumCr = amcs.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
+  const totalReportedAumCr = amcs.reduce((sum, a) => sum + a.reportedAumCr, 0);
+  const totalAvgVsReportedPct = totalReportedAumCr !== 0 ? totalAvgAumCr / totalReportedAumCr - 1 : null;
+  const totalHoldings = amcs.reduce((sum, a) => sum + a.holdingsCount, 0);
+  const totalDebt = amcs.reduce((sum, a) => sum + a.debtInstrumentCount, 0);
+  const totalLivePriced = amcs.reduce((sum, a) => sum + a.livePricedCount, 0);
+
   return (
     <div className="overflow-x-auto rounded-lg border">
       <Table>
@@ -134,6 +142,32 @@ export function AmcTable({ amcs }: { amcs: AmcLiveAum[] }) {
             </TableRow>
           ))}
         </TableBody>
+        <TableFooter>
+          <TableRow>
+            <TableCell>Total ({amcs.length} AMCs)</TableCell>
+            <TableCell className="text-right tabular-nums">{formatCr(totalLiveAumCr)}</TableCell>
+            <TableCell className="text-right tabular-nums">{formatCr(totalAvgAumCr)}</TableCell>
+            <TableCell className="text-right tabular-nums">{formatCr(totalReportedAumCr)}</TableCell>
+            <TableCell className="text-right tabular-nums">
+              {totalAvgVsReportedPct !== null ? (
+                <span
+                  className={
+                    totalAvgVsReportedPct >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-red-600 dark:text-red-400"
+                  }
+                >
+                  {formatPct(totalAvgVsReportedPct, { alwaysSign: true })}
+                </span>
+              ) : (
+                "—"
+              )}
+            </TableCell>
+            <TableCell className="text-right tabular-nums">{totalHoldings}</TableCell>
+            <TableCell className="text-right tabular-nums">{totalDebt}</TableCell>
+            <TableCell className="text-right tabular-nums">{totalLivePriced}</TableCell>
+          </TableRow>
+        </TableFooter>
       </Table>
     </div>
   );
