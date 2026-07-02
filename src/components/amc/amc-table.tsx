@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { formatCr, formatPct } from "@/lib/utils/format";
 import type { AmcLiveAum } from "@/lib/aum/types";
 
@@ -73,7 +74,19 @@ export function AmcTable({ amcs }: { amcs: AmcLiveAum[] }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <SortableHead label="AMC" sk="overviewName" {...headProps} />
+            <TableHead>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => toggleSort("overviewName")}
+                  className={`hover:text-foreground ${sortKey === "overviewName" ? "font-medium text-foreground" : ""}`}
+                >
+                  AMC
+                  {sortKey === "overviewName" ? (sortDesc ? " ↓" : " ↑") : ""}
+                </button>
+                <MarketStatusBadge />
+              </div>
+            </TableHead>
             <SortableHead label="Live AUM" sk="liveAumCr" {...headProps} />
             <SortableHead label="Avg AUM" sk="avgLiveAumCr" {...headProps} />
             <SortableHead label="Reported AUM (May)" sk="reportedAumCr" {...headProps} />
