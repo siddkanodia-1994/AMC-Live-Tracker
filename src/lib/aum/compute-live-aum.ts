@@ -278,6 +278,18 @@ async function runComputation(): Promise<ComputedLiveAum> {
   return { snapshot, holdingsByAmcId };
 }
 
+// Singleflight: dedupes concurrent cache-miss/forceRefresh callers within one
+// warm serverless instance so they share one runComputation() (and therefore
+// one DHAN LTP fetch cycle) instead of each independently bursting past
+// DHAN's 1 req/sec limit. A forceRefresh caller intentionally joins an
+// in-flight computation rather than starting a second one — it started at or
+// after this call, so its result is fresh by definition. Does NOT dedupe
+// across separate serverless instances (see cache.ts's upgrade-path comment);
+// every current caller awaits this inside try/catch, so a rejection is always
+// handled — a future fire-and-forget caller could trigger an unhandled
+// rejection warning even when other joiners did handle it.
+let inFlightComputation: Promise<ComputedLiveAum> | null = null;
+
 async function getOrCompute(forceRefresh: boolean | undefined): Promise<ComputedLiveAum> {
   const reportPeriod = await getCurrentReportPeriod();
 
@@ -286,9 +298,18 @@ async function getOrCompute(forceRefresh: boolean | undefined): Promise<Computed
     if (cached) return cached;
   }
 
-  const fresh = await runComputation();
-  setCachedLiveAum(fresh, LIVE_AUM_CACHE_TTL_MS);
-  return fresh;
+  if (inFlightComputation) return inFlightComputation;
+
+  inFlightComputation = runComputation()
+    .then((fresh) => {
+      setCachedLiveAum(fresh, LIVE_AUM_CACHE_TTL_MS);
+      return fresh;
+    })
+    .finally(() => {
+      inFlightComputation = null;
+    });
+
+  return inFlightComputation;
 }
 
 export async function computeLiveAum(options?: { forceRefresh?: boolean }): Promise<LiveAumSnapshot> {
