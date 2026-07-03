@@ -3,7 +3,7 @@ import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, holdings, instrumentMap, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { fetchLtps, segmentKey } from "../dhan/client";
 import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
-import { isDebtInstrument, isUsListedEquityIsin } from "../excel/instrument-classification";
+import { isBankDebtOrRepo, isUsListedEquityIsin } from "../excel/instrument-classification";
 import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
@@ -157,14 +157,22 @@ async function runComputation(): Promise<ComputedLiveAum> {
   let totalPriceable = 0;
 
   // De-duplicated by ISIN across every AMC, for industry-wide totals — a
-  // stock held by 50 of 56 AMCs is one distinct holding, not 50. Classification
-  // (debt/live) is the same regardless of which AMC holds it, since pricing is
+  // stock held by 50 of 56 AMCs is one distinct holding, not 50. Live-pricing
+  // outcome is the same regardless of which AMC holds it, since pricing is
   // fetched once per ISIN and reused everywhere it appears (see priceableIsins
   // above), so "first write wins" here is never actually a conflict in practice.
-  const distinctIsinInfo = new Map<string, { isDebt: boolean; isLive: boolean }>();
+  const distinctIsinInfo = new Map<string, { isLive: boolean }>();
   // Today's live price per ISIN, deduplicated the same way — written once to
   // isin_daily_price after the loop, seeding tomorrow's "1 Day Change" column.
   const todayPriceByIsin = new Map<string, number>();
+  // Distinct debt/repo instruments industry-wide, matching each AMC page's
+  // "Bank Debt & Repo" card classification (not just isDebtInstrument's
+  // narrower G-Sec/dated-CD/CP set). Kept separate from distinctIsinInfo
+  // because repo/cash line items (TREPS, Call Money, CBLO, ...) have no ISIN
+  // and aren't shared securities across AMCs the way a stock ISIN is — each
+  // AMC's own repo position is deduped by its (generic, shared) company name
+  // instead, not folded into the ISIN-keyed "distinct holdings" count.
+  const distinctDebtRepoKeys = new Set<string>();
 
   for (const period of periodRows) {
     const amcHoldingRows = holdingRows.filter((h) => h.amcId === period.amcId);
@@ -180,7 +188,10 @@ async function runComputation(): Promise<ComputedLiveAum> {
       let liveMarketValueCr: number;
       let livePriceInr: number | null = null;
 
-      if (isDebtInstrument(h.sector, h.companyName)) debtInstrumentCount++;
+      if (isBankDebtOrRepo(h.sector, h.companyName)) {
+        debtInstrumentCount++;
+        distinctDebtRepoKeys.add(h.isin ?? h.companyName.trim().toLowerCase());
+      }
 
       if (h.isPriceable && h.isin) {
         totalPriceable++;
@@ -217,11 +228,9 @@ async function runComputation(): Promise<ComputedLiveAum> {
       }
 
       if (h.isin) {
-        const isDebt = isDebtInstrument(h.sector, h.companyName);
         const isLive = priceSource === "live" || priceSource === "foreign_live";
         const existing = distinctIsinInfo.get(h.isin);
         distinctIsinInfo.set(h.isin, {
-          isDebt: (existing?.isDebt ?? false) || isDebt,
           isLive: (existing?.isLive ?? false) || isLive,
         });
         if (livePriceInr !== null) todayPriceByIsin.set(h.isin, livePriceInr);
@@ -298,10 +307,9 @@ async function runComputation(): Promise<ComputedLiveAum> {
     dhanStatus = "ok";
   }
 
-  let distinctDebtInstrumentCount = 0;
+  const distinctDebtInstrumentCount = distinctDebtRepoKeys.size;
   let distinctLivePricedCount = 0;
   for (const info of distinctIsinInfo.values()) {
-    if (info.isDebt) distinctDebtInstrumentCount++;
     if (info.isLive) distinctLivePricedCount++;
   }
 
