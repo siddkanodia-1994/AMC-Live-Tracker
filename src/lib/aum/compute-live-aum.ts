@@ -6,8 +6,9 @@ import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
 import { isDebtInstrument, isUsListedEquityIsin } from "../excel/instrument-classification";
 import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
+import { getIstDateString } from "../utils/date";
 import { getCachedLiveAum, setCachedLiveAum } from "./cache";
-import { getAverageAumSinceReport } from "./history";
+import { getAverageAumSinceReport, getPreviousDayLiveAum } from "./history";
 import type {
   AmcLiveAum,
   ComputedLiveAum,
@@ -33,14 +34,6 @@ async function getCurrentReportPeriod(): Promise<string> {
     .where(eq(appSettings.key, CURRENT_REPORT_PERIOD_KEY));
   if (!row) throw new NoDataImportedError();
   return row.value;
-}
-
-function getIstDateString(): string {
-  // Server runs in UTC on Vercel; shift to IST (UTC+5:30) so the daily
-  // snapshot's "today" aligns with Indian trading-day boundaries.
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-  const istTime = new Date(Date.now() + IST_OFFSET_MS);
-  return istTime.toISOString().slice(0, 10);
 }
 
 async function writeDailySnapshot(snapshot: LiveAumSnapshot): Promise<void> {
@@ -226,6 +219,8 @@ async function runComputation(): Promise<ComputedLiveAum> {
       avgLiveAumCr: null,
       avgVsReportedPct: null,
       avgWindowDays: 0,
+      previousDayLiveAumCr: null,
+      oneDayChangePct: null,
     });
   }
 
@@ -266,13 +261,22 @@ async function runComputation(): Promise<ComputedLiveAum> {
 
   await writeDailySnapshot(snapshot);
 
-  const averages = await getAverageAumSinceReport(reportPeriod).catch(() => new Map());
+  const [averages, previousDay] = await Promise.all([
+    getAverageAumSinceReport(reportPeriod).catch(() => new Map()),
+    getPreviousDayLiveAum().catch(() => new Map()),
+  ]);
   for (const amc of amcResults) {
     const avg = averages.get(amc.amcId);
     if (avg) {
       amc.avgLiveAumCr = avg.avgLiveAumCr;
       amc.avgWindowDays = avg.daysCount;
       amc.avgVsReportedPct = amc.reportedAumCr !== 0 ? avg.avgLiveAumCr / amc.reportedAumCr - 1 : null;
+    }
+
+    const prev = previousDay.get(amc.amcId);
+    if (prev) {
+      amc.previousDayLiveAumCr = prev.liveAumCr;
+      amc.oneDayChangePct = prev.liveAumCr !== 0 ? (amc.liveAumCr - prev.liveAumCr) / prev.liveAumCr : null;
     }
   }
 

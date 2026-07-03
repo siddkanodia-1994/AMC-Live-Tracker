@@ -31,6 +31,11 @@ export interface AmcLiveAum {
   avgLiveAumCr: number | null;
   avgVsReportedPct: number | null;
   avgWindowDays: number;
+  // Most recent prior day's closing live AUM, and the % change from it to
+  // today's liveAumCr — null if no prior-day snapshot exists yet (e.g. a
+  // brand-new AMC). May span more than 1 calendar day if collection had a gap.
+  previousDayLiveAumCr: number | null;
+  oneDayChangePct: number | null;
 }
 
 export type DhanStatus = "ok" | "degraded" | "unavailable";

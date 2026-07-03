@@ -10,12 +10,27 @@ import type { AmcLiveAum } from "@/lib/aum/types";
 type SortKey =
   | "overviewName"
   | "liveAumCr"
+  | "oneDayChangePct"
   | "avgLiveAumCr"
   | "reportedAumCr"
+  | "deltaPct"
   | "avgVsReportedPct"
   | "holdingsCount"
   | "debtInstrumentCount"
   | "livePricedCount";
+
+function PctCell({ value }: { value: number | null }) {
+  if (value === null) {
+    return <TableCell className="text-right tabular-nums">—</TableCell>;
+  }
+  return (
+    <TableCell className="text-right tabular-nums">
+      <span className={value >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
+        {formatPct(value, { alwaysSign: true })}
+      </span>
+    </TableCell>
+  );
+}
 
 function SortableHead({
   label,
@@ -83,6 +98,15 @@ export function AmcTable({
   const totalAvgAumCr = amcs.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
   const totalReportedAumCr = amcs.reduce((sum, a) => sum + a.reportedAumCr, 0);
   const totalAvgVsReportedPct = totalReportedAumCr !== 0 ? totalAvgAumCr / totalReportedAumCr - 1 : null;
+  const totalLiveVsReportedPct = totalReportedAumCr !== 0 ? totalLiveAumCr / totalReportedAumCr - 1 : null;
+
+  // Only over AMCs with a known previous-day value, so one AMC missing
+  // history doesn't skew the industry-wide 1-day change.
+  const withPrevDay = amcs.filter((a) => a.previousDayLiveAumCr !== null);
+  const totalLiveAumCrWithPrevDay = withPrevDay.reduce((sum, a) => sum + a.liveAumCr, 0);
+  const totalPreviousDayLiveAumCr = withPrevDay.reduce((sum, a) => sum + (a.previousDayLiveAumCr ?? 0), 0);
+  const totalOneDayChangePct =
+    totalPreviousDayLiveAumCr !== 0 ? totalLiveAumCrWithPrevDay / totalPreviousDayLiveAumCr - 1 : null;
 
   return (
     <div className="overflow-x-auto rounded-lg border">
@@ -103,8 +127,10 @@ export function AmcTable({
               </div>
             </TableHead>
             <SortableHead label="Live AUM" sk="liveAumCr" {...headProps} />
+            <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
             <SortableHead label="Avg AUM" sk="avgLiveAumCr" {...headProps} />
             <SortableHead label="Reported AUM (May)" sk="reportedAumCr" {...headProps} />
+            <SortableHead label="Live vs Reported" sk="deltaPct" {...headProps} />
             <SortableHead label="Avg vs Reported" sk="avgVsReportedPct" {...headProps} />
             <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />
             <SortableHead label="Debt" sk="debtInstrumentCount" {...headProps} />
@@ -120,27 +146,15 @@ export function AmcTable({
                 </Link>
               </TableCell>
               <TableCell className="text-right tabular-nums">{formatCr(amc.liveAumCr)}</TableCell>
+              <PctCell value={amc.oneDayChangePct} />
               <TableCell className="text-right tabular-nums">
                 {amc.avgLiveAumCr !== null ? formatCr(amc.avgLiveAumCr) : "—"}
               </TableCell>
               <TableCell className="text-right tabular-nums text-muted-foreground">
                 {formatCr(amc.reportedAumCr)}
               </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {amc.avgVsReportedPct !== null ? (
-                  <span
-                    className={
-                      amc.avgVsReportedPct >= 0
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-red-600 dark:text-red-400"
-                    }
-                  >
-                    {formatPct(amc.avgVsReportedPct, { alwaysSign: true })}
-                  </span>
-                ) : (
-                  "—"
-                )}
-              </TableCell>
+              <PctCell value={amc.deltaPct} />
+              <PctCell value={amc.avgVsReportedPct} />
               <TableCell className="text-right tabular-nums">{amc.holdingsCount}</TableCell>
               <TableCell className="text-right tabular-nums text-muted-foreground">
                 {amc.debtInstrumentCount}
@@ -153,23 +167,11 @@ export function AmcTable({
           <TableRow>
             <TableCell>Total ({amcs.length} AMCs)</TableCell>
             <TableCell className="text-right tabular-nums">{formatCr(totalLiveAumCr)}</TableCell>
+            <PctCell value={totalOneDayChangePct} />
             <TableCell className="text-right tabular-nums">{formatCr(totalAvgAumCr)}</TableCell>
             <TableCell className="text-right tabular-nums">{formatCr(totalReportedAumCr)}</TableCell>
-            <TableCell className="text-right tabular-nums">
-              {totalAvgVsReportedPct !== null ? (
-                <span
-                  className={
-                    totalAvgVsReportedPct >= 0
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-red-600 dark:text-red-400"
-                  }
-                >
-                  {formatPct(totalAvgVsReportedPct, { alwaysSign: true })}
-                </span>
-              ) : (
-                "—"
-              )}
-            </TableCell>
+            <PctCell value={totalLiveVsReportedPct} />
+            <PctCell value={totalAvgVsReportedPct} />
             <TableCell className="text-right tabular-nums" title="Distinct stocks held anywhere in the industry — not a sum of each AMC's count">
               {distinctHoldingsCount}
             </TableCell>
