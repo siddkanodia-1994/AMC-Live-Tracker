@@ -138,6 +138,24 @@ export const liveAumDailySnapshot = pgTable(
   (t) => [uniqueIndex("live_aum_daily_snapshot_amc_date_idx").on(t.amcId, t.snapshotDate)]
 );
 
+// One row per ISIN per calendar day — deduplicated industry-wide (a stock
+// held by 50 AMCs stores one price row, not 50), mirroring the same
+// distinct-by-ISIN approach used elsewhere for pricing/counts. Powers each
+// holding's "1 Day Change" column. Unique on (isin, snapshotDate); overwritten
+// intraday the same way live_aum_daily_snapshot is, so today's row tracks the
+// latest computation rather than freezing on the first one.
+export const isinDailyPrice = pgTable(
+  "isin_daily_price",
+  {
+    id: serial("id").primaryKey(),
+    isin: text("isin").notNull(),
+    snapshotDate: date("snapshot_date").notNull(),
+    priceInr: numeric("price_inr", { precision: 18, scale: 4 }).notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("isin_daily_price_isin_date_idx").on(t.isin, t.snapshotDate)]
+);
+
 // Audit trail for imports.
 export const importLog = pgTable("import_log", {
   id: serial("id").primaryKey(),

@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useLiveAumDetail, type AmcDetailResponse } from "@/hooks/use-live-aum-detail";
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { AumTrendChart } from "./aum-trend-chart";
@@ -9,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCr, formatRelativeTime } from "@/lib/utils/format";
+import { isBankDebtOrRepo, isCashEquivalent } from "@/lib/excel/instrument-classification";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
 export function AmcDetailView({
@@ -21,6 +23,20 @@ export function AmcDetailView({
   history: AumHistoryPoint[];
 }) {
   const { data, error, isLoading } = useLiveAumDetail(slug, initialData);
+
+  const cashEquivalentCr = useMemo(() => {
+    if (!data) return 0;
+    return data.holdings
+      .filter((h) => isCashEquivalent(h.companyName))
+      .reduce((sum, h) => sum + h.liveMarketValueCr, 0);
+  }, [data]);
+
+  const bankDebtRepoCr = useMemo(() => {
+    if (!data) return 0;
+    return data.holdings
+      .filter((h) => isBankDebtOrRepo(h.sector, h.companyName))
+      .reduce((sum, h) => sum + h.liveMarketValueCr, 0);
+  }, [data]);
 
   if (error && !data) {
     return (
@@ -53,10 +69,11 @@ export function AmcDetailView({
         <AumDeltaBadge deltaCr={amc.deltaCr} deltaPct={amc.deltaPct} />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <Stat label="Live AUM" value={formatCr(amc.liveAumCr)} />
         <Stat label="Reported AUM" value={formatCr(amc.reportedAumCr)} />
-        <Stat label="Cash & other (fixed)" value={formatCr(amc.residualPlugCr)} />
+        <Stat label="Cash and cash equivalent" value={formatCr(cashEquivalentCr)} />
+        <Stat label="Bank Debt & Repo" value={formatCr(bankDebtRepoCr)} />
         <Stat label="Holdings" value={`${amc.holdingsCount}${amc.stalePricedCount > 0 ? ` (${amc.stalePricedCount} stale)` : ""}`} />
       </div>
 

@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcPeriods, amcs, appSettings, holdings, instrumentMap, liveAumDailySnapshot } from "../db/schema";
+import { amcPeriods, amcs, appSettings, holdings, instrumentMap, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { fetchLtps, segmentKey } from "../dhan/client";
 import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
 import { isDebtInstrument, isUsListedEquityIsin } from "../excel/instrument-classification";
@@ -8,7 +8,7 @@ import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
 import { getCachedLiveAum, setCachedLiveAum } from "./cache";
-import { getAverageAumSinceReport, getPreviousDayLiveAum } from "./history";
+import { getAverageAumSinceReport, getPreviousDayIsinPrices, getPreviousDayLiveAum } from "./history";
 import type {
   AmcLiveAum,
   ComputedLiveAum,
@@ -75,6 +75,37 @@ async function writeDailySnapshot(snapshot: LiveAumSnapshot): Promise<void> {
   }
 }
 
+async function writeDailyIsinPrices(priceByIsin: Map<string, number>): Promise<void> {
+  if (priceByIsin.size === 0) return;
+  try {
+    const today = getIstDateString();
+    const rows = [...priceByIsin.entries()].map(([isin, priceInr]) => ({
+      isin,
+      snapshotDate: today,
+      priceInr: String(priceInr),
+    }));
+
+    // Same overwrite-on-conflict reasoning as writeDailySnapshot: today's row
+    // should track the latest computation, not freeze on the first one.
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const batch = rows.slice(i, i + BATCH_SIZE);
+      await db
+        .insert(isinDailyPrice)
+        .values(batch)
+        .onConflictDoUpdate({
+          target: [isinDailyPrice.isin, isinDailyPrice.snapshotDate],
+          set: {
+            priceInr: sql`excluded.price_inr`,
+            computedAt: sql`now()`,
+          },
+        });
+    }
+  } catch (err) {
+    console.error("Failed to write daily ISIN prices:", err);
+  }
+}
+
 async function runComputation(): Promise<ComputedLiveAum> {
   const reportPeriod = await getCurrentReportPeriod();
 
@@ -114,9 +145,10 @@ async function runComputation(): Promise<ComputedLiveAum> {
   }
 
   const ltpResult = await fetchLtps(requests);
-  const [foreignPrices, usdInrRate] = await Promise.all([
+  const [foreignPrices, usdInrRate, previousIsinPrices] = await Promise.all([
     getAllForeignPrices().catch(() => new Map<string, number>()),
     getCachedUsdInrRate().catch(() => null),
+    getPreviousDayIsinPrices().catch(() => new Map<string, number>()),
   ]);
 
   const holdingsByAmcId = new Map<number, HoldingLiveView[]>();
@@ -130,6 +162,9 @@ async function runComputation(): Promise<ComputedLiveAum> {
   // fetched once per ISIN and reused everywhere it appears (see priceableIsins
   // above), so "first write wins" here is never actually a conflict in practice.
   const distinctIsinInfo = new Map<string, { isDebt: boolean; isLive: boolean }>();
+  // Today's live price per ISIN, deduplicated the same way — written once to
+  // isin_daily_price after the loop, seeding tomorrow's "1 Day Change" column.
+  const todayPriceByIsin = new Map<string, number>();
 
   for (const period of periodRows) {
     const amcHoldingRows = holdingRows.filter((h) => h.amcId === period.amcId);
@@ -189,7 +224,14 @@ async function runComputation(): Promise<ComputedLiveAum> {
           isDebt: (existing?.isDebt ?? false) || isDebt,
           isLive: (existing?.isLive ?? false) || isLive,
         });
+        if (livePriceInr !== null) todayPriceByIsin.set(h.isin, livePriceInr);
       }
+
+      const previousClosePriceInr = h.isin ? (previousIsinPrices.get(h.isin) ?? null) : null;
+      const oneDayChangePct =
+        livePriceInr !== null && previousClosePriceInr !== null && previousClosePriceInr !== 0
+          ? (livePriceInr - previousClosePriceInr) / previousClosePriceInr
+          : null;
 
       liveHoldingsSumCr += liveMarketValueCr;
       holdingViews.push({
@@ -200,6 +242,8 @@ async function runComputation(): Promise<ComputedLiveAum> {
         mcapClassification: h.mcapClassification,
         shares: Number(h.shares),
         weightPct: Number(h.weightPct ?? 0),
+        previousClosePriceInr,
+        oneDayChangePct,
         reportedMarketValueCr,
         livePriceInr,
         liveMarketValueCr,
@@ -274,7 +318,7 @@ async function runComputation(): Promise<ComputedLiveAum> {
     distinctLivePricedCount,
   };
 
-  await writeDailySnapshot(snapshot);
+  await Promise.all([writeDailySnapshot(snapshot), writeDailyIsinPrices(todayPriceByIsin)]);
 
   const [averages, previousDay] = await Promise.all([
     getAverageAumSinceReport(reportPeriod).catch(() => new Map()),

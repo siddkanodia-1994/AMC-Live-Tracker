@@ -12,6 +12,12 @@ export interface HoldingLiveView {
   livePriceInr: number | null;
   liveMarketValueCr: number;
   priceSource: PriceSource;
+  // Most recent prior day's closing price for this ISIN, and the % change
+  // from it to today's livePriceInr — null if never priced before (new
+  // listing, or this ISIN has no live price today either). Value % change
+  // equals price % change since shares are constant between report periods.
+  previousClosePriceInr: number | null;
+  oneDayChangePct: number | null;
 }
 
 export interface AmcLiveAum {

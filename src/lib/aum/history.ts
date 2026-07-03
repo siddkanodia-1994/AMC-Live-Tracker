@@ -1,6 +1,6 @@
 import { asc, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { liveAumDailySnapshot } from "../db/schema";
+import { isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { getIstDateString } from "../utils/date";
 import { firstDayOfNextMonth } from "./report-period";
 
@@ -85,6 +85,35 @@ export async function getPreviousDayLiveAum(): Promise<Map<number, PreviousDayAu
   for (const r of rows) {
     if (!map.has(r.amcId)) {
       map.set(r.amcId, { liveAumCr: Number(r.liveAumCr), snapshotDate: r.snapshotDate });
+    }
+  }
+  return map;
+}
+
+/**
+ * Each priced ISIN's most recent stored price strictly before today (IST) —
+ * the per-holding sibling of getPreviousDayLiveAum, keyed by ISIN rather than
+ * amcId since price is a security-level fact shared across every AMC holding
+ * it (one row instead of one per AMC). Same "most recent regardless of gap"
+ * semantics; ISINs never priced before are simply absent from the map.
+ */
+export async function getPreviousDayIsinPrices(): Promise<Map<string, number>> {
+  const today = getIstDateString();
+
+  const rows = await db
+    .select({
+      isin: isinDailyPrice.isin,
+      snapshotDate: isinDailyPrice.snapshotDate,
+      priceInr: isinDailyPrice.priceInr,
+    })
+    .from(isinDailyPrice)
+    .where(lt(isinDailyPrice.snapshotDate, today))
+    .orderBy(desc(isinDailyPrice.snapshotDate));
+
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    if (!map.has(r.isin)) {
+      map.set(r.isin, Number(r.priceInr));
     }
   }
   return map;

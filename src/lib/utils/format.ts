@@ -14,6 +14,17 @@ export function formatPct(value: number, opts?: { alwaysSign?: boolean }): strin
   })}%`;
 }
 
+export function formatPriceInr(priceInr: number): string {
+  return `₹${priceInr.toLocaleString("en-IN", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  })}`;
+}
+
+export function formatShares(shares: number): string {
+  return shares.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+}
+
 export function formatDeltaCr(valueCr: number): string {
   const sign = valueCr > 0 ? "+" : "";
   return `${sign}${formatCr(valueCr)}`;
