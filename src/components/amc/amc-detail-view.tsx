@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useLiveAumDetail, type AmcDetailResponse } from "@/hooks/use-live-aum-detail";
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { AumTrendChart } from "./aum-trend-chart";
@@ -9,7 +9,7 @@ import { SectorBreakdown } from "./sector-breakdown";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatCr, formatRelativeTime } from "@/lib/utils/format";
+import { formatCr, formatPct, formatRelativeTime } from "@/lib/utils/format";
 import { isBankDebtOrRepo, isCashEquivalent } from "@/lib/excel/instrument-classification";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
@@ -70,10 +70,22 @@ export function AmcDetailView({
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        <Stat label="Live AUM" value={formatCr(amc.liveAumCr)} />
+        <Stat
+          label="Live AUM"
+          value={formatCr(amc.liveAumCr)}
+          badge={<AumDeltaBadge deltaCr={amc.deltaCr} deltaPct={amc.deltaPct} />}
+        />
         <Stat label="Reported AUM" value={formatCr(amc.reportedAumCr)} />
-        <Stat label="Cash and cash equivalent" value={formatCr(cashEquivalentCr)} />
-        <Stat label="Bank Debt & Repo" value={formatCr(bankDebtRepoCr)} />
+        <Stat
+          label="Cash and cash equivalent"
+          value={formatCr(cashEquivalentCr)}
+          subtext={amc.reportedAumCr !== 0 ? `${formatPct(cashEquivalentCr / amc.reportedAumCr)} of reported AUM` : undefined}
+        />
+        <Stat
+          label="Bank Debt & Repo"
+          value={formatCr(bankDebtRepoCr)}
+          subtext={amc.reportedAumCr !== 0 ? `${formatPct(bankDebtRepoCr / amc.reportedAumCr)} of reported AUM` : undefined}
+        />
         <Stat label="Holdings" value={`${amc.holdingsCount}${amc.stalePricedCount > 0 ? ` (${amc.stalePricedCount} stale)` : ""}`} />
       </div>
 
@@ -92,7 +104,15 @@ export function AmcDetailView({
           <TabsTrigger value="sectors">Sector Allocation</TabsTrigger>
         </TabsList>
         <TabsContent value="holdings">
-          <HoldingsTable holdings={holdings} />
+          {/* Full-bleed: this table has too many columns to fit inside the
+              page's max-w-6xl reading width, so it breaks out to the full
+              viewport width regardless of nesting, while the cards/chart
+              above stay at the normal reading width. */}
+          <div className="relative left-1/2 right-1/2 -mx-[50vw] w-screen">
+            <div className="mx-auto max-w-[1800px] px-4 sm:px-6">
+              <HoldingsTable holdings={holdings} />
+            </div>
+          </div>
         </TabsContent>
         <TabsContent value="sectors">
           <SectorBreakdown holdings={holdings} />
@@ -102,11 +122,25 @@ export function AmcDetailView({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  badge,
+  subtext,
+}: {
+  label: string;
+  value: string;
+  badge?: ReactNode;
+  subtext?: string;
+}) {
   return (
     <div className="rounded-lg border p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-lg font-semibold tabular-nums">{value}</div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="text-lg font-semibold tabular-nums whitespace-nowrap">{value}</div>
+        {badge}
+      </div>
+      {subtext && <div className="text-xs text-muted-foreground">{subtext}</div>}
     </div>
   );
 }
