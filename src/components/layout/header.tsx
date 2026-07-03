@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LiveClockBadge } from "./live-clock-badge";
 import { ThemeToggle } from "./theme-toggle";
 
 export function Header() {
@@ -15,6 +16,7 @@ export function Header() {
           >
             Admin
           </Link>
+          <LiveClockBadge />
           <ThemeToggle />
         </nav>
       </div>
