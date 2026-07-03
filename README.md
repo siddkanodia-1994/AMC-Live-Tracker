@@ -128,8 +128,11 @@ from scratch on a new project:
 2. Add the environment variables from `.env.example` (`DATABASE_URL`, `DHAN_CLIENT_ID`,
    `CRON_SECRET`) in the Vercel project settings. `DATABASE_URL` is set
    automatically if you provision Postgres via Vercel's Neon marketplace integration.
-3. Deploy. `vercel.json` configures a daily cron (`/api/cron/daily-snapshot`) — Vercel automatically
-   sends `CRON_SECRET` as a bearer token to authenticate it.
+3. Deploy. `vercel.json` configures the daily-snapshot cron (`/api/cron/daily-snapshot`) to run twice
+   — 4:00 PM and 6:00 PM IST, both after the 3:30 PM market close — so a DHAN blip on the first run
+   (rate limit, transient error) gets corrected by the second instead of freezing that day's chart
+   point until the next manual audit. The route's overwrite-on-conflict write means either run can
+   safely follow the other. Vercel automatically sends `CRON_SECRET` as a bearer token to authenticate it.
 4. After the first deploy, run the import script locally against your production `DATABASE_URL` (or
    use the `/admin` upload button once deployed) to seed data, then run the instrument sync.
 
