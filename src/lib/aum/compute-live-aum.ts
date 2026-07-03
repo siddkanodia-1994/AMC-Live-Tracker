@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, holdings, instrumentMap, liveAumDailySnapshot } from "../db/schema";
 import { fetchLtps, segmentKey } from "../dhan/client";
@@ -52,8 +52,23 @@ async function writeDailySnapshot(snapshot: LiveAumSnapshot): Promise<void> {
           deltaPct: String(amc.deltaPct),
         }))
       )
-      .onConflictDoNothing({
+      // Overwrite (not onConflictDoNothing): today's row should track the
+      // latest computation, not whichever one happened to run first. Without
+      // this, an unlucky DHAN failure on the very first computation of the
+      // day (e.g. a 429 right at market open) would permanently freeze that
+      // day's chart point at the fallback-to-reported value, even though
+      // every later computation that day succeeds normally. Past days are
+      // untouched either way — a new snapshotDate starts a fresh row.
+      .onConflictDoUpdate({
         target: [liveAumDailySnapshot.amcId, liveAumDailySnapshot.snapshotDate],
+        set: {
+          reportPeriod: sql`excluded.report_period`,
+          liveAumCr: sql`excluded.live_aum_cr`,
+          reportedAumCr: sql`excluded.reported_aum_cr`,
+          deltaCr: sql`excluded.delta_cr`,
+          deltaPct: sql`excluded.delta_pct`,
+          computedAt: sql`now()`,
+        },
       });
   } catch (err) {
     console.error("Failed to write daily live-AUM snapshot:", err);
