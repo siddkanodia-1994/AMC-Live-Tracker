@@ -26,7 +26,7 @@ const TOP_N_OPTIONS: TopNOption[] = [10, 15, 20, "all"];
 const DEFAULT_TOP_N: TopNOption = 20;
 
 const NET_FLOW_TITLE =
-  "Reported AUM minus what AUM would be if the prior period's holdings had simply been repriced through this month-end (no trading). Conflates investor subscriptions/redemptions with the manager's own buying/selling — an approximation, not a pure flows figure. Blank until a prior period + its daily-snapshot backfill exist.";
+  "Reported AUM minus what AUM would be if the prior period's holdings had simply been repriced through this month-end (no trading), divided by the prior period's reported AUM. Conflates investor subscriptions/redemptions with the manager's own buying/selling — an approximation, not a pure flows figure. Blank until a prior period + its daily-snapshot backfill exist. Same denominator as the AUM Growth tab's Net Flow %, so both show the same percentage for the same underlying flow amount.";
 
 function PctCell({ value }: { value: number | null }) {
   if (value === null) {
@@ -117,11 +117,13 @@ function computeTotals(list: AmcLiveAum[]): Totals {
   // period + backfill (e.g. brand-new funds) don't skew the total. null (not
   // 0) when nobody has data yet, so the footer shows "—" rather than a
   // misleading "zero flow".
-  const withNetFlow = list.filter((a) => a.netFlowCr !== null && a.netFlowBaselineCr !== null);
+  const withNetFlow = list.filter((a) => a.netFlowCr !== null && a.netFlowPriorPeriodReportedAumCr !== null);
   const totalNetFlowCr = withNetFlow.length > 0 ? withNetFlow.reduce((sum, a) => sum + (a.netFlowCr ?? 0), 0) : null;
-  const totalNetFlowBaselineCr = withNetFlow.reduce((sum, a) => sum + (a.netFlowBaselineCr ?? 0), 0);
+  const totalNetFlowPriorPeriodReportedAumCr = withNetFlow.reduce((sum, a) => sum + (a.netFlowPriorPeriodReportedAumCr ?? 0), 0);
   const totalNetFlowPct =
-    totalNetFlowCr !== null && totalNetFlowBaselineCr !== 0 ? totalNetFlowCr / totalNetFlowBaselineCr : null;
+    totalNetFlowCr !== null && totalNetFlowPriorPeriodReportedAumCr !== 0
+      ? totalNetFlowCr / totalNetFlowPriorPeriodReportedAumCr
+      : null;
 
   return {
     totalLiveAumCr,

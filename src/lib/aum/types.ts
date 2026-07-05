@@ -59,8 +59,13 @@ export interface AmcLiveAum {
   // Conflates genuine investor subscriptions/redemptions with the fund
   // manager's own trading activity — an approximation, not a pure flows figure.
   netFlowCr: number | null;
+  // netFlowCr / netFlowPriorPeriodReportedAumCr (NOT netFlowBaselineCr) --
+  // matches getAumGrowthComparison's "Net Flow %" denominator exactly, so
+  // the Overview table and the AUM Growth tab never show two different
+  // percentages for the same underlying flow amount.
   netFlowPct: number | null;
   netFlowPriorPeriod: string | null;
+  netFlowPriorPeriodReportedAumCr: number | null;
   netFlowBaselineCr: number | null;
 }
 

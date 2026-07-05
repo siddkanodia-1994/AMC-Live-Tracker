@@ -86,10 +86,10 @@ export function AmcDetailView({
           }
           subtext={
             amc.netFlowCr !== null
-              ? `${amc.reportPeriod} reported vs ${amc.netFlowPriorPeriod}-based baseline of ${formatCr(amc.netFlowBaselineCr ?? 0)}`
+              ? `% of ${amc.netFlowPriorPeriod} reported AUM (${formatCr(amc.netFlowPriorPeriodReportedAumCr ?? 0)})`
               : "No prior-period baseline yet"
           }
-          title="Reported AUM minus what AUM would be if the prior period's holdings had simply been repriced through this month-end (no trading). Conflates investor subscriptions/redemptions with the manager's own buying/selling — an approximation, not a pure flows figure."
+          title="Reported AUM minus what AUM would be if the prior period's holdings had simply been repriced through this month-end (no trading), divided by the prior period's reported AUM. Conflates investor subscriptions/redemptions with the manager's own buying/selling — an approximation, not a pure flows figure. Same denominator as the AUM Growth tab's Net Flow %."
         />
       </div>
 

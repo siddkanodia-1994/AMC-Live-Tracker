@@ -320,6 +320,7 @@ async function runComputation(): Promise<ComputedLiveAum> {
       netFlowCr: null,
       netFlowPct: null,
       netFlowPriorPeriod: null,
+      netFlowPriorPeriodReportedAumCr: null,
       netFlowBaselineCr: null,
     });
   }
@@ -413,6 +414,7 @@ async function runComputation(): Promise<ComputedLiveAum> {
       amc.netFlowCr = netFlow.netFlowCr;
       amc.netFlowPct = netFlow.netFlowPct;
       amc.netFlowPriorPeriod = netFlow.priorPeriod;
+      amc.netFlowPriorPeriodReportedAumCr = netFlow.priorPeriodReportedAumCr;
       amc.netFlowBaselineCr = netFlow.baselineCr;
     }
   }

@@ -123,6 +123,7 @@ export interface NetFlowEstimate {
   netFlowCr: number;
   netFlowPct: number | null;
   priorPeriod: string;
+  priorPeriodReportedAumCr: number;
   baselineCr: number;
   monthEndDate: string;
 }
@@ -135,6 +136,10 @@ export interface NetFlowEstimate {
  * no subscriptions/redemptions) — sourced from live_aum_daily_snapshot rows
  * tagged with the PRIOR reportPeriod (see backfillDailySnapshots' reportPeriod
  * override). netFlowCr = currentPeriod.reportedAumCr - baselineCr.
+ *
+ * netFlowPct divides that same Cr amount by the PRIOR period's reported AUM
+ * (not baselineCr) — matching getAumGrowthComparison's "Net Flow %" exactly,
+ * so the two don't show different percentages for an identical flow amount.
  *
  * This conflates genuine investor subscriptions/redemptions with the fund
  * manager's own trading activity (new buys, full exits, rebalancing) — it is
@@ -158,11 +163,15 @@ export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<num
 
   const monthEndDate = lastDayOfReportMonth(reportPeriod);
 
-  const [currentPeriods, baselineSnapshots] = await Promise.all([
+  const [currentPeriods, priorPeriods, baselineSnapshots] = await Promise.all([
     db
       .select({ amcId: amcPeriods.amcId, reportedAumCr: amcPeriods.reportedAumCr })
       .from(amcPeriods)
       .where(eq(amcPeriods.reportPeriod, reportPeriod)),
+    db
+      .select({ amcId: amcPeriods.amcId, reportedAumCr: amcPeriods.reportedAumCr })
+      .from(amcPeriods)
+      .where(eq(amcPeriods.reportPeriod, priorPeriod)),
     // <=, not =: the literal calendar month-end is frequently a weekend or
     // holiday with no snapshot row (e.g. May 2026 ends on a Sunday) — take
     // the most recent trading day's snapshot on or before it instead, same
@@ -184,14 +193,17 @@ export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<num
       baselineByAmcId.set(r.amcId, Number(r.liveAumCr));
     }
   }
+  const priorReportedByAmcId = new Map(priorPeriods.map((r) => [r.amcId, Number(r.reportedAumCr)]));
 
   for (const cur of currentPeriods) {
     const baselineCr = baselineByAmcId.get(cur.amcId);
     if (baselineCr === undefined) continue;
+    const priorPeriodReportedAumCr = priorReportedByAmcId.get(cur.amcId);
+    if (priorPeriodReportedAumCr === undefined) continue;
     const reportedAumCr = Number(cur.reportedAumCr);
     const netFlowCr = reportedAumCr - baselineCr;
-    const netFlowPct = baselineCr !== 0 ? netFlowCr / baselineCr : null;
-    map.set(cur.amcId, { netFlowCr, netFlowPct, priorPeriod, baselineCr, monthEndDate });
+    const netFlowPct = priorPeriodReportedAumCr !== 0 ? netFlowCr / priorPeriodReportedAumCr : null;
+    map.set(cur.amcId, { netFlowCr, netFlowPct, priorPeriod, priorPeriodReportedAumCr, baselineCr, monthEndDate });
   }
 
   return map;
