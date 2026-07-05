@@ -9,11 +9,44 @@ import { useAumGrowth } from "@/hooks/use-aum-growth";
 import type { AumGrowthRow } from "@/lib/aum/aum-growth";
 
 type SortKey = "overviewName" | "periodAReportedAumCr" | "periodBReportedAumCr" | "growthPct" | "pricePerformancePct" | "netFlowPct";
+type TopNOption = 10 | 15 | 20 | "all";
+
+const TOP_N_OPTIONS: TopNOption[] = [10, 15, 20, "all"];
+const DEFAULT_TOP_N: TopNOption = 20;
 
 const NET_FLOW_TITLE =
   "(Reported AUM in the later period minus the earlier period's holdings repriced to the later period's last close) divided by the EARLIER period's reported AUM. This is a different denominator than the \"Est. Net Flow (%)\" column on the Overview tab (which divides by the computed baseline) -- chosen here specifically so Price Performance % + this % always sum to exactly Growth %.";
 const PRICE_PERF_TITLE =
   "How much the earlier period's same holdings (same shares, no trading) would have grown from pure price movement alone, as a % of the earlier period's reported AUM. Requires the historical-price backfill to have been run for this specific period pair -- shows — otherwise.";
+
+interface GrowthTotals {
+  totalPeriodAReportedAumCr: number;
+  totalPeriodBReportedAumCr: number;
+  totalGrowthPct: number | null;
+  totalPricePerformancePct: number | null;
+  totalNetFlowPct: number | null;
+}
+
+function computeGrowthTotals(list: AumGrowthRow[]): GrowthTotals {
+  const totalPeriodAReportedAumCr = list.reduce((sum, r) => sum + r.periodAReportedAumCr, 0);
+  const totalPeriodBReportedAumCr = list.reduce((sum, r) => sum + r.periodBReportedAumCr, 0);
+  const totalGrowthPct =
+    totalPeriodAReportedAumCr !== 0 ? (totalPeriodBReportedAumCr - totalPeriodAReportedAumCr) / totalPeriodAReportedAumCr : null;
+
+  // Only over AMCs whose historical repricing has been backfilled, so AMCs
+  // without that data (e.g. a not-yet-backfilled period pair) don't skew the
+  // total -- same reasoning as the Overview table's Est. Net Flow total.
+  const withComputedB = list.filter((r) => r.computedBAumCr !== null);
+  const totalAForComputed = withComputedB.reduce((sum, r) => sum + r.periodAReportedAumCr, 0);
+  const totalBForComputed = withComputedB.reduce((sum, r) => sum + r.periodBReportedAumCr, 0);
+  const totalComputedB = withComputedB.reduce((sum, r) => sum + (r.computedBAumCr ?? 0), 0);
+  const totalPricePerformancePct =
+    withComputedB.length > 0 && totalAForComputed !== 0 ? (totalComputedB - totalAForComputed) / totalAForComputed : null;
+  const totalNetFlowPct =
+    withComputedB.length > 0 && totalAForComputed !== 0 ? (totalBForComputed - totalComputedB) / totalAForComputed : null;
+
+  return { totalPeriodAReportedAumCr, totalPeriodBReportedAumCr, totalGrowthPct, totalPricePerformancePct, totalNetFlowPct };
+}
 
 function PctCell({ value }: { value: number | null }) {
   if (value === null) {
@@ -25,6 +58,19 @@ function PctCell({ value }: { value: number | null }) {
         {formatPct(value, { alwaysSign: true })}
       </span>
     </TableCell>
+  );
+}
+
+function TotalsRow({ label, totals, muted }: { label: string; totals: GrowthTotals; muted?: boolean }) {
+  return (
+    <TableRow className={muted ? "text-muted-foreground" : undefined}>
+      <TableCell>{label}</TableCell>
+      <TableCell className="text-right tabular-nums">{formatCr(totals.totalPeriodAReportedAumCr)}</TableCell>
+      <TableCell className="text-right tabular-nums">{formatCr(totals.totalPeriodBReportedAumCr)}</TableCell>
+      <PctCell value={totals.totalGrowthPct} />
+      <PctCell value={totals.totalPricePerformancePct} />
+      <PctCell value={totals.totalNetFlowPct} />
+    </TableRow>
   );
 }
 
@@ -67,6 +113,7 @@ export function AumGrowthTable() {
   const { data, error, isLoading } = useAumGrowth(selectedA ?? undefined, selectedB ?? undefined);
   const [sortKey, setSortKey] = useState<SortKey>("periodBReportedAumCr");
   const [sortDesc, setSortDesc] = useState(true);
+  const [topN, setTopN] = useState<TopNOption>(DEFAULT_TOP_N);
 
   const allPeriods = data?.periods ?? [];
   const effectiveA = selectedA ?? data?.periodA ?? null;
@@ -91,8 +138,18 @@ export function AumGrowthTable() {
   }
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
+
+  // Top-N is always by periodB's reported AUM specifically (the closest
+  // equivalent to "current size" here -- this tab has no Live AUM column),
+  // independent of whatever column the table is currently sorted by for
+  // display. No search box on this tab, so no override-while-searching case.
+  const limited = useMemo(() => {
+    if (topN === "all") return rows;
+    return [...rows].sort((a, b) => b.periodBReportedAumCr - a.periodBReportedAumCr).slice(0, topN);
+  }, [rows, topN]);
+
   const sorted = useMemo(() => {
-    const list = [...rows];
+    const list = [...limited];
     list.sort((a, b) => {
       const av = a[sortKey];
       const bv = b[sortKey];
@@ -102,7 +159,7 @@ export function AumGrowthTable() {
       return sortDesc ? -cmp : cmp;
     });
     return list;
-  }, [rows, sortKey, sortDesc]);
+  }, [limited, sortKey, sortDesc]);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
@@ -115,19 +172,10 @@ export function AumGrowthTable() {
 
   const headProps = { sortKey, sortDesc, onToggle: toggleSort };
 
-  const totalPeriodAReportedAumCr = rows.reduce((sum, r) => sum + r.periodAReportedAumCr, 0);
-  const totalPeriodBReportedAumCr = rows.reduce((sum, r) => sum + r.periodBReportedAumCr, 0);
-  const totalGrowthPct =
-    totalPeriodAReportedAumCr !== 0 ? (totalPeriodBReportedAumCr - totalPeriodAReportedAumCr) / totalPeriodAReportedAumCr : null;
-
-  const withComputedB = rows.filter((r) => r.computedBAumCr !== null);
-  const totalAForComputed = withComputedB.reduce((sum, r) => sum + r.periodAReportedAumCr, 0);
-  const totalBForComputed = withComputedB.reduce((sum, r) => sum + r.periodBReportedAumCr, 0);
-  const totalComputedB = withComputedB.reduce((sum, r) => sum + (r.computedBAumCr ?? 0), 0);
-  const totalPricePerformancePct =
-    withComputedB.length > 0 && totalAForComputed !== 0 ? (totalComputedB - totalAForComputed) / totalAForComputed : null;
-  const totalNetFlowPct =
-    withComputedB.length > 0 && totalAForComputed !== 0 ? (totalBForComputed - totalComputedB) / totalAForComputed : null;
+  const subsetTotals = computeGrowthTotals(limited);
+  const industryTotals = computeGrowthTotals(rows);
+  const isRestricted = topN !== "all";
+  const subsetLabel = isRestricted ? `Total (Top ${topN} of ${rows.length} AMCs)` : `Total (all ${rows.length} AMCs)`;
 
   if (isLoading && !data) {
     return <Skeleton className="h-96 w-full rounded-xl" />;
@@ -166,10 +214,26 @@ export function AumGrowthTable() {
         </select>
       </div>
 
+      <div className="flex items-center gap-1 text-sm">
+        <span className="text-muted-foreground">Show:</span>
+        {TOP_N_OPTIONS.map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => setTopN(option)}
+            className={`rounded-md px-2 py-1 ${
+              topN === option ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {option === "all" ? "All" : `Top ${option}`}
+          </button>
+        ))}
+      </div>
+
       <p className="text-xs text-muted-foreground">
         Growth % is total reported-AUM growth from {effectiveA} to {effectiveB}. Price Performance % and Net Flow %
         split that growth into two pieces — both are a % of {effectiveA}&apos;s reported AUM, so they always sum to
-        exactly Growth %.
+        exactly Growth %. Top-N ranks by reported AUM in {effectiveB}.
       </p>
 
       <div className="overflow-x-auto rounded-lg border">
@@ -214,14 +278,8 @@ export function AumGrowthTable() {
             ))}
           </TableBody>
           <TableFooter>
-            <TableRow>
-              <TableCell>Total ({rows.length} AMCs)</TableCell>
-              <TableCell className="text-right tabular-nums">{formatCr(totalPeriodAReportedAumCr)}</TableCell>
-              <TableCell className="text-right tabular-nums">{formatCr(totalPeriodBReportedAumCr)}</TableCell>
-              <PctCell value={totalGrowthPct} />
-              <PctCell value={totalPricePerformancePct} />
-              <PctCell value={totalNetFlowPct} />
-            </TableRow>
+            <TotalsRow label={subsetLabel} totals={subsetTotals} />
+            {isRestricted && <TotalsRow label={`Industry Total (all ${rows.length} AMCs)`} totals={industryTotals} muted />}
           </TableFooter>
         </Table>
       </div>
