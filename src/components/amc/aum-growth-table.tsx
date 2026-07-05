@@ -4,34 +4,43 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatCr, formatPct } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatPct } from "@/lib/utils/format";
+import type { TopNOption } from "@/lib/utils/top-n";
 import { useAumGrowth } from "@/hooks/use-aum-growth";
 import type { AumGrowthRow } from "@/lib/aum/aum-growth";
 
-type SortKey = "overviewName" | "periodAReportedAumCr" | "periodBReportedAumCr" | "growthPct" | "pricePerformancePct" | "netFlowPct";
-type TopNOption = 10 | 15 | 20 | "all";
-
-const TOP_N_OPTIONS: TopNOption[] = [10, 15, 20, "all"];
-const DEFAULT_TOP_N: TopNOption = 20;
+type SortKey =
+  | "overviewName"
+  | "periodAReportedAumCr"
+  | "periodBReportedAumCr"
+  | "growthCr"
+  | "growthPct"
+  | "pricePerformanceCr"
+  | "pricePerformancePct"
+  | "netFlowCr"
+  | "netFlowPct";
 
 const NET_FLOW_TITLE =
-  "(Reported AUM in the later period minus the earlier period's holdings repriced to the later period's last close) divided by the EARLIER period's reported AUM. This is a different denominator than the \"Est. Net Flow (%)\" column on the Overview tab (which divides by the computed baseline) -- chosen here specifically so Price Performance % + this % always sum to exactly Growth %.";
+  "(Reported AUM in the later period minus the earlier period's holdings repriced to the later period's last close) divided by the EARLIER period's reported AUM. Same denominator as the Overview tab's \"Est. Net Flow (%)\" -- chosen here specifically so Price Performance % + this % always sum to exactly Growth %.";
 const PRICE_PERF_TITLE =
   "How much the earlier period's same holdings (same shares, no trading) would have grown from pure price movement alone, as a % of the earlier period's reported AUM. Requires the historical-price backfill to have been run for this specific period pair -- shows — otherwise.";
 
 interface GrowthTotals {
   totalPeriodAReportedAumCr: number;
   totalPeriodBReportedAumCr: number;
+  totalGrowthCr: number;
   totalGrowthPct: number | null;
+  totalPricePerformanceCr: number | null;
   totalPricePerformancePct: number | null;
+  totalNetFlowCr: number | null;
   totalNetFlowPct: number | null;
 }
 
 function computeGrowthTotals(list: AumGrowthRow[]): GrowthTotals {
   const totalPeriodAReportedAumCr = list.reduce((sum, r) => sum + r.periodAReportedAumCr, 0);
   const totalPeriodBReportedAumCr = list.reduce((sum, r) => sum + r.periodBReportedAumCr, 0);
-  const totalGrowthPct =
-    totalPeriodAReportedAumCr !== 0 ? (totalPeriodBReportedAumCr - totalPeriodAReportedAumCr) / totalPeriodAReportedAumCr : null;
+  const totalGrowthCr = totalPeriodBReportedAumCr - totalPeriodAReportedAumCr;
+  const totalGrowthPct = totalPeriodAReportedAumCr !== 0 ? totalGrowthCr / totalPeriodAReportedAumCr : null;
 
   // Only over AMCs whose historical repricing has been backfilled, so AMCs
   // without that data (e.g. a not-yet-backfilled period pair) don't skew the
@@ -40,12 +49,22 @@ function computeGrowthTotals(list: AumGrowthRow[]): GrowthTotals {
   const totalAForComputed = withComputedB.reduce((sum, r) => sum + r.periodAReportedAumCr, 0);
   const totalBForComputed = withComputedB.reduce((sum, r) => sum + r.periodBReportedAumCr, 0);
   const totalComputedB = withComputedB.reduce((sum, r) => sum + (r.computedBAumCr ?? 0), 0);
+  const totalPricePerformanceCr = withComputedB.length > 0 ? totalComputedB - totalAForComputed : null;
   const totalPricePerformancePct =
-    withComputedB.length > 0 && totalAForComputed !== 0 ? (totalComputedB - totalAForComputed) / totalAForComputed : null;
-  const totalNetFlowPct =
-    withComputedB.length > 0 && totalAForComputed !== 0 ? (totalBForComputed - totalComputedB) / totalAForComputed : null;
+    totalPricePerformanceCr !== null && totalAForComputed !== 0 ? totalPricePerformanceCr / totalAForComputed : null;
+  const totalNetFlowCr = withComputedB.length > 0 ? totalBForComputed - totalComputedB : null;
+  const totalNetFlowPct = totalNetFlowCr !== null && totalAForComputed !== 0 ? totalNetFlowCr / totalAForComputed : null;
 
-  return { totalPeriodAReportedAumCr, totalPeriodBReportedAumCr, totalGrowthPct, totalPricePerformancePct, totalNetFlowPct };
+  return {
+    totalPeriodAReportedAumCr,
+    totalPeriodBReportedAumCr,
+    totalGrowthCr,
+    totalGrowthPct,
+    totalPricePerformanceCr,
+    totalPricePerformancePct,
+    totalNetFlowCr,
+    totalNetFlowPct,
+  };
 }
 
 function PctCell({ value }: { value: number | null }) {
@@ -61,14 +80,30 @@ function PctCell({ value }: { value: number | null }) {
   );
 }
 
+function DeltaCrCell({ value }: { value: number | null }) {
+  if (value === null) {
+    return <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>;
+  }
+  return (
+    <TableCell className="text-right tabular-nums">
+      <span className={value >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
+        {formatDeltaCr(value)}
+      </span>
+    </TableCell>
+  );
+}
+
 function TotalsRow({ label, totals, muted }: { label: string; totals: GrowthTotals; muted?: boolean }) {
   return (
     <TableRow className={muted ? "text-muted-foreground" : undefined}>
       <TableCell>{label}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalPeriodAReportedAumCr)}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalPeriodBReportedAumCr)}</TableCell>
+      <DeltaCrCell value={totals.totalGrowthCr} />
       <PctCell value={totals.totalGrowthPct} />
+      <DeltaCrCell value={totals.totalPricePerformanceCr} />
       <PctCell value={totals.totalPricePerformancePct} />
+      <DeltaCrCell value={totals.totalNetFlowCr} />
       <PctCell value={totals.totalNetFlowPct} />
     </TableRow>
   );
@@ -107,13 +142,12 @@ function SortableHead({
 const selectClass =
   "rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
-export function AumGrowthTable() {
+export function AumGrowthTable({ topN }: { topN: TopNOption }) {
   const [selectedA, setSelectedA] = useState<string | null>(null);
   const [selectedB, setSelectedB] = useState<string | null>(null);
   const { data, error, isLoading } = useAumGrowth(selectedA ?? undefined, selectedB ?? undefined);
   const [sortKey, setSortKey] = useState<SortKey>("periodBReportedAumCr");
   const [sortDesc, setSortDesc] = useState(true);
-  const [topN, setTopN] = useState<TopNOption>(DEFAULT_TOP_N);
 
   const allPeriods = data?.periods ?? [];
   const effectiveA = selectedA ?? data?.periodA ?? null;
@@ -214,22 +248,6 @@ export function AumGrowthTable() {
         </select>
       </div>
 
-      <div className="flex items-center gap-1 text-sm">
-        <span className="text-muted-foreground">Show:</span>
-        {TOP_N_OPTIONS.map((option) => (
-          <button
-            key={option}
-            type="button"
-            onClick={() => setTopN(option)}
-            className={`rounded-md px-2 py-1 ${
-              topN === option ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {option === "all" ? "All" : `Top ${option}`}
-          </button>
-        ))}
-      </div>
-
       <p className="text-xs text-muted-foreground">
         Growth % is total reported-AUM growth from {effectiveA} to {effectiveB}. Price Performance % and Net Flow %
         split that growth into two pieces — both are a % of {effectiveA}&apos;s reported AUM, so they always sum to
@@ -252,8 +270,11 @@ export function AumGrowthTable() {
               </TableHead>
               <SortableHead label={`Reported AUM (${effectiveA})`} sk="periodAReportedAumCr" {...headProps} />
               <SortableHead label={`Reported AUM (${effectiveB})`} sk="periodBReportedAumCr" {...headProps} />
+              <SortableHead label="Growth (Cr)" sk="growthCr" {...headProps} />
               <SortableHead label="Growth %" sk="growthPct" {...headProps} />
+              <SortableHead label="Price Performance (Cr)" sk="pricePerformanceCr" {...headProps} title={PRICE_PERF_TITLE} />
               <SortableHead label="Price Performance %" sk="pricePerformancePct" {...headProps} title={PRICE_PERF_TITLE} />
+              <SortableHead label="Net Flow (Cr)" sk="netFlowCr" {...headProps} title={NET_FLOW_TITLE} />
               <SortableHead label={`Net Flow % (of ${effectiveA} AUM)`} sk="netFlowPct" {...headProps} title={NET_FLOW_TITLE} />
             </TableRow>
           </TableHeader>
@@ -271,8 +292,11 @@ export function AumGrowthTable() {
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {formatCr(row.periodBReportedAumCr)}
                 </TableCell>
+                <DeltaCrCell value={row.growthCr} />
                 <PctCell value={row.growthPct} />
+                <DeltaCrCell value={row.pricePerformanceCr} />
                 <PctCell value={row.pricePerformancePct} />
+                <DeltaCrCell value={row.netFlowCr} />
                 <PctCell value={row.netFlowPct} />
               </TableRow>
             ))}

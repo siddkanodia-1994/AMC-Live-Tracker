@@ -9,12 +9,19 @@ export interface AumGrowthRow {
   overviewName: string;
   periodAReportedAumCr: number;
   periodBReportedAumCr: number;
+  // B - A. Never null -- needs only each period's own reportedAumCr.
+  growthCr: number;
   // (B - A) / A
   growthPct: number | null;
-  // (computedB - A) / A -- computedB is periodA's holdings repriced to
-  // periodB's last trading day (see backfillDailySnapshots). Null when that
-  // backfill hasn't been run for this specific period pair yet.
+  // computedB - A -- computedB is periodA's holdings repriced to periodB's
+  // last trading day (see backfillDailySnapshots). Null when that backfill
+  // hasn't been run for this specific period pair yet.
+  pricePerformanceCr: number | null;
+  // (computedB - A) / A
   pricePerformancePct: number | null;
+  // B - computedB. growthCr = pricePerformanceCr + netFlowCr exactly,
+  // whenever both are non-null (same identity the % versions satisfy).
+  netFlowCr: number | null;
   // (B - computedB) / A -- same denominator as pricePerformancePct, so the
   // two always sum to exactly growthPct.
   netFlowPct: number | null;
@@ -94,13 +101,15 @@ export async function getAumGrowthComparison(periodA: string, periodB: string): 
     if (entry.a === undefined || entry.b === undefined) continue;
     const periodAReportedAumCr = entry.a;
     const periodBReportedAumCr = entry.b;
-    const growthPct = periodAReportedAumCr !== 0 ? (periodBReportedAumCr - periodAReportedAumCr) / periodAReportedAumCr : null;
+    const growthCr = periodBReportedAumCr - periodAReportedAumCr;
+    const growthPct = periodAReportedAumCr !== 0 ? growthCr / periodAReportedAumCr : null;
 
     const computedBAumCr = computedBByAmcId.get(amcId) ?? null;
+    const pricePerformanceCr = computedBAumCr !== null ? computedBAumCr - periodAReportedAumCr : null;
     const pricePerformancePct =
-      computedBAumCr !== null && periodAReportedAumCr !== 0 ? (computedBAumCr - periodAReportedAumCr) / periodAReportedAumCr : null;
-    const netFlowPct =
-      computedBAumCr !== null && periodAReportedAumCr !== 0 ? (periodBReportedAumCr - computedBAumCr) / periodAReportedAumCr : null;
+      pricePerformanceCr !== null && periodAReportedAumCr !== 0 ? pricePerformanceCr / periodAReportedAumCr : null;
+    const netFlowCr = computedBAumCr !== null ? periodBReportedAumCr - computedBAumCr : null;
+    const netFlowPct = netFlowCr !== null && periodAReportedAumCr !== 0 ? netFlowCr / periodAReportedAumCr : null;
 
     rows.push({
       amcId,
@@ -108,8 +117,11 @@ export async function getAumGrowthComparison(periodA: string, periodB: string): 
       overviewName: entry.overviewName,
       periodAReportedAumCr,
       periodBReportedAumCr,
+      growthCr,
       growthPct,
+      pricePerformanceCr,
       pricePerformancePct,
+      netFlowCr,
       netFlowPct,
       computedBAumCr,
     });

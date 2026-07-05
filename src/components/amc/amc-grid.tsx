@@ -6,12 +6,14 @@ import { AmcTable } from "./amc-table";
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { AumGrowthTable } from "./aum-growth-table";
 import { AumTrendChart } from "./aum-trend-chart";
+import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCr, formatRelativeTime, formatShortDate } from "@/lib/utils/format";
+import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
@@ -32,6 +34,12 @@ export function AmcGrid({
 }) {
   const { data, error, isLoading } = useLiveAum(initialData);
   const [query, setQuery] = useState("");
+  // Shared across all three tabs -- lifted here (rather than each tab owning
+  // its own) so changing it in one applies to all, per the "linked toggle"
+  // requirement. Each tab still independently decides what "Top N" ranks by
+  // (Live AUM here, periodB's reported AUM on AUM Growth, current reported
+  // AUM on Cash Holdings), since none of those have a common shared field.
+  const [topN, setTopN] = useState<TopNOption>(DEFAULT_TOP_N);
 
   const filteredAmcs = useMemo(() => {
     if (!data) return [];
@@ -149,10 +157,28 @@ export function AmcGrid({
       )}
 
       <Tabs defaultValue="overview">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="aum-growth">AUM Growth</TabsTrigger>
-        </TabsList>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="aum-growth">AUM Growth</TabsTrigger>
+            <TabsTrigger value="cash-holdings">Cash Holdings</TabsTrigger>
+          </TabsList>
+          <div className="flex items-center gap-1 text-sm">
+            <span className="text-muted-foreground">Show:</span>
+            {TOP_N_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setTopN(option)}
+                className={`rounded-md px-2 py-1 ${
+                  topN === option ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {option === "all" ? "All" : `Top ${option}`}
+              </button>
+            ))}
+          </div>
+        </div>
         <TabsContent value="overview">
           <p className="mb-2 text-xs text-muted-foreground">
             &quot;Avg AUM&quot; is the average of daily live AUM since the last reported month closed
@@ -166,6 +192,7 @@ export function AmcGrid({
             amcs={filteredAmcs}
             allAmcs={data.amcs}
             isSearchActive={query.trim() !== ""}
+            topN={topN}
             distinctHoldingsCount={data.distinctHoldingsCount}
             distinctDebtInstrumentCount={data.distinctDebtInstrumentCount}
             distinctLivePricedCount={data.distinctLivePricedCount}
@@ -175,7 +202,10 @@ export function AmcGrid({
           )}
         </TabsContent>
         <TabsContent value="aum-growth">
-          <AumGrowthTable />
+          <AumGrowthTable topN={topN} />
+        </TabsContent>
+        <TabsContent value="cash-holdings">
+          <CashHoldingsTable topN={topN} />
         </TabsContent>
       </Tabs>
     </div>

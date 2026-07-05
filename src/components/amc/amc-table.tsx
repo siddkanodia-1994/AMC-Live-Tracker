@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { formatCr, formatDeltaCr, formatPct } from "@/lib/utils/format";
+import type { TopNOption } from "@/lib/utils/top-n";
 import type { AmcLiveAum } from "@/lib/aum/types";
 
 type SortKey =
@@ -20,10 +21,6 @@ type SortKey =
   | "livePricedCount"
   | "netFlowCr"
   | "netFlowPct";
-
-type TopNOption = 10 | 15 | 20 | "all";
-const TOP_N_OPTIONS: TopNOption[] = [10, 15, 20, "all"];
-const DEFAULT_TOP_N: TopNOption = 20;
 
 const NET_FLOW_TITLE =
   "Reported AUM minus what AUM would be if the prior period's holdings had simply been repriced through this month-end (no trading), divided by the prior period's reported AUM. Conflates investor subscriptions/redemptions with the manager's own buying/selling — an approximation, not a pure flows figure. Blank until a prior period + its daily-snapshot backfill exist. Same denominator as the AUM Growth tab's Net Flow %, so both show the same percentage for the same underlying flow amount.";
@@ -177,6 +174,7 @@ export function AmcTable({
   amcs,
   allAmcs,
   isSearchActive,
+  topN,
   distinctHoldingsCount,
   distinctDebtInstrumentCount,
   distinctLivePricedCount,
@@ -184,13 +182,13 @@ export function AmcTable({
   amcs: AmcLiveAum[];
   allAmcs: AmcLiveAum[];
   isSearchActive: boolean;
+  topN: TopNOption;
   distinctHoldingsCount: number;
   distinctDebtInstrumentCount: number;
   distinctLivePricedCount: number;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("liveAumCr");
   const [sortDesc, setSortDesc] = useState(true);
-  const [topN, setTopN] = useState<TopNOption>(DEFAULT_TOP_N);
 
   // Top-N is always by Live AUM specifically, independent of whatever column
   // the table is currently sorted by for display — and skipped entirely
@@ -238,26 +236,9 @@ export function AmcTable({
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1 text-sm">
-          <span className="text-muted-foreground">Show:</span>
-          {TOP_N_OPTIONS.map((option) => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => setTopN(option)}
-              className={`rounded-md px-2 py-1 ${
-                topN === option ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {option === "all" ? "All" : `Top ${option}`}
-            </button>
-          ))}
-        </div>
-        {isSearchActive && (
-          <span className="text-xs text-muted-foreground">Showing all matches — Top-N is ignored while searching</span>
-        )}
-      </div>
+      {isSearchActive && (
+        <p className="text-xs text-muted-foreground">Showing all matches — the Top-N selector above is ignored while searching</p>
+      )}
 
       <div className="overflow-x-auto rounded-lg border">
         <Table>

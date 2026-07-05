@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatPct } from "@/lib/utils/format";
+import type { TopNOption } from "@/lib/utils/top-n";
 import { useCashHoldings } from "@/hooks/use-cash-holdings";
 import type { CashHoldingsRow } from "@/lib/aum/cash-holdings";
 
@@ -58,16 +59,26 @@ function SortableHead({
   );
 }
 
-export function CashHoldingsTable() {
+export function CashHoldingsTable({ topN }: { topN: TopNOption }) {
   const { data, error, isLoading } = useCashHoldings();
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDesc, setSortDesc] = useState(false);
 
-  const sorted = useMemo(() => {
+  // Top-N ranks by reported AUM in the current period -- the closest
+  // available size proxy on this tab (there's no Live AUM column here),
+  // matching the same "rank by whatever's available" precedent already used
+  // on the AUM Growth tab. Independent of whatever column is sorted for
+  // display, same as the other two tabs.
+  const limited = useMemo(() => {
     if (!data) return [];
+    if (topN === "all") return data.rows;
+    return [...data.rows].sort((a, b) => b.reportedAumCr - a.reportedAumCr).slice(0, topN);
+  }, [data, topN]);
+
+  const sorted = useMemo(() => {
     const key = sortKey ?? DEFAULT_SORT_KEY;
     const desc = sortKey === null ? false : sortDesc;
-    const list = [...data.rows];
+    const list = [...limited];
     list.sort((a, b) => {
       const av = getSortValue(a, key);
       const bv = getSortValue(b, key);
@@ -77,7 +88,7 @@ export function CashHoldingsTable() {
       return desc ? -cmp : cmp;
     });
     return list;
-  }, [data, sortKey, sortDesc]);
+  }, [limited, sortKey, sortDesc]);
 
   function toggleSort(key: string) {
     if (sortKey !== key) {
@@ -110,6 +121,7 @@ export function CashHoldingsTable() {
         sheet, alongside our own computed figure for {formatMonthLabel(data.currentPeriod)} — (cash equivalent + bank
         debt &amp; repo) ÷ reported AUM, using the same classification as each AMC&apos;s detail page cards. The two
         should track closely; a large gap on a given AMC is worth investigating rather than trusting blindly.
+        Top-N ranks by reported AUM in {formatMonthLabel(data.currentPeriod)}.
       </p>
       <div className="overflow-x-auto rounded-lg border">
         <Table>
