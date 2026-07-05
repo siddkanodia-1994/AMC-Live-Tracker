@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcPeriods, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { getIstDateString } from "../utils/date";
@@ -163,15 +163,27 @@ export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<num
       .select({ amcId: amcPeriods.amcId, reportedAumCr: amcPeriods.reportedAumCr })
       .from(amcPeriods)
       .where(eq(amcPeriods.reportPeriod, reportPeriod)),
+    // <=, not =: the literal calendar month-end is frequently a weekend or
+    // holiday with no snapshot row (e.g. May 2026 ends on a Sunday) — take
+    // the most recent trading day's snapshot on or before it instead, same
+    // "most recent regardless of gap" approach as getPreviousDayLiveAum.
     db
-      .select({ amcId: liveAumDailySnapshot.amcId, liveAumCr: liveAumDailySnapshot.liveAumCr })
+      .select({
+        amcId: liveAumDailySnapshot.amcId,
+        snapshotDate: liveAumDailySnapshot.snapshotDate,
+        liveAumCr: liveAumDailySnapshot.liveAumCr,
+      })
       .from(liveAumDailySnapshot)
-      .where(
-        and(eq(liveAumDailySnapshot.reportPeriod, priorPeriod), eq(liveAumDailySnapshot.snapshotDate, monthEndDate))
-      ),
+      .where(and(eq(liveAumDailySnapshot.reportPeriod, priorPeriod), lte(liveAumDailySnapshot.snapshotDate, monthEndDate)))
+      .orderBy(desc(liveAumDailySnapshot.snapshotDate)),
   ]);
 
-  const baselineByAmcId = new Map(baselineSnapshots.map((r) => [r.amcId, Number(r.liveAumCr)]));
+  const baselineByAmcId = new Map<number, number>();
+  for (const r of baselineSnapshots) {
+    if (!baselineByAmcId.has(r.amcId)) {
+      baselineByAmcId.set(r.amcId, Number(r.liveAumCr));
+    }
+  }
 
   for (const cur of currentPeriods) {
     const baselineCr = baselineByAmcId.get(cur.amcId);
