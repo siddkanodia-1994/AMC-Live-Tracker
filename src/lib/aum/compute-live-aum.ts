@@ -7,6 +7,7 @@ import { isBankDebtOrRepo, isCashEquivalent, isUsListedEquityIsin } from "../exc
 import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
+import { isTradingDay } from "../utils/market-hours";
 import { getCachedLiveAum, setCachedLiveAum } from "./cache";
 import { getAverageAumSinceReport, getNetFlowForPeriod, getPreviousDayIsinPrices, getPreviousDayLiveAum } from "./history";
 import type {
@@ -338,7 +339,16 @@ async function runComputation(): Promise<ComputedLiveAum> {
     distinctLivePricedCount,
   };
 
-  await Promise.all([writeDailySnapshot(snapshot), writeDailyIsinPrices(todayPriceByIsin)]);
+  // Skip persisting on non-trading days (weekend/holiday) — the computation
+  // above still runs and is still returned/cached so visitors see a live-ish
+  // figure (naturally held over from the last trading day's prices), it just
+  // doesn't get written as a new dated row. Without this, both the cron
+  // (which fires daily regardless of weekday) and any live page/API visit
+  // (force-dynamic pages re-run this on every cache miss) would otherwise
+  // write a spurious snapshot for Saturdays/Sundays/holidays.
+  if (isTradingDay()) {
+    await Promise.all([writeDailySnapshot(snapshot), writeDailyIsinPrices(todayPriceByIsin)]);
+  }
 
   const [averages, previousDay, netFlows] = await Promise.all([
     getAverageAumSinceReport(reportPeriod).catch(() => new Map()),

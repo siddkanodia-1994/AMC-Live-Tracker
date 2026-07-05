@@ -10,11 +10,11 @@
   "crons": [
     {
       "path": "/api/cron/daily-snapshot",
-      "schedule": "30 10 * * *"
+      "schedule": "30 10 * * 1-5"
     },
     {
       "path": "/api/cron/daily-snapshot",
-      "schedule": "30 12 * * *"
+      "schedule": "30 12 * * 1-5"
     }
   ]
 }
