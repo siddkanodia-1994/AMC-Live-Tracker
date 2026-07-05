@@ -34,6 +34,13 @@ export interface AmcLiveAum {
   debtInstrumentCount: number;
   livePricedCount: number;
   stalePricedCount: number;
+  // Live value of this AMC's cash/repo/debt line items (isCashEquivalent /
+  // isBankDebtOrRepo) -- always equal to their reported value in practice,
+  // since these instrument types are never DHAN-priceable. Powers both the
+  // AMC detail page's cards and the Cash Holdings page's "Computed" column,
+  // so both stay consistent with a single classification pass.
+  cashEquivalentCr: number;
+  bankDebtRepoCr: number;
   avgLiveAumCr: number | null;
   avgVsReportedPct: number | null;
   avgWindowDays: number;

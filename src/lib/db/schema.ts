@@ -156,6 +156,28 @@ export const isinDailyPrice = pgTable(
   (t) => [uniqueIndex("isin_daily_price_isin_date_idx").on(t.isin, t.snapshotDate)]
 );
 
+// One row per AMC per month, parsed once from the source workbook's "Cash
+// Holdings" sheet (column K block -- confirmed a genuine one-row-per-AMC
+// table of blended Cash & Cash Equivalent % of AUM, not scheme-specific).
+// That sheet's window is a rolling 6 months, so this is persisted rather
+// than re-parsed on every page load: future uploads can insert new months
+// via the same import script without losing older ones the sheet itself
+// has already rolled off. ccePct is a fraction (0.051, not 5.1), matching
+// every other *Pct column in this schema and formatPct's expected input.
+export const officialCceHistory = pgTable(
+  "official_cce_history",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    month: text("month").notNull(), // "2025-12".."2026-05"
+    ccePct: numeric("cce_pct", { precision: 12, scale: 8 }).notNull(),
+    importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("official_cce_history_amc_month_idx").on(t.amcId, t.month)]
+);
+
 // Audit trail for imports.
 export const importLog = pgTable("import_log", {
   id: serial("id").primaryKey(),

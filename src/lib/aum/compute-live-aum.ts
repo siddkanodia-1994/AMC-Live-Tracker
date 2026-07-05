@@ -3,7 +3,7 @@ import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, holdings, instrumentMap, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { fetchLtps, segmentKey } from "../dhan/client";
 import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
-import { isBankDebtOrRepo, isUsListedEquityIsin } from "../excel/instrument-classification";
+import { isBankDebtOrRepo, isCashEquivalent, isUsListedEquityIsin } from "../excel/instrument-classification";
 import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
@@ -181,6 +181,8 @@ async function runComputation(): Promise<ComputedLiveAum> {
     let livePricedCount = 0;
     let debtInstrumentCount = 0;
     let liveHoldingsSumCr = 0;
+    let cashEquivalentCr = 0;
+    let bankDebtRepoCr = 0;
 
     for (const h of amcHoldingRows) {
       const reportedMarketValueCr = Number(h.marketValueCr);
@@ -188,7 +190,8 @@ async function runComputation(): Promise<ComputedLiveAum> {
       let liveMarketValueCr: number;
       let livePriceInr: number | null = null;
 
-      if (isBankDebtOrRepo(h.sector, h.companyName)) {
+      const isDebtOrRepo = isBankDebtOrRepo(h.sector, h.companyName);
+      if (isDebtOrRepo) {
         debtInstrumentCount++;
         distinctDebtRepoKeys.add(h.isin ?? h.companyName.trim().toLowerCase());
       }
@@ -226,6 +229,9 @@ async function runComputation(): Promise<ComputedLiveAum> {
         priceSource = "not_priceable";
         liveMarketValueCr = reportedMarketValueCr;
       }
+
+      if (isDebtOrRepo) bankDebtRepoCr += liveMarketValueCr;
+      if (isCashEquivalent(h.companyName)) cashEquivalentCr += liveMarketValueCr;
 
       if (h.isin) {
         const isLive = priceSource === "live" || priceSource === "foreign_live";
@@ -284,6 +290,8 @@ async function runComputation(): Promise<ComputedLiveAum> {
       debtInstrumentCount,
       livePricedCount,
       stalePricedCount,
+      cashEquivalentCr,
+      bankDebtRepoCr,
       avgLiveAumCr: null,
       avgVsReportedPct: null,
       avgWindowDays: 0,

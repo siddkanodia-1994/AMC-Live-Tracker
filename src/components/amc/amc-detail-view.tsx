@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useLiveAumDetail, type AmcDetailResponse } from "@/hooks/use-live-aum-detail";
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { AumTrendChart } from "./aum-trend-chart";
@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCr, formatDeltaCr, formatPct, formatRelativeTime } from "@/lib/utils/format";
-import { isBankDebtOrRepo, isCashEquivalent } from "@/lib/excel/instrument-classification";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
 export function AmcDetailView({
@@ -24,20 +23,6 @@ export function AmcDetailView({
   history: AumHistoryPoint[];
 }) {
   const { data, error, isLoading } = useLiveAumDetail(slug, initialData);
-
-  const cashEquivalentCr = useMemo(() => {
-    if (!data) return 0;
-    return data.holdings
-      .filter((h) => isCashEquivalent(h.companyName))
-      .reduce((sum, h) => sum + h.liveMarketValueCr, 0);
-  }, [data]);
-
-  const bankDebtRepoCr = useMemo(() => {
-    if (!data) return 0;
-    return data.holdings
-      .filter((h) => isBankDebtOrRepo(h.sector, h.companyName))
-      .reduce((sum, h) => sum + h.liveMarketValueCr, 0);
-  }, [data]);
 
   if (error && !data) {
     return (
@@ -79,13 +64,13 @@ export function AmcDetailView({
         <Stat label="Reported AUM" value={formatCr(amc.reportedAumCr)} />
         <Stat
           label="Cash and cash equivalent"
-          value={formatCr(cashEquivalentCr)}
-          subtext={amc.reportedAumCr !== 0 ? `${formatPct(cashEquivalentCr / amc.reportedAumCr)} of reported AUM` : undefined}
+          value={formatCr(amc.cashEquivalentCr)}
+          subtext={amc.reportedAumCr !== 0 ? `${formatPct(amc.cashEquivalentCr / amc.reportedAumCr)} of reported AUM` : undefined}
         />
         <Stat
           label="Bank Debt & Repo"
-          value={formatCr(bankDebtRepoCr)}
-          subtext={amc.reportedAumCr !== 0 ? `${formatPct(bankDebtRepoCr / amc.reportedAumCr)} of reported AUM` : undefined}
+          value={formatCr(amc.bankDebtRepoCr)}
+          subtext={amc.reportedAumCr !== 0 ? `${formatPct(amc.bankDebtRepoCr / amc.reportedAumCr)} of reported AUM` : undefined}
         />
         <Stat label="Holdings" value={`${amc.holdingsCount}${amc.stalePricedCount > 0 ? ` (${amc.stalePricedCount} stale)` : ""}`} />
         <Stat

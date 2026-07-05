@@ -11,6 +11,12 @@ export function Header() {
         </Link>
         <nav className="flex items-center gap-2">
           <Link
+            href="/cash-holdings"
+            className="text-sm text-muted-foreground hover:text-foreground px-2 py-1"
+          >
+            Cash Holdings
+          </Link>
+          <Link
             href="/admin"
             className="text-sm text-muted-foreground hover:text-foreground px-2 py-1"
           >
