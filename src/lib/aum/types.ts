@@ -1,4 +1,8 @@
-export type PriceSource = "live" | "foreign_live" | "not_priceable" | "stale_fallback";
+// "last_close" = DHAN didn't provide a live price (market closed, expired
+// token, rate limit, ...) but we have a known good price from the most
+// recent successful pricing of this ISIN, so it's used instead of falling
+// all the way back to the stale reported value.
+export type PriceSource = "live" | "foreign_live" | "last_close" | "not_priceable" | "stale_fallback";
 
 export interface HoldingLiveView {
   id: number;
@@ -82,6 +86,16 @@ export interface LiveAumSnapshot {
   distinctHoldingsCount: number;
   distinctDebtInstrumentCount: number;
   distinctLivePricedCount: number;
+  // The calendar date (IST) the shown prices actually reflect. Equals
+  // today's date when pricesAreLive; otherwise the last real trading day's
+  // date (see lastTradingDayIstString) — lets the UI show "Prices as of
+  // {date}'s close" without doing its own date/timezone math client-side.
+  priceAsOfDate: string;
+  // Whether this computation attempted a fresh DHAN fetch at all (true on
+  // any trading day, even one where DHAN itself failed) vs. deliberately
+  // skipped it because today isn't a trading day. Drives whether the UI
+  // shows a ticking "Updated Xs ago" or a stable "As of {date}'s close".
+  pricesAreLive: boolean;
 }
 
 export interface ComputedLiveAum {

@@ -6,6 +6,8 @@ export interface AmcDetailResponse {
   amc: AmcLiveAum;
   holdings: HoldingLiveView[];
   computedAt: string;
+  priceAsOfDate: string;
+  pricesAreLive: boolean;
 }
 
 async function fetcher(url: string): Promise<AmcDetailResponse> {

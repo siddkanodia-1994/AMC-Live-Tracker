@@ -7,7 +7,7 @@ import { isBankDebtOrRepo, isCashEquivalent, isUsListedEquityIsin } from "../exc
 import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
-import { isTradingDay } from "../utils/market-hours";
+import { isTradingDay, lastTradingDayIstString } from "../utils/market-hours";
 import { getCachedLiveAum, setCachedLiveAum } from "./cache";
 import { getAverageAumSinceReport, getNetFlowForPeriod, getPreviousDayIsinPrices, getPreviousDayLiveAum } from "./history";
 import type {
@@ -108,6 +108,7 @@ async function writeDailyIsinPrices(priceByIsin: Map<string, number>): Promise<v
 }
 
 async function runComputation(): Promise<ComputedLiveAum> {
+  const tradingDay = isTradingDay();
   const reportPeriod = await getCurrentReportPeriod();
 
   const periodRows = await db
@@ -145,7 +146,12 @@ async function runComputation(): Promise<ComputedLiveAum> {
     requests.push(item);
   }
 
-  const ltpResult = await fetchLtps(requests);
+  // Don't even ask DHAN on a non-trading day — the market's closed, nothing
+  // can have moved since the last close, and polling anyway is how this app
+  // previously ended up rate-limited (429s) over a weekend for no benefit.
+  const ltpResult = tradingDay
+    ? await fetchLtps(requests)
+    : { pricesBySecurityId: new Map<string, number>(), failedSecurityIds: new Set<string>() };
   const [foreignPrices, usdInrRate, previousIsinPrices] = await Promise.all([
     getAllForeignPrices().catch(() => new Map<string, number>()),
     getCachedUsdInrRate().catch(() => null),
@@ -207,9 +213,22 @@ async function runComputation(): Promise<ComputedLiveAum> {
           liveMarketValueCr = (price * Number(h.shares)) / CRORE;
           livePricedCount++;
         } else {
-          priceSource = "stale_fallback";
-          liveMarketValueCr = reportedMarketValueCr;
-          stalePricedCount++;
+          // DHAN didn't give us a live price for this one -- whether because
+          // we didn't ask (non-trading day) or asked and failed (expired
+          // token, rate limit, network error). Prefer the last known good
+          // close over the stale reported value; only fall all the way back
+          // to reportedMarketValueCr if this ISIN has never been priced.
+          const lastKnownPrice = previousIsinPrices.get(h.isin);
+          if (lastKnownPrice !== undefined) {
+            priceSource = "last_close";
+            livePriceInr = lastKnownPrice;
+            liveMarketValueCr = (lastKnownPrice * Number(h.shares)) / CRORE;
+            livePricedCount++;
+          } else {
+            priceSource = "stale_fallback";
+            liveMarketValueCr = reportedMarketValueCr;
+            stalePricedCount++;
+          }
         }
       } else if (h.isin && isUsListedEquityIsin(h.isin)) {
         // US-listed equity: priced via Finnhub (daily-cached, see foreign-pricing.ts)
@@ -235,7 +254,7 @@ async function runComputation(): Promise<ComputedLiveAum> {
       if (isCashEquivalent(h.companyName)) cashEquivalentCr += liveMarketValueCr;
 
       if (h.isin) {
-        const isLive = priceSource === "live" || priceSource === "foreign_live";
+        const isLive = priceSource === "live" || priceSource === "foreign_live" || priceSource === "last_close";
         const existing = distinctIsinInfo.get(h.isin);
         distinctIsinInfo.set(h.isin, {
           isLive: (existing?.isLive ?? false) || isLive,
@@ -310,7 +329,12 @@ async function runComputation(): Promise<ComputedLiveAum> {
   // (needs a sync) even when zero DHAN requests were ever attempted, which
   // is just as much a "not working" state as a failed API call.
   let dhanStatus: DhanStatus;
-  if (totalPriceable === 0) {
+  if (!tradingDay) {
+    // We deliberately didn't ask DHAN anything -- that's not a problem to
+    // report, unlike a genuine failure on a trading day (handled below,
+    // unchanged), which still needs to alert the admin to refresh the token.
+    dhanStatus = "ok";
+  } else if (totalPriceable === 0) {
     dhanStatus = "ok";
   } else if (ltpResult.pricesBySecurityId.size === 0) {
     dhanStatus = "unavailable";
@@ -337,6 +361,8 @@ async function runComputation(): Promise<ComputedLiveAum> {
     distinctHoldingsCount: distinctIsinInfo.size,
     distinctDebtInstrumentCount,
     distinctLivePricedCount,
+    priceAsOfDate: tradingDay ? getIstDateString() : lastTradingDayIstString(),
+    pricesAreLive: tradingDay,
   };
 
   // Skip persisting on non-trading days (weekend/holiday) — the computation
@@ -346,7 +372,7 @@ async function runComputation(): Promise<ComputedLiveAum> {
   // (which fires daily regardless of weekday) and any live page/API visit
   // (force-dynamic pages re-run this on every cache miss) would otherwise
   // write a spurious snapshot for Saturdays/Sundays/holidays.
-  if (isTradingDay()) {
+  if (tradingDay) {
     await Promise.all([writeDailySnapshot(snapshot), writeDailyIsinPrices(todayPriceByIsin)]);
   }
 
@@ -365,8 +391,21 @@ async function runComputation(): Promise<ComputedLiveAum> {
 
     const prev = previousDay.get(amc.amcId);
     if (prev) {
-      amc.previousDayLiveAumCr = prev.liveAumCr;
-      amc.oneDayChangePct = prev.liveAumCr !== 0 ? (amc.liveAumCr - prev.liveAumCr) / prev.liveAumCr : null;
+      if (tradingDay) {
+        amc.previousDayLiveAumCr = prev.liveAumCr;
+        amc.oneDayChangePct = prev.liveAumCr !== 0 ? (amc.liveAumCr - prev.liveAumCr) / prev.liveAumCr : null;
+      } else {
+        // Frozen day: today's figure is definitionally a repeat of the last
+        // trading day's. Force a clean 0% rather than trust this run's
+        // recomputed liveAumCr to exactly match the persisted prior-day row
+        // — it won't, if any one holding was individually stale_fallback
+        // specifically on that prior day (previousIsinPrices would then skip
+        // past it to an even earlier price for that ISIN, while every other
+        // holding here correctly uses the prior day's), which would produce
+        // a spurious tiny nonzero "change" on a day nothing actually moved.
+        amc.previousDayLiveAumCr = amc.liveAumCr;
+        amc.oneDayChangePct = 0;
+      }
     }
 
     const netFlow = netFlows.get(amc.amcId);
@@ -423,10 +462,22 @@ export async function computeLiveAum(options?: { forceRefresh?: boolean }): Prom
 export async function computeLiveAumForAmc(
   slug: string,
   options?: { forceRefresh?: boolean }
-): Promise<{ amc: AmcLiveAum; holdings: HoldingLiveView[]; computedAt: string } | null> {
+): Promise<{
+  amc: AmcLiveAum;
+  holdings: HoldingLiveView[];
+  computedAt: string;
+  priceAsOfDate: string;
+  pricesAreLive: boolean;
+} | null> {
   const result = await getOrCompute(options?.forceRefresh);
   const amc = result.snapshot.amcs.find((a) => a.slug === slug);
   if (!amc) return null;
   const holdingViews = result.holdingsByAmcId.get(amc.amcId) ?? [];
-  return { amc, holdings: holdingViews, computedAt: result.snapshot.computedAt };
+  return {
+    amc,
+    holdings: holdingViews,
+    computedAt: result.snapshot.computedAt,
+    priceAsOfDate: result.snapshot.priceAsOfDate,
+    pricesAreLive: result.snapshot.pricesAreLive,
+  };
 }

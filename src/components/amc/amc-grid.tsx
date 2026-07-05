@@ -9,7 +9,7 @@ import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatCr, formatRelativeTime } from "@/lib/utils/format";
+import { formatCr, formatRelativeTime, formatShortDate } from "@/lib/utils/format";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
@@ -99,7 +99,10 @@ export function AmcGrid({
                 <AumDeltaBadge deltaCr={industryTotals.liveDeltaCr} deltaPct={industryTotals.liveDeltaPct} />
               </div>
               <div className="text-xs text-muted-foreground">
-                Reported: {formatCr(data.totalReportedAumCr)} · Updated {formatRelativeTime(data.computedAt)}
+                Reported: {formatCr(data.totalReportedAumCr)} ·{" "}
+                {data.pricesAreLive
+                  ? `Updated ${formatRelativeTime(data.computedAt)}`
+                  : `Prices as of ${formatShortDate(data.priceAsOfDate)} close`}
               </div>
             </CardContent>
           </Card>

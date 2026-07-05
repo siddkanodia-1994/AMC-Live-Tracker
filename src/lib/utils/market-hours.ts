@@ -26,7 +26,7 @@ const NSE_TRADING_HOLIDAYS_2026 = new Set([
   "2026-12-25", // Christmas
 ]);
 
-function toIstDateString(now: Date): string {
+export function toIstDateString(now: Date): string {
   const ist = new Date(now.getTime() + IST_OFFSET_MS);
   return ist.toISOString().slice(0, 10);
 }
@@ -41,6 +41,22 @@ export function isTradingDay(now: Date = new Date()): boolean {
   const day = ist.getUTCDay(); // 0 = Sunday, 6 = Saturday (UTC getters on a shifted date = IST wall-clock fields)
   if (day === 0 || day === 6) return false;
   return !NSE_TRADING_HOLIDAYS_2026.has(toIstDateString(now));
+}
+
+/**
+ * The most recent IST calendar day, strictly before `now`, that was an
+ * actual trading day — used to label prices that were carried over from the
+ * last trading day rather than fetched live (see compute-live-aum.ts's
+ * "last_close" fallback). Pure calendar computation: independent of which
+ * specific ISINs happen to have isin_daily_price rows, since per-ISIN gaps
+ * don't all share one common "most recent" date (see getPreviousDayIsinPrices).
+ */
+export function lastTradingDayIstString(now: Date = new Date()): string {
+  let cursor = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  for (let i = 0; i < 14 && !isTradingDay(cursor); i++) {
+    cursor = new Date(cursor.getTime() - 24 * 60 * 60 * 1000);
+  }
+  return toIstDateString(cursor);
 }
 
 /**
