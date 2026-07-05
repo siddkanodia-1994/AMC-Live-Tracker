@@ -1,8 +1,8 @@
-import { asc, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
+import { amcPeriods, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { getIstDateString } from "../utils/date";
-import { firstDayOfNextMonth } from "./report-period";
+import { firstDayOfNextMonth, lastDayOfReportMonth } from "./report-period";
 
 export interface AumHistoryPoint {
   date: string;
@@ -116,6 +116,72 @@ export async function getPreviousDayIsinPrices(): Promise<Map<string, number>> {
       map.set(r.isin, Number(r.priceInr));
     }
   }
+  return map;
+}
+
+export interface NetFlowEstimate {
+  netFlowCr: number;
+  netFlowPct: number | null;
+  priorPeriod: string;
+  baselineCr: number;
+  monthEndDate: string;
+}
+
+/**
+ * Estimated net flow for a report period: how much of the period's reported
+ * AUM is NOT explained by price movement of the prior period's holdings.
+ * baselineCr is what AUM would be on the current period's month-end if the
+ * prior period's holdings had simply been repriced day by day (no trading,
+ * no subscriptions/redemptions) — sourced from live_aum_daily_snapshot rows
+ * tagged with the PRIOR reportPeriod (see backfillDailySnapshots' reportPeriod
+ * override). netFlowCr = currentPeriod.reportedAumCr - baselineCr.
+ *
+ * This conflates genuine investor subscriptions/redemptions with the fund
+ * manager's own trading activity (new buys, full exits, rebalancing) — it is
+ * an approximation, not a pure "flows" figure. Generic over any two adjacent
+ * periods; automatically extends to future months as they're imported.
+ *
+ * Keyed by amcId; an AMC is absent from the map when there's no prior period
+ * at all, or no backfilled month-end snapshot yet for that AMC.
+ */
+export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<number, NetFlowEstimate>> {
+  const map = new Map<number, NetFlowEstimate>();
+
+  const priorPeriodRows = await db
+    .selectDistinct({ reportPeriod: amcPeriods.reportPeriod })
+    .from(amcPeriods)
+    .where(lt(amcPeriods.reportPeriod, reportPeriod))
+    .orderBy(desc(amcPeriods.reportPeriod))
+    .limit(1);
+  const priorPeriod = priorPeriodRows[0]?.reportPeriod;
+  if (!priorPeriod) return map;
+
+  const monthEndDate = lastDayOfReportMonth(reportPeriod);
+
+  const [currentPeriods, baselineSnapshots] = await Promise.all([
+    db
+      .select({ amcId: amcPeriods.amcId, reportedAumCr: amcPeriods.reportedAumCr })
+      .from(amcPeriods)
+      .where(eq(amcPeriods.reportPeriod, reportPeriod)),
+    db
+      .select({ amcId: liveAumDailySnapshot.amcId, liveAumCr: liveAumDailySnapshot.liveAumCr })
+      .from(liveAumDailySnapshot)
+      .where(
+        and(eq(liveAumDailySnapshot.reportPeriod, priorPeriod), eq(liveAumDailySnapshot.snapshotDate, monthEndDate))
+      ),
+  ]);
+
+  const baselineByAmcId = new Map(baselineSnapshots.map((r) => [r.amcId, Number(r.liveAumCr)]));
+
+  for (const cur of currentPeriods) {
+    const baselineCr = baselineByAmcId.get(cur.amcId);
+    if (baselineCr === undefined) continue;
+    const reportedAumCr = Number(cur.reportedAumCr);
+    const netFlowCr = reportedAumCr - baselineCr;
+    const netFlowPct = baselineCr !== 0 ? netFlowCr / baselineCr : null;
+    map.set(cur.amcId, { netFlowCr, netFlowPct, priorPeriod, baselineCr, monthEndDate });
+  }
+
   return map;
 }
 

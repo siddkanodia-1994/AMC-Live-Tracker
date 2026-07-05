@@ -29,8 +29,15 @@ async function main() {
       }
 
       const amcMayHoldings = mayHoldings.filter((h) => h.amcId === amc.id);
+      // Existence signal is prevMarketValueCr, not prevShares: debt/repo/cash
+      // line items (TREPS, Net Current Asset, Call Money, ...) always report
+      // shares=0 even when they had a real April value, since "shares" isn't
+      // a meaningful concept for them. Filtering on prevShares alone wrongly
+      // treated every AMC's real April repo/cash position as a "May-only new
+      // entry", folding ~1.29 lakh cr industry-wide into the residual plug
+      // instead of showing up as an explicit April holding.
       const aprilHoldingRows = amcMayHoldings
-        .filter((h) => h.prevShares !== null && Number(h.prevShares) !== 0)
+        .filter((h) => h.prevMarketValueCr !== null && Number(h.prevMarketValueCr) !== 0)
         .map((h) => ({
           amcId: amc.id,
           reportPeriod: TARGET_PERIOD,

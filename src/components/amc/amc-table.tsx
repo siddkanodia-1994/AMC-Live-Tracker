@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
-import { formatCr, formatPct } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatPct } from "@/lib/utils/format";
 import type { AmcLiveAum } from "@/lib/aum/types";
 
 type SortKey =
@@ -17,7 +17,11 @@ type SortKey =
   | "avgVsReportedPct"
   | "holdingsCount"
   | "debtInstrumentCount"
-  | "livePricedCount";
+  | "livePricedCount"
+  | "netFlowPct";
+
+const NET_FLOW_TITLE =
+  "Reported AUM minus what AUM would be if the prior period's holdings had simply been repriced through this month-end (no trading). Conflates investor subscriptions/redemptions with the manager's own buying/selling — an approximation, not a pure flows figure. Blank until a prior period + its daily-snapshot backfill exist.";
 
 function PctCell({ value }: { value: number | null }) {
   if (value === null) {
@@ -32,22 +36,41 @@ function PctCell({ value }: { value: number | null }) {
   );
 }
 
+function NetFlowCell({ netFlowCr, netFlowPct }: { netFlowCr: number | null; netFlowPct: number | null }) {
+  if (netFlowCr === null) {
+    return <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>;
+  }
+  return (
+    <TableCell className="text-right tabular-nums" title={formatDeltaCr(netFlowCr)}>
+      {netFlowPct !== null ? (
+        <span className={netFlowCr >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
+          {formatPct(netFlowPct, { alwaysSign: true })}
+        </span>
+      ) : (
+        formatDeltaCr(netFlowCr)
+      )}
+    </TableCell>
+  );
+}
+
 function SortableHead({
   label,
   sk,
   sortKey,
   sortDesc,
   onToggle,
+  title,
 }: {
   label: string;
   sk: SortKey;
   sortKey: SortKey;
   sortDesc: boolean;
   onToggle: (key: SortKey) => void;
+  title?: string;
 }) {
   const active = sk === sortKey;
   return (
-    <TableHead className="text-right first:text-left">
+    <TableHead className="text-right first:text-left" title={title}>
       <button
         type="button"
         onClick={() => onToggle(sk)}
@@ -108,6 +131,16 @@ export function AmcTable({
   const totalOneDayChangePct =
     totalPreviousDayLiveAumCr !== 0 ? totalLiveAumCrWithPrevDay / totalPreviousDayLiveAumCr - 1 : null;
 
+  // Only over AMCs with a known net-flow baseline, so AMCs without a prior
+  // period + backfill (e.g. brand-new funds) don't skew the industry total.
+  // null (not 0) when nobody has data yet, so the footer shows "—" rather
+  // than a misleading "zero flow".
+  const withNetFlow = amcs.filter((a) => a.netFlowCr !== null && a.netFlowBaselineCr !== null);
+  const totalNetFlowCr = withNetFlow.length > 0 ? withNetFlow.reduce((sum, a) => sum + (a.netFlowCr ?? 0), 0) : null;
+  const totalNetFlowBaselineCr = withNetFlow.reduce((sum, a) => sum + (a.netFlowBaselineCr ?? 0), 0);
+  const totalNetFlowPct =
+    totalNetFlowCr !== null && totalNetFlowBaselineCr !== 0 ? totalNetFlowCr / totalNetFlowBaselineCr : null;
+
   return (
     <div className="overflow-x-auto rounded-lg border">
       <Table>
@@ -135,6 +168,7 @@ export function AmcTable({
             <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />
             <SortableHead label="Debt" sk="debtInstrumentCount" {...headProps} />
             <SortableHead label="Live Priced" sk="livePricedCount" {...headProps} />
+            <SortableHead label="Est. Net Flow" sk="netFlowPct" {...headProps} title={NET_FLOW_TITLE} />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -160,6 +194,7 @@ export function AmcTable({
                 {amc.debtInstrumentCount}
               </TableCell>
               <TableCell className="text-right tabular-nums">{amc.livePricedCount}</TableCell>
+              <NetFlowCell netFlowCr={amc.netFlowCr} netFlowPct={amc.netFlowPct} />
             </TableRow>
           ))}
         </TableBody>
@@ -181,6 +216,7 @@ export function AmcTable({
             <TableCell className="text-right tabular-nums" title="Distinct stocks currently showing a live price, industry-wide">
               {distinctLivePricedCount}
             </TableCell>
+            <NetFlowCell netFlowCr={totalNetFlowCr} netFlowPct={totalNetFlowPct} />
           </TableRow>
         </TableFooter>
       </Table>

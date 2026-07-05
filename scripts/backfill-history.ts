@@ -1,10 +1,10 @@
 import { backfillDailySnapshots } from "../src/lib/aum/backfill";
 
 async function main() {
-  const [fromDate, toDate] = process.argv.slice(2);
-  console.log(`Backfilling daily AUM snapshots${fromDate ? ` from ${fromDate}` : " (auto-detecting range)"}${toDate ? ` to ${toDate}` : ""}...`);
+  const [fromDate, toDate, reportPeriod] = process.argv.slice(2);
+  console.log(`Backfilling daily AUM snapshots${fromDate ? ` from ${fromDate}` : " (auto-detecting range)"}${toDate ? ` to ${toDate}` : ""}${reportPeriod ? ` using report period ${reportPeriod}` : ""}...`);
 
-  const result = await backfillDailySnapshots({ fromDate, toDate });
+  const result = await backfillDailySnapshots({ fromDate, toDate, reportPeriod });
 
   console.log(`\nRange: ${result.fromDate} to ${result.toDate}`);
   console.log(`Trading dates found: ${result.tradingDatesFound}`);

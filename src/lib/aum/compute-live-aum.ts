@@ -8,7 +8,7 @@ import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
 import { getCachedLiveAum, setCachedLiveAum } from "./cache";
-import { getAverageAumSinceReport, getPreviousDayIsinPrices, getPreviousDayLiveAum } from "./history";
+import { getAverageAumSinceReport, getNetFlowForPeriod, getPreviousDayIsinPrices, getPreviousDayLiveAum } from "./history";
 import type {
   AmcLiveAum,
   ComputedLiveAum,
@@ -289,6 +289,10 @@ async function runComputation(): Promise<ComputedLiveAum> {
       avgWindowDays: 0,
       previousDayLiveAumCr: null,
       oneDayChangePct: null,
+      netFlowCr: null,
+      netFlowPct: null,
+      netFlowPriorPeriod: null,
+      netFlowBaselineCr: null,
     });
   }
 
@@ -328,9 +332,10 @@ async function runComputation(): Promise<ComputedLiveAum> {
 
   await Promise.all([writeDailySnapshot(snapshot), writeDailyIsinPrices(todayPriceByIsin)]);
 
-  const [averages, previousDay] = await Promise.all([
+  const [averages, previousDay, netFlows] = await Promise.all([
     getAverageAumSinceReport(reportPeriod).catch(() => new Map()),
     getPreviousDayLiveAum().catch(() => new Map()),
+    getNetFlowForPeriod(reportPeriod).catch(() => new Map()),
   ]);
   for (const amc of amcResults) {
     const avg = averages.get(amc.amcId);
@@ -344,6 +349,14 @@ async function runComputation(): Promise<ComputedLiveAum> {
     if (prev) {
       amc.previousDayLiveAumCr = prev.liveAumCr;
       amc.oneDayChangePct = prev.liveAumCr !== 0 ? (amc.liveAumCr - prev.liveAumCr) / prev.liveAumCr : null;
+    }
+
+    const netFlow = netFlows.get(amc.amcId);
+    if (netFlow) {
+      amc.netFlowCr = netFlow.netFlowCr;
+      amc.netFlowPct = netFlow.netFlowPct;
+      amc.netFlowPriorPeriod = netFlow.priorPeriod;
+      amc.netFlowBaselineCr = netFlow.baselineCr;
     }
   }
 

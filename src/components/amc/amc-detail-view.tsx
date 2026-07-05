@@ -5,11 +5,12 @@ import { useLiveAumDetail, type AmcDetailResponse } from "@/hooks/use-live-aum-d
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { AumTrendChart } from "./aum-trend-chart";
 import { HoldingsTable } from "./holdings-table";
+import { PeriodComparisonTable } from "./period-comparison-table";
 import { SectorBreakdown } from "./sector-breakdown";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatCr, formatPct, formatRelativeTime } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatPct, formatRelativeTime } from "@/lib/utils/format";
 import { isBankDebtOrRepo, isCashEquivalent } from "@/lib/excel/instrument-classification";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
@@ -69,7 +70,7 @@ export function AmcDetailView({
         <AumDeltaBadge deltaCr={amc.deltaCr} deltaPct={amc.deltaPct} />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <Stat
           label="Live AUM"
           value={formatCr(amc.liveAumCr)}
@@ -87,6 +88,21 @@ export function AmcDetailView({
           subtext={amc.reportedAumCr !== 0 ? `${formatPct(bankDebtRepoCr / amc.reportedAumCr)} of reported AUM` : undefined}
         />
         <Stat label="Holdings" value={`${amc.holdingsCount}${amc.stalePricedCount > 0 ? ` (${amc.stalePricedCount} stale)` : ""}`} />
+        <Stat
+          label="Est. Net Flow"
+          value={amc.netFlowCr !== null ? formatDeltaCr(amc.netFlowCr) : "—"}
+          badge={
+            amc.netFlowCr !== null && amc.netFlowPct !== null ? (
+              <AumDeltaBadge deltaCr={amc.netFlowCr} deltaPct={amc.netFlowPct} />
+            ) : undefined
+          }
+          subtext={
+            amc.netFlowCr !== null
+              ? `${amc.reportPeriod} reported vs ${amc.netFlowPriorPeriod}-based baseline of ${formatCr(amc.netFlowBaselineCr ?? 0)}`
+              : "No prior-period baseline yet"
+          }
+          title="Reported AUM minus what AUM would be if the prior period's holdings had simply been repriced through this month-end (no trading). Conflates investor subscriptions/redemptions with the manager's own buying/selling — an approximation, not a pure flows figure."
+        />
       </div>
 
       <Card>
@@ -102,6 +118,7 @@ export function AmcDetailView({
         <TabsList>
           <TabsTrigger value="holdings">Holdings</TabsTrigger>
           <TabsTrigger value="sectors">Sector Allocation</TabsTrigger>
+          <TabsTrigger value="comparison">Period Comparison</TabsTrigger>
         </TabsList>
         <TabsContent value="holdings">
           {/* Full-bleed: this table has too many columns to fit inside the
@@ -117,6 +134,13 @@ export function AmcDetailView({
         <TabsContent value="sectors">
           <SectorBreakdown holdings={holdings} />
         </TabsContent>
+        <TabsContent value="comparison">
+          <div className="relative left-1/2 right-1/2 -mx-[50vw] w-screen">
+            <div className="mx-auto max-w-[1800px] px-4 sm:px-6">
+              <PeriodComparisonTable slug={slug} />
+            </div>
+          </div>
+        </TabsContent>
       </Tabs>
     </div>
   );
@@ -127,14 +151,16 @@ function Stat({
   value,
   badge,
   subtext,
+  title,
 }: {
   label: string;
   value: string;
   badge?: ReactNode;
   subtext?: string;
+  title?: string;
 }) {
   return (
-    <div className="rounded-lg border p-3">
+    <div className="rounded-lg border p-3" title={title}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <div className="text-lg font-semibold tabular-nums whitespace-nowrap">{value}</div>

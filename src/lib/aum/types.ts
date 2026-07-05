@@ -42,6 +42,15 @@ export interface AmcLiveAum {
   // brand-new AMC). May span more than 1 calendar day if collection had a gap.
   previousDayLiveAumCr: number | null;
   oneDayChangePct: number | null;
+  // Estimated net flow for this report period vs. the prior period's holdings
+  // repriced through this period's month-end (see getNetFlowForPeriod) — null
+  // until a prior period exists AND its daily-snapshot backfill has run.
+  // Conflates genuine investor subscriptions/redemptions with the fund
+  // manager's own trading activity — an approximation, not a pure flows figure.
+  netFlowCr: number | null;
+  netFlowPct: number | null;
+  netFlowPriorPeriod: string | null;
+  netFlowBaselineCr: number | null;
 }
 
 export type DhanStatus = "ok" | "degraded" | "unavailable";

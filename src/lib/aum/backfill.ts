@@ -39,17 +39,21 @@ export interface BackfillResult {
  * same assumption the live compute already makes for "right now").
  */
 export async function backfillDailySnapshots(options?: {
+  reportPeriod?: string;
   fromDate?: string;
   toDate?: string;
 }): Promise<BackfillResult> {
   const warnings: string[] = [];
 
-  const [periodRow] = await db
-    .select()
-    .from(appSettings)
-    .where(eq(appSettings.key, CURRENT_REPORT_PERIOD_KEY));
-  if (!periodRow) throw new Error("No report period configured — import a workbook first.");
-  const reportPeriod = periodRow.value;
+  let reportPeriod = options?.reportPeriod;
+  if (!reportPeriod) {
+    const [periodRow] = await db
+      .select()
+      .from(appSettings)
+      .where(eq(appSettings.key, CURRENT_REPORT_PERIOD_KEY));
+    if (!periodRow) throw new Error("No report period configured — import a workbook first.");
+    reportPeriod = periodRow.value;
+  }
 
   const fromDate = options?.fromDate ?? firstDayOfNextMonth(reportPeriod);
 
