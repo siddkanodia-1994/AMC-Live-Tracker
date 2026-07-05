@@ -149,12 +149,16 @@ export function AmcGrid({
       <div>
         <p className="mb-2 text-xs text-muted-foreground">
           &quot;Avg AUM&quot; is the average of daily live AUM since the last reported month closed
-          (May), used to compare against the last officially reported figure. The total row&apos;s
-          Holdings/Debt/Live Priced counts are de-duplicated by stock across the whole industry (a
-          stock held by 50 AMCs counts once, not 50 times) — always industry-wide, unaffected by search.
+          (May), used to compare against the last officially reported figure. The &quot;Industry
+          Total&quot; row&apos;s Holdings/Debt/Live Priced counts are de-duplicated by stock across
+          the whole industry (a stock held by 50 AMCs counts once, not 50 times) — always all 56
+          AMCs, unaffected by the Top-N selector or search. The row above it sums whichever AMCs
+          are currently shown instead, so a shared stock can be counted more than once there.
         </p>
         <AmcTable
           amcs={filteredAmcs}
+          allAmcs={data.amcs}
+          isSearchActive={query.trim() !== ""}
           distinctHoldingsCount={data.distinctHoldingsCount}
           distinctDebtInstrumentCount={data.distinctDebtInstrumentCount}
           distinctLivePricedCount={data.distinctLivePricedCount}
