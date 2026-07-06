@@ -105,7 +105,7 @@ export function AmcGrid({
             </CardHeader>
             <CardContent className="space-y-1">
               <div className="flex items-center gap-2">
-                <div className="text-3xl font-semibold tabular-nums">{formatCr(data.totalLiveAumCr)}</div>
+                <div className="text-3xl font-bold tabular-nums">{formatCr(data.totalLiveAumCr)}</div>
                 <AumDeltaBadge deltaCr={industryTotals.liveDeltaCr} deltaPct={industryTotals.liveDeltaPct} />
               </div>
               <div className="text-xs text-muted-foreground">
