@@ -129,9 +129,12 @@ function computeTotals(list: AmcLiveAum[]): Totals {
     totalAvgVsReportedPct,
     totalLiveVsReportedPct,
     totalOneDayChangePct,
-    totalHoldingsCount: list.reduce((sum, a) => sum + a.holdingsCount, 0),
-    totalDebtInstrumentCount: list.reduce((sum, a) => sum + a.debtInstrumentCount, 0),
-    totalLivePricedCount: list.reduce((sum, a) => sum + a.livePricedCount, 0),
+    // Distinct across the shown AMCs, not summed -- a stock held by several
+    // of them counts once, matching how the Industry Total row already
+    // counts industry-wide (see LiveAumSnapshot.distinctHoldingsCount).
+    totalHoldingsCount: new Set(list.flatMap((a) => a.distinctHoldingIsins)).size,
+    totalDebtInstrumentCount: new Set(list.flatMap((a) => a.distinctDebtKeys)).size,
+    totalLivePricedCount: new Set(list.flatMap((a) => a.distinctLivePricedIsins)).size,
     totalNetFlowCr,
     totalNetFlowPct,
   };

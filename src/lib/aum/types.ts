@@ -38,6 +38,14 @@ export interface AmcLiveAum {
   debtInstrumentCount: number;
   livePricedCount: number;
   stalePricedCount: number;
+  // Identifying keys behind holdingsCount/debtInstrumentCount/livePricedCount,
+  // for computing a de-duplicated count across an arbitrary subset of AMCs
+  // client-side (e.g. the Overview table's "Total (Top N)" row) the same way
+  // LiveAumSnapshot's distinctHoldingsCount etc. do industry-wide -- a stock
+  // held by several of the shown AMCs should count once, not once per AMC.
+  distinctHoldingIsins: string[];
+  distinctDebtKeys: string[];
+  distinctLivePricedIsins: string[];
   // Live value of this AMC's cash/repo/debt line items (isCashEquivalent /
   // isBankDebtOrRepo) -- always equal to their reported value in practice,
   // since these instrument types are never DHAN-priceable. Powers both the

@@ -190,6 +190,13 @@ async function runComputation(): Promise<ComputedLiveAum> {
     let liveHoldingsSumCr = 0;
     let cashEquivalentCr = 0;
     let bankDebtRepoCr = 0;
+    // Same keying as distinctIsinInfo/distinctDebtRepoKeys below, scoped to
+    // just this AMC -- lets the client union these across whatever subset of
+    // AMCs is currently shown, instead of only ever seeing the fixed
+    // industry-wide distinct counts.
+    const amcHoldingIsins = new Set<string>();
+    const amcDebtKeys = new Set<string>();
+    const amcLivePricedIsins = new Set<string>();
 
     for (const h of amcHoldingRows) {
       const reportedMarketValueCr = Number(h.marketValueCr);
@@ -200,7 +207,9 @@ async function runComputation(): Promise<ComputedLiveAum> {
       const isDebtOrRepo = isBankDebtOrRepo(h.sector, h.companyName);
       if (isDebtOrRepo) {
         debtInstrumentCount++;
-        distinctDebtRepoKeys.add(h.isin ?? h.companyName.trim().toLowerCase());
+        const debtKey = h.isin ?? h.companyName.trim().toLowerCase();
+        distinctDebtRepoKeys.add(debtKey);
+        amcDebtKeys.add(debtKey);
       }
 
       if (h.isPriceable && h.isin) {
@@ -255,6 +264,8 @@ async function runComputation(): Promise<ComputedLiveAum> {
 
       if (h.isin) {
         const isLive = priceSource === "live" || priceSource === "foreign_live" || priceSource === "last_close";
+        amcHoldingIsins.add(h.isin);
+        if (isLive) amcLivePricedIsins.add(h.isin);
         const existing = distinctIsinInfo.get(h.isin);
         distinctIsinInfo.set(h.isin, {
           isLive: (existing?.isLive ?? false) || isLive,
@@ -310,6 +321,9 @@ async function runComputation(): Promise<ComputedLiveAum> {
       debtInstrumentCount,
       livePricedCount,
       stalePricedCount,
+      distinctHoldingIsins: [...amcHoldingIsins],
+      distinctDebtKeys: [...amcDebtKeys],
+      distinctLivePricedIsins: [...amcLivePricedIsins],
       cashEquivalentCr,
       bankDebtRepoCr,
       avgLiveAumCr: null,
