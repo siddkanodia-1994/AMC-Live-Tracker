@@ -1,9 +1,10 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, holdings, instrumentMap, liveAumDailySnapshot } from "../db/schema";
 import { fetchHistoricalClosesForMany } from "../dhan/historical-client";
 import type { ExchangeSegment } from "../dhan/types";
 import { CRORE } from "../utils/constants";
+import { getIstDateString } from "../utils/date";
 import { firstDayOfNextMonth } from "./report-period";
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
@@ -26,6 +27,8 @@ export interface BackfillResult {
   toDate: string;
   tradingDatesFound: number;
   rowsInserted: number;
+  canonicalRowsInserted: number;
+  comparisonRowsInserted: number;
   warnings: string[];
 }
 
@@ -59,14 +62,19 @@ export async function backfillDailySnapshots(options?: {
 
   let toDate = options?.toDate;
   if (!toDate) {
+    // Only the canonical timeline defines "where live tracking currently
+    // starts" -- a comparison backfill's dates (which can reach earlier than
+    // the canonical timeline once multiple periods share date ranges) must
+    // never shrink a future natural-extension backfill's auto-detected range.
     const [{ minDate }] = await db
       .select({ minDate: sql<string | null>`min(${liveAumDailySnapshot.snapshotDate})` })
-      .from(liveAumDailySnapshot);
+      .from(liveAumDailySnapshot)
+      .where(eq(liveAumDailySnapshot.isCanonical, true));
     toDate = minDate ? dayBefore(minDate) : yesterdayIst();
   }
 
   if (fromDate > toDate) {
-    return { fromDate, toDate, tradingDatesFound: 0, rowsInserted: 0, warnings: ["Nothing to backfill — from-date is after to-date (gap already covered)."] };
+    return { fromDate, toDate, tradingDatesFound: 0, rowsInserted: 0, canonicalRowsInserted: 0, comparisonRowsInserted: 0, warnings: ["Nothing to backfill — from-date is after to-date (gap already covered)."] };
   }
 
   const periodRows = await db
@@ -100,7 +108,7 @@ export async function backfillDailySnapshots(options?: {
 
   if (requests.length === 0) {
     warnings.push("No mapped priceable ISINs found — run the instrument sync first.");
-    return { fromDate, toDate, tradingDatesFound: 0, rowsInserted: 0, warnings };
+    return { fromDate, toDate, tradingDatesFound: 0, rowsInserted: 0, canonicalRowsInserted: 0, comparisonRowsInserted: 0, warnings };
   }
 
   const historicalBySecurityKey = await fetchHistoricalClosesForMany(requests, fromDate, toDate, (done, total) => {
@@ -133,7 +141,7 @@ export async function backfillDailySnapshots(options?: {
   const sortedDates = [...allTradingDates].sort();
   if (sortedDates.length === 0) {
     warnings.push("No trading dates found in the historical data returned — nothing to backfill.");
-    return { fromDate, toDate, tradingDatesFound: 0, rowsInserted: 0, warnings };
+    return { fromDate, toDate, tradingDatesFound: 0, rowsInserted: 0, canonicalRowsInserted: 0, comparisonRowsInserted: 0, warnings };
   }
 
   const holdingsByAmcId = new Map<number, typeof holdingRows>();
@@ -142,6 +150,28 @@ export async function backfillDailySnapshots(options?: {
     list.push(h);
     holdingsByAmcId.set(h.amcId, list);
   }
+
+  // Pre-check which (amcId, date) pairs in range are already canonically
+  // owned -- by this same period's own earlier backfill, or by a different
+  // period entirely (e.g. March's forward extension into April). A date
+  // already canonical stays that way; this backfill's row for it (if any) is
+  // necessarily a comparison row.
+  const amcIds = periodRows.map((p) => p.amcId);
+  const firstDate = sortedDates[0];
+  const lastDate = sortedDates[sortedDates.length - 1];
+  const existingCanonicalRows = await db
+    .select({ amcId: liveAumDailySnapshot.amcId, snapshotDate: liveAumDailySnapshot.snapshotDate })
+    .from(liveAumDailySnapshot)
+    .where(
+      and(
+        inArray(liveAumDailySnapshot.amcId, amcIds),
+        gte(liveAumDailySnapshot.snapshotDate, firstDate),
+        lte(liveAumDailySnapshot.snapshotDate, lastDate),
+        eq(liveAumDailySnapshot.isCanonical, true)
+      )
+    );
+  const canonicalKeys = new Set(existingCanonicalRows.map((r) => `${r.amcId}|${r.snapshotDate}`));
+  const todayIst = getIstDateString();
 
   const rowsToInsert: (typeof liveAumDailySnapshot.$inferInsert)[] = [];
 
@@ -170,10 +200,20 @@ export async function backfillDailySnapshots(options?: {
       const deltaCr = liveAumCr - reportedAumCr;
       const deltaPct = reportedAumCr !== 0 ? deltaCr / reportedAumCr : 0;
 
+      // Today (or later) is never claimable here -- only the live cron may
+      // establish canonical status for today's date, so a backfill that
+      // happens to run before today's cron tick can't have its row stolen
+      // (silently overwritten) the moment the cron fires. Otherwise, first
+      // claim wins: whichever period's backfill first reaches an untouched
+      // date becomes its canonical value; every later period repricing to
+      // that same date is necessarily a comparison row.
+      const isCanonical = date < todayIst && !canonicalKeys.has(`${period.amcId}|${date}`);
+
       rowsToInsert.push({
         amcId: period.amcId,
         snapshotDate: date,
         reportPeriod,
+        isCanonical,
         liveAumCr: String(liveAumCr),
         reportedAumCr: String(reportedAumCr),
         deltaCr: String(deltaCr),
@@ -183,16 +223,32 @@ export async function backfillDailySnapshots(options?: {
   }
 
   let rowsInserted = 0;
+  let canonicalRowsInserted = 0;
+  let comparisonRowsInserted = 0;
   const BATCH_SIZE = 500;
   for (let i = 0; i < rowsToInsert.length; i += BATCH_SIZE) {
     const batch = rowsToInsert.slice(i, i + BATCH_SIZE);
     const result = await db
       .insert(liveAumDailySnapshot)
       .values(batch)
-      .onConflictDoNothing({ target: [liveAumDailySnapshot.amcId, liveAumDailySnapshot.snapshotDate] })
-      .returning({ id: liveAumDailySnapshot.id });
+      .onConflictDoNothing({
+        target: [liveAumDailySnapshot.amcId, liveAumDailySnapshot.snapshotDate, liveAumDailySnapshot.reportPeriod],
+      })
+      .returning({ id: liveAumDailySnapshot.id, isCanonical: liveAumDailySnapshot.isCanonical });
     rowsInserted += result.length;
+    for (const row of result) {
+      if (row.isCanonical) canonicalRowsInserted++;
+      else comparisonRowsInserted++;
+    }
   }
 
-  return { fromDate, toDate, tradingDatesFound: sortedDates.length, rowsInserted, warnings };
+  return {
+    fromDate,
+    toDate,
+    tradingDatesFound: sortedDates.length,
+    rowsInserted,
+    canonicalRowsInserted,
+    comparisonRowsInserted,
+    warnings,
+  };
 }

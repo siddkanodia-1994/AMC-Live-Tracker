@@ -8,7 +8,7 @@ async function main() {
 
   console.log(`\nRange: ${result.fromDate} to ${result.toDate}`);
   console.log(`Trading dates found: ${result.tradingDatesFound}`);
-  console.log(`Rows inserted: ${result.rowsInserted}`);
+  console.log(`Rows inserted: ${result.rowsInserted} (canonical: ${result.canonicalRowsInserted}, comparison: ${result.comparisonRowsInserted})`);
   if (result.warnings.length > 0) {
     console.log(`\nWarnings (${result.warnings.length}):`);
     for (const w of result.warnings) console.log(`  - ${w}`);

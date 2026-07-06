@@ -14,7 +14,7 @@ export async function getAmcAumHistory(amcId: number): Promise<AumHistoryPoint[]
   const rows = await db
     .select()
     .from(liveAumDailySnapshot)
-    .where(eq(liveAumDailySnapshot.amcId, amcId))
+    .where(and(eq(liveAumDailySnapshot.amcId, amcId), eq(liveAumDailySnapshot.isCanonical, true)))
     .orderBy(asc(liveAumDailySnapshot.snapshotDate));
 
   return rows.map((r) => ({
@@ -46,7 +46,7 @@ export async function getAverageAumSinceReport(reportPeriod: string): Promise<Ma
       daysCount: sql<number>`count(*)::int`,
     })
     .from(liveAumDailySnapshot)
-    .where(gte(liveAumDailySnapshot.snapshotDate, windowStart))
+    .where(and(gte(liveAumDailySnapshot.snapshotDate, windowStart), eq(liveAumDailySnapshot.isCanonical, true)))
     .groupBy(liveAumDailySnapshot.amcId);
 
   const map = new Map<number, AverageAumSinceReport>();
@@ -78,7 +78,7 @@ export async function getPreviousDayLiveAum(): Promise<Map<number, PreviousDayAu
       liveAumCr: liveAumDailySnapshot.liveAumCr,
     })
     .from(liveAumDailySnapshot)
-    .where(lt(liveAumDailySnapshot.snapshotDate, today))
+    .where(and(lt(liveAumDailySnapshot.snapshotDate, today), eq(liveAumDailySnapshot.isCanonical, true)))
     .orderBy(desc(liveAumDailySnapshot.snapshotDate));
 
   const map = new Map<number, PreviousDayAum>();
@@ -217,6 +217,7 @@ export async function getIndustryAumHistory(): Promise<AumHistoryPoint[]> {
       reportedAumCr: sql<number>`sum(${liveAumDailySnapshot.reportedAumCr})::float`,
     })
     .from(liveAumDailySnapshot)
+    .where(eq(liveAumDailySnapshot.isCanonical, true))
     .groupBy(liveAumDailySnapshot.snapshotDate)
     .orderBy(asc(liveAumDailySnapshot.snapshotDate));
 

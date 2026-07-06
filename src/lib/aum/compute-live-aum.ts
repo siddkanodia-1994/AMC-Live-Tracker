@@ -47,6 +47,7 @@ async function writeDailySnapshot(snapshot: LiveAumSnapshot): Promise<void> {
           amcId: amc.amcId,
           snapshotDate: today,
           reportPeriod: amc.reportPeriod,
+          isCanonical: true,
           liveAumCr: String(amc.liveAumCr),
           reportedAumCr: String(amc.reportedAumCr),
           deltaCr: String(amc.deltaCr),
@@ -60,8 +61,12 @@ async function writeDailySnapshot(snapshot: LiveAumSnapshot): Promise<void> {
       // day's chart point at the fallback-to-reported value, even though
       // every later computation that day succeeds normally. Past days are
       // untouched either way — a new snapshotDate starts a fresh row.
+      // targetWhere matches this to the partial canonical index specifically
+      // (the live cron always owns today's canonical row outright — a
+      // comparison backfill can never reach today, see backfill.ts).
       .onConflictDoUpdate({
         target: [liveAumDailySnapshot.amcId, liveAumDailySnapshot.snapshotDate],
+        targetWhere: sql`${liveAumDailySnapshot.isCanonical} = true`,
         set: {
           reportPeriod: sql`excluded.report_period`,
           liveAumCr: sql`excluded.live_aum_cr`,

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   serial,
@@ -118,8 +119,28 @@ export const appSettings = pgTable("app_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// One row per AMC per calendar day, written as a side-effect of computing a
-// fresh live-AUM snapshot. Unique on (amcId, snapshotDate) makes writes idempotent.
+// One row per AMC per calendar day PER REPORT PERIOD being priced. A given
+// (amcId, snapshotDate) pair can have MULTIPLE rows -- one per reportPeriod
+// that's been repriced to that date -- e.g. both a reportPeriod='2026-05' row
+// (May's real, live-tracked value) and a reportPeriod='2026-02' row (a
+// hypothetical "what would Feb's frozen holdings be worth on this date" AUM
+// Growth comparison), for the same date.
+//
+// isCanonical marks the ONE row per (amcId, snapshotDate) -- across every
+// reportPeriod ever repriced to that date -- that represents real, actually-
+// tracked history: either the daily cron's live write for "today", or
+// whichever period's own natural forward-extension backfill first
+// established that date. Every other reportPeriod's row for that same date
+// is an ad-hoc AUM Growth comparison value and must never be read by code
+// that wants "the" AUM for a date (trend charts, 1-day change, avg-AUM-since-
+// report) -- see history.ts. Enforced at the DB level by
+// live_aum_daily_snapshot_amc_date_canonical_idx below: a UNIQUE index scoped
+// to isCanonical = true, so at most one row per (amcId, snapshotDate) can
+// ever claim canonical status, regardless of any application bug.
+// live_aum_daily_snapshot_amc_date_period_idx (the other unique index) makes
+// writes for one specific reportPeriod idempotent, the same role the old
+// (amcId, snapshotDate) constraint played before multiple reportPeriods per
+// date were possible.
 export const liveAumDailySnapshot = pgTable(
   "live_aum_daily_snapshot",
   {
@@ -129,13 +150,19 @@ export const liveAumDailySnapshot = pgTable(
       .references(() => amcs.id, { onDelete: "cascade" }),
     snapshotDate: date("snapshot_date").notNull(),
     reportPeriod: text("report_period").notNull(),
+    isCanonical: boolean("is_canonical").notNull().default(true),
     liveAumCr: numeric("live_aum_cr", { precision: 18, scale: 4 }).notNull(),
     reportedAumCr: numeric("reported_aum_cr", { precision: 18, scale: 4 }).notNull(),
     deltaCr: numeric("delta_cr", { precision: 18, scale: 4 }).notNull(),
     deltaPct: numeric("delta_pct", { precision: 12, scale: 8 }).notNull(),
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("live_aum_daily_snapshot_amc_date_idx").on(t.amcId, t.snapshotDate)]
+  (t) => [
+    uniqueIndex("live_aum_daily_snapshot_amc_date_period_idx").on(t.amcId, t.snapshotDate, t.reportPeriod),
+    uniqueIndex("live_aum_daily_snapshot_amc_date_canonical_idx")
+      .on(t.amcId, t.snapshotDate)
+      .where(sql`${t.isCanonical} = true`),
+  ]
 );
 
 // One row per ISIN per calendar day — deduplicated industry-wide (a stock
