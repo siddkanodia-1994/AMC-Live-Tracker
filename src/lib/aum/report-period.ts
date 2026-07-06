@@ -23,3 +23,19 @@ export function lastDayOfReportMonth(reportPeriod: string): string {
   const days = month === 2 && isLeapYear(year) ? 29 : DAYS_IN_MONTH[month - 1];
   return `${reportPeriod}-${String(days).padStart(2, "0")}`;
 }
+
+// Most recent date in a sorted-ascending list that's <= target, or the
+// earliest available date if none qualify (never returns null when the list
+// is non-empty) -- mirrors the same "closest available on or before" leniency
+// the underlying liveAumDailySnapshot queries already use (ORDER BY DESC
+// LIMIT 1 with a <= filter), so client-side date snapping stays consistent
+// with what the server would actually resolve for the same input.
+export function closestDateAtOrBefore(sortedAscDates: string[], target: string): string | null {
+  if (sortedAscDates.length === 0) return null;
+  let result: string | null = null;
+  for (const d of sortedAscDates) {
+    if (d <= target) result = d;
+    else break;
+  }
+  return result ?? sortedAscDates[0];
+}

@@ -4,15 +4,16 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatCr, formatDeltaCr, formatPct } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatPct, formatShortDate } from "@/lib/utils/format";
 import type { TopNOption } from "@/lib/utils/top-n";
 import { useAumGrowth } from "@/hooks/use-aum-growth";
-import type { AumGrowthRow } from "@/lib/aum/aum-growth";
+import type { AumGrowthRow, RepriceBasis } from "@/lib/aum/aum-growth";
 
 type SortKey =
   | "overviewName"
   | "periodAReportedAumCr"
   | "periodBReportedAumCr"
+  | "computedAtDateCr"
   | "growthCr"
   | "growthPct"
   | "pricePerformanceCr"
@@ -20,14 +21,25 @@ type SortKey =
   | "netFlowCr"
   | "netFlowPct";
 
-const NET_FLOW_TITLE =
-  "(Reported AUM in the later period minus the earlier period's holdings repriced to the later period's last close) divided by the EARLIER period's reported AUM. Same denominator as the Overview tab's \"Est. Net Flow (%)\" -- chosen here specifically so Price Performance % + this % always sum to exactly Growth %.";
-const PRICE_PERF_TITLE =
-  "How much the earlier period's same holdings (same shares, no trading) would have grown from pure price movement alone, as a % of the earlier period's reported AUM. Requires the historical-price backfill to have been run for this specific period pair -- shows — otherwise.";
+function pricePerfTitle(basis: RepriceBasis, periodA: string, periodB: string, asOfDate: string | null): string {
+  const dateLabel = asOfDate ? formatShortDate(asOfDate) : "the selected date";
+  if (basis === "B") {
+    return `How much ${periodB}'s own reported holdings (same shares, no trading) have moved from pure price alone since ${periodB}'s own report, valued as of ${dateLabel} -- as a % of ${periodB}'s own reported AUM. A different, unrelated-to-Growth% number from the basis-${periodA} version.`;
+  }
+  return `How much ${periodA}'s same holdings (same shares, no trading) would have grown from pure price movement alone, valued as of ${dateLabel}, as a % of ${periodA}'s reported AUM. Requires the historical-price backfill to have been run through this date -- shows — otherwise.`;
+}
+
+function netFlowTitle(basis: RepriceBasis, periodA: string, periodB: string): string {
+  if (basis === "B") {
+    return `Not shown when repricing ${periodB}'s own holdings -- there's no later reported figure to reconcile its price drift against, so the growth-into-price-vs-flow split only works when repricing ${periodA}'s holdings. Switch "Computed AUM using" above to see it.`;
+  }
+  return `(Reported AUM in the later period minus the earlier period's holdings repriced to the selected date) divided by the EARLIER period's reported AUM. Same denominator as the Overview tab's "Est. Net Flow (%)" -- chosen here specifically so Price Performance % + this % always sum to exactly Growth %.`;
+}
 
 interface GrowthTotals {
   totalPeriodAReportedAumCr: number;
   totalPeriodBReportedAumCr: number;
+  totalComputedAtDateCr: number | null;
   totalGrowthCr: number;
   totalGrowthPct: number | null;
   totalPricePerformanceCr: number | null;
@@ -36,28 +48,33 @@ interface GrowthTotals {
   totalNetFlowPct: number | null;
 }
 
-function computeGrowthTotals(list: AumGrowthRow[]): GrowthTotals {
+function computeGrowthTotals(list: AumGrowthRow[], basis: RepriceBasis): GrowthTotals {
   const totalPeriodAReportedAumCr = list.reduce((sum, r) => sum + r.periodAReportedAumCr, 0);
   const totalPeriodBReportedAumCr = list.reduce((sum, r) => sum + r.periodBReportedAumCr, 0);
   const totalGrowthCr = totalPeriodBReportedAumCr - totalPeriodAReportedAumCr;
   const totalGrowthPct = totalPeriodAReportedAumCr !== 0 ? totalGrowthCr / totalPeriodAReportedAumCr : null;
 
-  // Only over AMCs whose historical repricing has been backfilled, so AMCs
-  // without that data (e.g. a not-yet-backfilled period pair) don't skew the
-  // total -- same reasoning as the Overview table's Est. Net Flow total.
-  const withComputedB = list.filter((r) => r.computedBAumCr !== null);
-  const totalAForComputed = withComputedB.reduce((sum, r) => sum + r.periodAReportedAumCr, 0);
-  const totalBForComputed = withComputedB.reduce((sum, r) => sum + r.periodBReportedAumCr, 0);
-  const totalComputedB = withComputedB.reduce((sum, r) => sum + (r.computedBAumCr ?? 0), 0);
-  const totalPricePerformanceCr = withComputedB.length > 0 ? totalComputedB - totalAForComputed : null;
-  const totalPricePerformancePct =
-    totalPricePerformanceCr !== null && totalAForComputed !== 0 ? totalPricePerformanceCr / totalAForComputed : null;
-  const totalNetFlowCr = withComputedB.length > 0 ? totalBForComputed - totalComputedB : null;
-  const totalNetFlowPct = totalNetFlowCr !== null && totalAForComputed !== 0 ? totalNetFlowCr / totalAForComputed : null;
+  // Gated on computedAtDateCr specifically, independent of the Net Flow gate
+  // below -- under basis B these diverge (Computed AUM/Price Performance are
+  // populated, Net Flow deliberately isn't), so a single shared filter would
+  // incorrectly conflate them.
+  const withComputed = list.filter((r) => r.computedAtDateCr !== null);
+  const totalComputedAtDate = withComputed.reduce((sum, r) => sum + (r.computedAtDateCr ?? 0), 0);
+  const totalAForComputed = withComputed.reduce((sum, r) => sum + r.periodAReportedAumCr, 0);
+  const totalBForComputed = withComputed.reduce((sum, r) => sum + r.periodBReportedAumCr, 0);
+  const anchor = basis === "B" ? totalBForComputed : totalAForComputed;
+  const totalPricePerformanceCr = withComputed.length > 0 ? totalComputedAtDate - anchor : null;
+  const totalPricePerformancePct = totalPricePerformanceCr !== null && anchor !== 0 ? totalPricePerformanceCr / anchor : null;
+
+  const withNetFlow = list.filter((r) => r.netFlowCr !== null);
+  const totalAForNetFlow = withNetFlow.reduce((sum, r) => sum + r.periodAReportedAumCr, 0);
+  const totalNetFlowCr = withNetFlow.length > 0 ? withNetFlow.reduce((sum, r) => sum + (r.netFlowCr ?? 0), 0) : null;
+  const totalNetFlowPct = totalNetFlowCr !== null && totalAForNetFlow !== 0 ? totalNetFlowCr / totalAForNetFlow : null;
 
   return {
     totalPeriodAReportedAumCr,
     totalPeriodBReportedAumCr,
+    totalComputedAtDateCr: withComputed.length > 0 ? totalComputedAtDate : null,
     totalGrowthCr,
     totalGrowthPct,
     totalPricePerformanceCr,
@@ -93,12 +110,19 @@ function DeltaCrCell({ value }: { value: number | null }) {
   );
 }
 
+function AumCrCell({ value }: { value: number | null }) {
+  return (
+    <TableCell className="text-right tabular-nums text-muted-foreground">{value !== null ? formatCr(value) : "—"}</TableCell>
+  );
+}
+
 function TotalsRow({ label, totals, muted }: { label: string; totals: GrowthTotals; muted?: boolean }) {
   return (
     <TableRow className={muted ? "text-muted-foreground" : undefined}>
       <TableCell>{label}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalPeriodAReportedAumCr)}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalPeriodBReportedAumCr)}</TableCell>
+      <AumCrCell value={totals.totalComputedAtDateCr} />
       <DeltaCrCell value={totals.totalGrowthCr} />
       <PctCell value={totals.totalGrowthPct} />
       <DeltaCrCell value={totals.totalPricePerformanceCr} />
@@ -142,16 +166,32 @@ function SortableHead({
 const selectClass =
   "rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
+const basisToggleClass = (active: boolean) =>
+  `rounded-md px-2 py-1 text-sm ${active ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`;
+
 export function AumGrowthTable({ topN }: { topN: TopNOption }) {
   const [selectedA, setSelectedA] = useState<string | null>(null);
   const [selectedB, setSelectedB] = useState<string | null>(null);
-  const { data, error, isLoading } = useAumGrowth(selectedA ?? undefined, selectedB ?? undefined);
+  const [selectedBasis, setSelectedBasis] = useState<RepriceBasis | null>(null);
+  const [selectedAsOfDate, setSelectedAsOfDate] = useState<string | null>(null);
+  const { data, error, isLoading } = useAumGrowth(
+    selectedA ?? undefined,
+    selectedB ?? undefined,
+    selectedBasis ?? undefined,
+    selectedAsOfDate ?? undefined
+  );
   const [sortKey, setSortKey] = useState<SortKey>("periodBReportedAumCr");
   const [sortDesc, setSortDesc] = useState(true);
 
   const allPeriods = data?.periods ?? [];
   const effectiveA = selectedA ?? data?.periodA ?? null;
   const effectiveB = selectedB ?? data?.periodB ?? null;
+  const effectiveBasis: RepriceBasis = selectedBasis ?? data?.repriceBasis ?? "A";
+  const effectiveAsOfDate = selectedAsOfDate ?? data?.asOfDate ?? null;
+  const datesForA = data?.datesForA ?? [];
+  const datesForB = data?.datesForB ?? [];
+  const activeDates = effectiveBasis === "B" ? datesForB : datesForA;
+  const hasCustomRepricing = selectedBasis !== null || selectedAsOfDate !== null;
 
   // The most recent period can never be a valid "earlier" side -- there's
   // nothing after it to compare against yet.
@@ -169,6 +209,27 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
     if (effectiveB === null || effectiveB <= newA) {
       setSelectedB(defaultBFor(allPeriods, newA));
     }
+    // New periods mean a new valid date range -- can't know it client-side
+    // before the refetch resolves, so fall back to the server's own default.
+    setSelectedAsOfDate(null);
+  }
+
+  function handlePeriodBChange(newB: string) {
+    setSelectedB(newB);
+    setSelectedAsOfDate(null);
+  }
+
+  function handleBasisChange(newBasis: RepriceBasis) {
+    setSelectedBasis(newBasis);
+    const newBasisDates = newBasis === "B" ? datesForB : datesForA;
+    if (effectiveAsOfDate === null || !newBasisDates.includes(effectiveAsOfDate)) {
+      setSelectedAsOfDate(null);
+    }
+  }
+
+  function handleReset() {
+    setSelectedBasis(null);
+    setSelectedAsOfDate(null);
   }
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
@@ -206,8 +267,8 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
 
   const headProps = { sortKey, sortDesc, onToggle: toggleSort };
 
-  const subsetTotals = computeGrowthTotals(limited);
-  const industryTotals = computeGrowthTotals(rows);
+  const subsetTotals = computeGrowthTotals(limited, effectiveBasis);
+  const industryTotals = computeGrowthTotals(rows, effectiveBasis);
   const isRestricted = topN !== "all";
   const subsetLabel = isRestricted ? `Total (Top ${topN} of ${rows.length} AMCs)` : `Total (all ${rows.length} AMCs)`;
 
@@ -227,6 +288,9 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
     );
   }
 
+  const basisPeriodLabel = effectiveBasis === "B" ? effectiveB : effectiveA;
+  const computedColumnLabel = effectiveAsOfDate ? `Computed AUM (${formatShortDate(effectiveAsOfDate)})` : "Computed AUM";
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -239,7 +303,7 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
           ))}
         </select>
         <span className="text-muted-foreground">to</span>
-        <select value={effectiveB} onChange={(e) => setSelectedB(e.target.value)} className={selectClass}>
+        <select value={effectiveB} onChange={(e) => handlePeriodBChange(e.target.value)} className={selectClass}>
           {periodBOptions.map((p) => (
             <option key={p} value={p}>
               {p}
@@ -248,10 +312,45 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
         </select>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-muted-foreground">Computed AUM using</span>
+        <div className="flex items-center gap-1">
+          <button type="button" onClick={() => handleBasisChange("A")} className={basisToggleClass(effectiveBasis === "A")}>
+            {effectiveA}&apos;s holdings
+          </button>
+          <button type="button" onClick={() => handleBasisChange("B")} className={basisToggleClass(effectiveBasis === "B")}>
+            {effectiveB}&apos;s holdings
+          </button>
+        </div>
+        <span className="text-muted-foreground">repriced as of</span>
+        {activeDates.length === 0 ? (
+          <span className="text-xs text-muted-foreground">
+            No backfilled data for {basisPeriodLabel} yet — run the historical backfill for it.
+          </span>
+        ) : (
+          <select value={effectiveAsOfDate ?? ""} onChange={(e) => setSelectedAsOfDate(e.target.value)} className={selectClass}>
+            {activeDates.map((d) => (
+              <option key={d} value={d}>
+                {formatShortDate(d)}
+              </option>
+            ))}
+          </select>
+        )}
+        {hasCustomRepricing && (
+          <button type="button" onClick={handleReset} className="text-xs text-muted-foreground underline hover:text-foreground">
+            Reset
+          </button>
+        )}
+      </div>
+
       <p className="text-xs text-muted-foreground">
-        Growth % is total reported-AUM growth from {effectiveA} to {effectiveB}. Price Performance % and Net Flow %
-        split that growth into two pieces — both are a % of {effectiveA}&apos;s reported AUM, so they always sum to
-        exactly Growth %. Top-N ranks by reported AUM in {effectiveB}.
+        Growth % is total reported-AUM growth from {effectiveA} to {effectiveB} — it never changes below, regardless
+        of the repricing settings above. When repricing {effectiveA}&apos;s holdings (the default), Price Performance
+        % and Net Flow % split Growth % into a price-driven piece and a flow-driven piece, both as a % of{" "}
+        {effectiveA}&apos;s reported AUM, so they always sum to exactly Growth %. When repricing {effectiveB}&apos;s
+        holdings instead, Net Flow isn&apos;t shown (there&apos;s no later reported figure to reconcile against), and
+        Price Performance % switches to a % of {effectiveB}&apos;s own reported AUM — a different, unrelated-to-Growth%
+        number. Top-N ranks by reported AUM in {effectiveB}.
       </p>
 
       <div className="overflow-x-auto rounded-lg border bg-card">
@@ -270,12 +369,38 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
               </TableHead>
               <SortableHead label={`Reported AUM (${effectiveA})`} sk="periodAReportedAumCr" {...headProps} />
               <SortableHead label={`Reported AUM (${effectiveB})`} sk="periodBReportedAumCr" {...headProps} />
+              <SortableHead
+                label={computedColumnLabel}
+                sk="computedAtDateCr"
+                {...headProps}
+                title={`${basisPeriodLabel}'s holdings repriced as of the selected date above.`}
+              />
               <SortableHead label="Growth (Cr)" sk="growthCr" {...headProps} />
               <SortableHead label="Growth %" sk="growthPct" {...headProps} />
-              <SortableHead label="Price Performance (Cr)" sk="pricePerformanceCr" {...headProps} title={PRICE_PERF_TITLE} />
-              <SortableHead label="Price Performance %" sk="pricePerformancePct" {...headProps} title={PRICE_PERF_TITLE} />
-              <SortableHead label="Net Flow (Cr)" sk="netFlowCr" {...headProps} title={NET_FLOW_TITLE} />
-              <SortableHead label={`Net Flow % (of ${effectiveA} AUM)`} sk="netFlowPct" {...headProps} title={NET_FLOW_TITLE} />
+              <SortableHead
+                label="Price Performance (Cr)"
+                sk="pricePerformanceCr"
+                {...headProps}
+                title={pricePerfTitle(effectiveBasis, effectiveA, effectiveB, effectiveAsOfDate)}
+              />
+              <SortableHead
+                label="Price Performance %"
+                sk="pricePerformancePct"
+                {...headProps}
+                title={pricePerfTitle(effectiveBasis, effectiveA, effectiveB, effectiveAsOfDate)}
+              />
+              <SortableHead
+                label="Net Flow (Cr)"
+                sk="netFlowCr"
+                {...headProps}
+                title={netFlowTitle(effectiveBasis, effectiveA, effectiveB)}
+              />
+              <SortableHead
+                label={`Net Flow % (of ${effectiveA} AUM)`}
+                sk="netFlowPct"
+                {...headProps}
+                title={netFlowTitle(effectiveBasis, effectiveA, effectiveB)}
+              />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -292,6 +417,7 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {formatCr(row.periodBReportedAumCr)}
                 </TableCell>
+                <AumCrCell value={row.computedAtDateCr} />
                 <DeltaCrCell value={row.growthCr} />
                 <PctCell value={row.growthPct} />
                 <DeltaCrCell value={row.pricePerformanceCr} />

@@ -3,29 +3,56 @@ import { db } from "../db/client";
 import { amcPeriods, amcs, liveAumDailySnapshot } from "../db/schema";
 import { lastDayOfReportMonth } from "./report-period";
 
+// Which period's holdings get repriced to the chosen date. "A" (the default)
+// reprices the earlier period's frozen holdings -- Price Performance/Net Flow
+// then split Growth % cleanly, for any date, since Net Flow is defined as
+// "whatever's left of Growth % once Price Performance is known." "B" reprices
+// the later period's own holdings instead -- there's no third, still-later
+// reported figure to reconcile against, so Net Flow has no coherent meaning
+// there and is always null; Price Performance switches to being anchored on
+// B's own reported AUM instead (matching the Overview tab's own "delta since
+// report" framing), and is a different, unrelated-to-Growth% number.
+export type RepriceBasis = "A" | "B";
+
+export interface AumRepriceOverride {
+  basis: RepriceBasis;
+  // Resolved date to reprice to, or null when the basis period has zero
+  // backfilled snapshots at all -- skips the repricing query entirely rather
+  // than guessing, so computedAtDateCr comes back null for every AMC.
+  asOfDate: string | null;
+}
+
 export interface AumGrowthRow {
   amcId: number;
   slug: string;
   overviewName: string;
   periodAReportedAumCr: number;
   periodBReportedAumCr: number;
-  // B - A. Never null -- needs only each period's own reportedAumCr.
+  // B - A. Never null -- needs only each period's own reportedAumCr. Never
+  // affected by repriceBasis/asOfDate -- it has nothing to do with repricing.
   growthCr: number;
   // (B - A) / A
   growthPct: number | null;
-  // computedB - A -- computedB is periodA's holdings repriced to periodB's
-  // last trading day (see backfillDailySnapshots). Null when that backfill
-  // hasn't been run for this specific period pair yet.
+  // basis A: computedAtDate - A. basis B: computedAtDate - B (anchored on the
+  // basis period's own reported AUM either way). Null when that basis period
+  // hasn't been backfilled through the chosen date yet.
   pricePerformanceCr: number | null;
-  // (computedB - A) / A
+  // basis A: (computedAtDate - A) / A. basis B: (computedAtDate - B) / B --
+  // the denominator switches with the basis, since under B there's no longer
+  // a shared "A" baseline this figure is meant to relate back to.
   pricePerformancePct: number | null;
-  // B - computedB. growthCr = pricePerformanceCr + netFlowCr exactly,
-  // whenever both are non-null (same identity the % versions satisfy).
+  // B - computedAtDate, only when basis = A (see RepriceBasis doc comment
+  // for why basis = B has no coherent Net Flow). growthCr = pricePerformanceCr
+  // + netFlowCr exactly whenever both are non-null, for any chosen date under
+  // basis A -- not just at periodB's month-end.
   netFlowCr: number | null;
-  // (B - computedB) / A -- same denominator as pricePerformancePct, so the
-  // two always sum to exactly growthPct.
+  // (B - computedAtDate) / A, only when basis = A -- same denominator as
+  // pricePerformancePct (basis A), so the two always sum to exactly growthPct.
   netFlowPct: number | null;
-  computedBAumCr: number | null;
+  // The basis period's holdings repriced as of the resolved date -- basis A
+  // by default, matching the pre-existing "computedBAumCr" concept exactly
+  // when asOfDate resolves to periodB's month-end (the default).
+  computedAtDateCr: number | null;
 }
 
 /**
@@ -36,6 +63,24 @@ export interface AumGrowthRow {
 export async function getAvailableReportPeriods(): Promise<string[]> {
   const rows = await db.selectDistinct({ reportPeriod: amcPeriods.reportPeriod }).from(amcPeriods).orderBy(asc(amcPeriods.reportPeriod));
   return rows.map((r) => r.reportPeriod);
+}
+
+/**
+ * Every calendar date that has at least one backfilled liveAumDailySnapshot
+ * row for the given period's holdings, oldest first -- for populating the
+ * "reprice as of" date picker so it can only ever offer dates that actually
+ * have data (never an empty result). Doesn't require every AMC to have a row
+ * on a given date, same tolerance getAvailableReportPeriods already has for
+ * periods -- an individual AMC still degrades to null/"—" for a date it's
+ * missing, same as computedAtDateCr already does.
+ */
+export async function getAvailableSnapshotDates(reportPeriod: string): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ snapshotDate: liveAumDailySnapshot.snapshotDate })
+    .from(liveAumDailySnapshot)
+    .where(eq(liveAumDailySnapshot.reportPeriod, reportPeriod))
+    .orderBy(asc(liveAumDailySnapshot.snapshotDate));
+  return rows.map((r) => r.snapshotDate);
 }
 
 /**
@@ -55,8 +100,19 @@ export async function getAvailableReportPeriods(): Promise<string[]> {
  * growthPct still works regardless, since it only needs each period's own
  * reportedAumCr.
  */
-export async function getAumGrowthComparison(periodA: string, periodB: string): Promise<AumGrowthRow[]> {
-  const monthEndDate = lastDayOfReportMonth(periodB);
+export async function getAumGrowthComparison(
+  periodA: string,
+  periodB: string,
+  override?: AumRepriceOverride
+): Promise<AumGrowthRow[]> {
+  // No override -> exactly today's pre-existing behavior: reprice A's
+  // holdings through B's month-end. An override with asOfDate = null means
+  // "this basis period has zero backfilled snapshots at all" -- skip the
+  // repricing query entirely rather than falling back to a default, so
+  // computedAtDateCr comes back null for every AMC instead of a wrong value.
+  const basis: RepriceBasis = override?.basis ?? "A";
+  const basisPeriod = basis === "B" ? periodB : periodA;
+  const boundDate: string | null = override ? override.asOfDate : lastDayOfReportMonth(periodB);
 
   const [periodRows, baselineSnapshots] = await Promise.all([
     db
@@ -70,21 +126,23 @@ export async function getAumGrowthComparison(periodA: string, periodB: string): 
       .from(amcPeriods)
       .innerJoin(amcs, eq(amcPeriods.amcId, amcs.id))
       .where(inArray(amcPeriods.reportPeriod, [periodA, periodB])),
-    db
-      .select({
-        amcId: liveAumDailySnapshot.amcId,
-        snapshotDate: liveAumDailySnapshot.snapshotDate,
-        liveAumCr: liveAumDailySnapshot.liveAumCr,
-      })
-      .from(liveAumDailySnapshot)
-      .where(and(eq(liveAumDailySnapshot.reportPeriod, periodA), lte(liveAumDailySnapshot.snapshotDate, monthEndDate)))
-      .orderBy(desc(liveAumDailySnapshot.snapshotDate)),
+    boundDate !== null
+      ? db
+          .select({
+            amcId: liveAumDailySnapshot.amcId,
+            snapshotDate: liveAumDailySnapshot.snapshotDate,
+            liveAumCr: liveAumDailySnapshot.liveAumCr,
+          })
+          .from(liveAumDailySnapshot)
+          .where(and(eq(liveAumDailySnapshot.reportPeriod, basisPeriod), lte(liveAumDailySnapshot.snapshotDate, boundDate)))
+          .orderBy(desc(liveAumDailySnapshot.snapshotDate))
+      : Promise.resolve([]),
   ]);
 
-  const computedBByAmcId = new Map<number, number>();
+  const computedAtDateByAmcId = new Map<number, number>();
   for (const r of baselineSnapshots) {
-    if (!computedBByAmcId.has(r.amcId)) {
-      computedBByAmcId.set(r.amcId, Number(r.liveAumCr));
+    if (!computedAtDateByAmcId.has(r.amcId)) {
+      computedAtDateByAmcId.set(r.amcId, Number(r.liveAumCr));
     }
   }
 
@@ -104,11 +162,15 @@ export async function getAumGrowthComparison(periodA: string, periodB: string): 
     const growthCr = periodBReportedAumCr - periodAReportedAumCr;
     const growthPct = periodAReportedAumCr !== 0 ? growthCr / periodAReportedAumCr : null;
 
-    const computedBAumCr = computedBByAmcId.get(amcId) ?? null;
-    const pricePerformanceCr = computedBAumCr !== null ? computedBAumCr - periodAReportedAumCr : null;
-    const pricePerformancePct =
-      pricePerformanceCr !== null && periodAReportedAumCr !== 0 ? pricePerformanceCr / periodAReportedAumCr : null;
-    const netFlowCr = computedBAumCr !== null ? periodBReportedAumCr - computedBAumCr : null;
+    const computedAtDateCr = computedAtDateByAmcId.get(amcId) ?? null;
+    const anchorCr = basis === "B" ? periodBReportedAumCr : periodAReportedAumCr;
+    const pricePerformanceCr = computedAtDateCr !== null ? computedAtDateCr - anchorCr : null;
+    const pricePerformancePct = pricePerformanceCr !== null && anchorCr !== 0 ? pricePerformanceCr / anchorCr : null;
+
+    // Net Flow has no coherent meaning when repricing B's own holdings -- see
+    // the RepriceBasis doc comment. Always null under basis B, regardless of
+    // whether computedAtDateCr resolved.
+    const netFlowCr = basis === "A" && computedAtDateCr !== null ? periodBReportedAumCr - computedAtDateCr : null;
     const netFlowPct = netFlowCr !== null && periodAReportedAumCr !== 0 ? netFlowCr / periodAReportedAumCr : null;
 
     rows.push({
@@ -123,7 +185,7 @@ export async function getAumGrowthComparison(periodA: string, periodB: string): 
       pricePerformancePct,
       netFlowCr,
       netFlowPct,
-      computedBAumCr,
+      computedAtDateCr,
     });
   }
 
