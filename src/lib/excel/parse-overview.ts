@@ -5,7 +5,12 @@ import type { OverviewRow } from "./types";
 
 const HEADER_ROW_INDEX = 5; // row 6 (1-based)
 const DATA_START_INDEX = 6; // row 7 (1-based)
-const EXPECTED_AMC_COUNT = 56;
+// Ceiling, not an exact target: the industry has only ever grown, so a
+// historical workbook (an older month) legitimately has FEWER AMC rows than
+// today's -- funds launch, they don't retroactively un-launch. A count above
+// this constant means either a genuinely new AMC (bump this + add it to
+// data/amc-name-map.json) or a parsing bug reading into unrelated rows.
+const MAX_AMC_COUNT = 56;
 
 const COL = {
   fundHouseName: 1,
@@ -58,10 +63,11 @@ export function parseOverviewSheet(wb: WorkBook): OverviewRow[] {
     });
   }
 
-  if (result.length !== EXPECTED_AMC_COUNT) {
+  if (result.length === 0 || result.length > MAX_AMC_COUNT) {
     throw new Error(
-      `[Overview] Expected exactly ${EXPECTED_AMC_COUNT} AMC rows but parsed ${result.length}. ` +
-        `The workbook's AMC list may have changed — update EXPECTED_AMC_COUNT and data/amc-name-map.json if this is intentional.`
+      `[Overview] Parsed ${result.length} AMC rows, expected somewhere between 1 and ${MAX_AMC_COUNT}. ` +
+        `The workbook's AMC list may have grown beyond MAX_AMC_COUNT, or this is a parsing bug -- ` +
+        `update MAX_AMC_COUNT and data/amc-name-map.json if a genuinely new AMC was added.`
     );
   }
 

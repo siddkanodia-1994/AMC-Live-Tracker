@@ -49,9 +49,15 @@ export function assertMapCoversWorkbook(wb: WorkBook, overviewRows: OverviewRow[
     );
   }
 
-  if (overviewRows.length !== AMC_NAME_MAP.length) {
+  // Not an exact-match requirement: a historical workbook (an older month)
+  // legitimately has fewer AMCs than the current map, since funds launch and
+  // never retroactively un-launch. Every row's name is already confirmed to
+  // exist in the map above, so the only way this count could exceed the
+  // map's is a duplicate AMC name within the workbook itself -- a genuine
+  // data problem worth catching, unlike simply having fewer rows.
+  if (overviewRows.length > AMC_NAME_MAP.length) {
     throw new Error(
-      `[amc-name-map] Overview has ${overviewRows.length} AMCs but the map has ${AMC_NAME_MAP.length} entries — counts must reconcile.`
+      `[amc-name-map] Overview has ${overviewRows.length} AMCs, more than the map's ${AMC_NAME_MAP.length} entries — likely a duplicate AMC name in the workbook.`
     );
   }
 }

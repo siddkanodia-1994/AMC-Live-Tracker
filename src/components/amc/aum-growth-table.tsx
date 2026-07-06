@@ -122,9 +122,9 @@ function TotalsRow({ label, totals, muted }: { label: string; totals: GrowthTota
       <TableCell>{label}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalPeriodAReportedAumCr)}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalPeriodBReportedAumCr)}</TableCell>
-      <AumCrCell value={totals.totalComputedAtDateCr} />
       <DeltaCrCell value={totals.totalGrowthCr} />
       <PctCell value={totals.totalGrowthPct} />
+      <AumCrCell value={totals.totalComputedAtDateCr} />
       <DeltaCrCell value={totals.totalPricePerformanceCr} />
       <PctCell value={totals.totalPricePerformancePct} />
       <DeltaCrCell value={totals.totalNetFlowCr} />
@@ -369,14 +369,14 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
               </TableHead>
               <SortableHead label={`Reported AUM (${effectiveA})`} sk="periodAReportedAumCr" {...headProps} />
               <SortableHead label={`Reported AUM (${effectiveB})`} sk="periodBReportedAumCr" {...headProps} />
+              <SortableHead label="Growth (Cr)" sk="growthCr" {...headProps} />
+              <SortableHead label="Growth %" sk="growthPct" {...headProps} />
               <SortableHead
                 label={computedColumnLabel}
                 sk="computedAtDateCr"
                 {...headProps}
                 title={`${basisPeriodLabel}'s holdings repriced as of the selected date above.`}
               />
-              <SortableHead label="Growth (Cr)" sk="growthCr" {...headProps} />
-              <SortableHead label="Growth %" sk="growthPct" {...headProps} />
               <SortableHead
                 label="Price Performance (Cr)"
                 sk="pricePerformanceCr"
@@ -417,9 +417,9 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {formatCr(row.periodBReportedAumCr)}
                 </TableCell>
-                <AumCrCell value={row.computedAtDateCr} />
                 <DeltaCrCell value={row.growthCr} />
                 <PctCell value={row.growthPct} />
+                <AumCrCell value={row.computedAtDateCr} />
                 <DeltaCrCell value={row.pricePerformanceCr} />
                 <PctCell value={row.pricePerformancePct} />
                 <DeltaCrCell value={row.netFlowCr} />

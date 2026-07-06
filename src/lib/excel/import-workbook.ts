@@ -20,14 +20,19 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
   const overviewByName = new Map(overviewRows.map((r) => [r.overviewName, r]));
   const allWarnings: string[] = [];
   let holdingsImported = 0;
+  let amcsImported = 0;
 
   await transactionalDb.transaction(async (tx) => {
     for (const entry of getAmcMap()) {
       const overviewRow = overviewByName.get(entry.overviewName);
       if (!overviewRow) {
-        // assertMapCoversWorkbook already guarantees this can't happen, but keep
-        // the invariant explicit rather than silently skipping.
-        throw new Error(`[import] No Overview row found for mapped AMC "${entry.overviewName}"`);
+        // A mapped AMC with no Overview row in THIS workbook -- expected for
+        // a historical (older) import, since a fund that launched later
+        // simply didn't exist yet in an earlier month. assertMapCoversWorkbook
+        // already guarantees the reverse (every row IN the workbook has a map
+        // entry), so this is a legitimate skip, not a data-integrity problem.
+        allWarnings.push(`[${entry.overviewName}] Not present in this workbook -- skipped (likely didn't exist yet as of this period).`);
+        continue;
       }
 
       const parsedSheet = parseAmcSheet(wb, entry.sheetName);
@@ -107,6 +112,7 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
         );
         holdingsImported += parsedSheet.holdings.length;
       }
+      amcsImported++;
     }
 
     // Advance the "live" period pointer only forward, never backward — an
@@ -134,7 +140,7 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
     await tx.insert(importLog).values({
       fileName,
       reportPeriod,
-      amcsImported: getAmcMap().length,
+      amcsImported,
       holdingsImported,
       warnings: allWarnings,
     });
@@ -142,7 +148,7 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
 
   return {
     reportPeriod,
-    amcsImported: getAmcMap().length,
+    amcsImported,
     holdingsImported,
     warnings: allWarnings,
   };
