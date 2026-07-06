@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCr, formatDeltaCr, formatPct, formatShortDate } from "@/lib/utils/format";
+import { closestDateAtOrBefore } from "@/lib/aum/report-period";
 import type { TopNOption } from "@/lib/utils/top-n";
 import { useAumGrowth } from "@/hooks/use-aum-growth";
 import type { AumGrowthRow, RepriceBasis } from "@/lib/aum/aum-growth";
@@ -232,6 +233,18 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
     setSelectedAsOfDate(null);
   }
 
+  // The native date input's calendar lets you click any day in [min, max],
+  // not just ones with real backfilled data (there's no reliable
+  // cross-browser way to gray out individual invalid dates inside a native
+  // picker). Snap whatever's picked to the closest date that actually has
+  // data, using the same "closest on or before" tolerance the server-side
+  // query already uses -- so the calendar is a real month-grid picker, but
+  // can never actually select an empty date.
+  function handleAsOfDateInputChange(raw: string) {
+    if (!raw) return;
+    setSelectedAsOfDate(closestDateAtOrBefore(activeDates, raw));
+  }
+
   const rows = useMemo(() => data?.rows ?? [], [data]);
 
   // Top-N is always by periodB's reported AUM specifically (the closest
@@ -328,13 +341,15 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
             No backfilled data for {basisPeriodLabel} yet — run the historical backfill for it.
           </span>
         ) : (
-          <select value={effectiveAsOfDate ?? ""} onChange={(e) => setSelectedAsOfDate(e.target.value)} className={selectClass}>
-            {activeDates.map((d) => (
-              <option key={d} value={d}>
-                {formatShortDate(d)}
-              </option>
-            ))}
-          </select>
+          <input
+            type="date"
+            value={effectiveAsOfDate ?? ""}
+            min={activeDates[0]}
+            max={activeDates[activeDates.length - 1]}
+            onChange={(e) => handleAsOfDateInputChange(e.target.value)}
+            className={selectClass}
+            title={`Pick any date -- snaps to the closest date with real backfilled data (${formatShortDate(activeDates[0])} to ${formatShortDate(activeDates[activeDates.length - 1])}).`}
+          />
         )}
         {hasCustomRepricing && (
           <button type="button" onClick={handleReset} className="text-xs text-muted-foreground underline hover:text-foreground">
