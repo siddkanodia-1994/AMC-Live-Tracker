@@ -254,7 +254,7 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
         exactly Growth %. Top-N ranks by reported AUM in {effectiveB}.
       </p>
 
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>
           <TableHeader>
             <TableRow>

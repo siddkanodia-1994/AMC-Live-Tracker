@@ -123,7 +123,7 @@ export function CashHoldingsTable({ topN }: { topN: TopNOption }) {
         should track closely; a large gap on a given AMC is worth investigating rather than trusting blindly.
         Top-N ranks by reported AUM in {formatMonthLabel(data.currentPeriod)}.
       </p>
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>
           <TableHeader>
             <TableRow>

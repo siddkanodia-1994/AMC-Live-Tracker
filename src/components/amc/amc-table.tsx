@@ -240,7 +240,7 @@ export function AmcTable({
         <p className="text-xs text-muted-foreground">Showing all matches — the Top-N selector above is ignored while searching</p>
       )}
 
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>
           <TableHeader>
             <TableRow>

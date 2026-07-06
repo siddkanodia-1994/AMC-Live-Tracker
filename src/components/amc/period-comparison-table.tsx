@@ -146,7 +146,7 @@ export function PeriodComparisonTable({ slug }: { slug: string }) {
         AMC fully exited before {data.priorPeriod} won&apos;t appear here — only changes visible across these two
         periods are shown.
       </p>
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>
           <TableHeader>
             <TableRow>

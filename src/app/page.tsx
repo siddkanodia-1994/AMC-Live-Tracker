@@ -20,7 +20,7 @@ export default async function OverviewPage() {
   const history = initialData ? await getIndustryAumHistory().catch((): AumHistoryPoint[] => []) : [];
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+    <div className="px-4 py-8 sm:px-6">
       <AmcGrid initialData={initialData} history={history} />
     </div>
   );

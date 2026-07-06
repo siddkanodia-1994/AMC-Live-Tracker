@@ -87,7 +87,7 @@ export function HoldingsTable({ holdings }: { holdings: HoldingLiveView[] }) {
   const headProps = { sortKey, sortDesc, onToggle: toggleSort };
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
+    <div className="overflow-x-auto rounded-lg border bg-card">
       <Table>
         <TableHeader>
           <TableRow>

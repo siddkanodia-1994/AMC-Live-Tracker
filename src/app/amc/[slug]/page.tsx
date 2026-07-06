@@ -25,7 +25,7 @@ export default async function AmcDetailPage({ params }: { params: Promise<{ slug
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+    <div className="px-4 py-8 sm:px-6">
       {initialData ? (
         <AmcDetailView slug={slug} initialData={initialData} history={history} />
       ) : (
