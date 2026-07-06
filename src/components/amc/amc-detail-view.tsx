@@ -44,7 +44,7 @@ export function AmcDetailView({
   const { amc, holdings } = data;
 
   return (
-    <div className="space-y-6">
+    <div className="amc-detail-darker-text space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">{amc.overviewName}</h1>
@@ -148,7 +148,7 @@ function Stat({
   title?: string;
 }) {
   return (
-    <div className="rounded-lg border p-3" title={title}>
+    <div className="rounded-lg border bg-card p-3" title={title}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <div className="text-lg font-semibold tabular-nums whitespace-nowrap">{value}</div>

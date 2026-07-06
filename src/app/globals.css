@@ -129,3 +129,16 @@
     @apply font-sans;
   }
 }
+
+/* AMC detail page only, light mode only -- 2 steps darker on the neutral
+   scale (950->true black, 500->700) for legibility against the page's
+   gray background. Reverts to the normal dark-mode values under .dark so
+   dark mode's light-on-dark text is untouched. */
+.amc-detail-darker-text {
+  --foreground: oklch(0 0 0);
+  --muted-foreground: oklch(0.371 0 0);
+}
+.dark .amc-detail-darker-text {
+  --foreground: oklch(0.985 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+}
