@@ -111,7 +111,7 @@ export const foreignPriceCache = pgTable("foreign_price_cache", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// Key-value settings: 'dhan_access_token', 'dhan_token_updated_at',
+// Key-value settings: 'dhan_access_token', 'dhan_client_id',
 // 'current_report_period', 'usd_inr_rate', 'usd_inr_rate_as_of'.
 export const appSettings = pgTable("app_settings", {
   key: text("key").primaryKey(),

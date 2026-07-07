@@ -1,4 +1,4 @@
-import { getActiveDhanToken } from "./token";
+import { getActiveDhanClientId, getActiveDhanToken } from "./token";
 import type { ExchangeSegment } from "./types";
 
 const DHAN_HISTORICAL_URL = "https://api.dhan.co/v2/charts/historical";
@@ -13,12 +13,6 @@ interface DhanHistoricalResponseBody {
 export interface HistoricalClose {
   date: string; // "YYYY-MM-DD", IST calendar date
   close: number;
-}
-
-function requireClientId(): string {
-  const clientId = process.env.DHAN_CLIENT_ID;
-  if (!clientId) throw new Error("DHAN_CLIENT_ID is not configured");
-  return clientId;
 }
 
 function timestampToIstDate(timestampSeconds: number): string {
@@ -47,7 +41,7 @@ export async function fetchHistoricalCloses(
   let clientId: string;
   try {
     token = await getActiveDhanToken();
-    clientId = requireClientId();
+    clientId = await getActiveDhanClientId();
   } catch {
     return [];
   }

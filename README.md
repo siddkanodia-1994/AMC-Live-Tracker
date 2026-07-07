@@ -37,12 +37,16 @@ the once-a-month reported figure.
 
 ## Daily operational task: refreshing the DHAN token
 
-**DHAN access tokens expire every ~24 hours.** Unlike most config, this is *not* an environment
-variable — it's stored in the database (`app_settings` table) so it can be updated from the `/admin`
-page without a redeploy. Each day:
+**DHAN access tokens expire every ~24 hours.** Both the access token and the client ID it's paired
+with are stored in the database (`app_settings` table), editable together from the `/admin` page
+without a redeploy — the `DHAN_CLIENT_ID` env var is now only a fallback default used until something's
+been saved there. Each day:
 
 1. Log in to Dhan Web → Profile → DhanHQ Trading APIs → generate a new access token.
-2. Go to `/admin` on your deployed app and paste the new token into the DHAN access token field.
+2. Go to `/admin` on your deployed app and paste the new token into the DHAN credentials card. If you
+   generated it under a *different* DHAN account than the one already configured, update the Client ID
+   field too — a token only works with the client ID it was generated under, and saving a pair DHAN
+   rejects is blocked by a live test call before anything is persisted.
 
 If the token expires and isn't refreshed, the app keeps working — it just falls back to last-reported
 values for every holding and shows a banner saying pricing is unavailable.
@@ -101,8 +105,10 @@ Excel upload button on `/admin`) each month with the new file.
 ### 3. DHAN API
 
 1. Get API access from your [Dhan](https://dhan.co) account (Profile → DhanHQ Trading APIs).
-2. Set `DHAN_CLIENT_ID` in your env — this is static and doesn't rotate.
-3. Generate an access token and paste it into `/admin` (see above) — this rotates daily.
+2. Set `DHAN_CLIENT_ID` in your env as a fallback default — optional once you've saved a client ID
+   from `/admin`, since the database value takes precedence from then on.
+3. Generate an access token and paste both it and your client ID into `/admin` (see above) — the token
+   rotates daily, the client ID rarely if ever.
 4. Run the instrument-master sync once so ISINs can be mapped to DHAN's security IDs:
 
 ```bash

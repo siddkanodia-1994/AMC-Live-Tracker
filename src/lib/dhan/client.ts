@@ -1,5 +1,5 @@
 import { DHAN_MAX_INSTRUMENTS_PER_REQUEST, DHAN_REQUEST_INTERVAL_MS } from "../utils/constants";
-import { getActiveDhanToken } from "./token";
+import { getActiveDhanClientId, getActiveDhanToken } from "./token";
 import type { ExchangeSegment, LtpRequestItem, LtpResult } from "./types";
 
 const DHAN_LTP_URL = "https://api.dhan.co/v2/marketfeed/ltp";
@@ -25,10 +25,47 @@ function chunkRequests(requests: LtpRequestItem[], maxPerChunk: number): LtpRequ
   return chunks;
 }
 
-function requireClientId(): string {
-  const clientId = process.env.DHAN_CLIENT_ID;
-  if (!clientId) throw new Error("DHAN_CLIENT_ID is not configured");
-  return clientId;
+export type DhanCredentialTestResult =
+  | { ok: true }
+  | { ok: false; status: number | null; message: string };
+
+/**
+ * One isolated LTP request for a single instrument, used by the admin
+ * settings API to confirm a client-id/token pair actually works before it's
+ * persisted -- distinct from fetchLtps, which batches/paces/degrades for the
+ * live computation path and never throws.
+ */
+export async function testDhanCredentials(
+  clientId: string,
+  token: string,
+  sample: { securityId: string; exchangeSegment: ExchangeSegment }
+): Promise<DhanCredentialTestResult> {
+  try {
+    const res = await fetch(DHAN_LTP_URL, {
+      method: "POST",
+      headers: {
+        "access-token": token,
+        "client-id": clientId,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ [sample.exchangeSegment]: [Number(sample.securityId)] }),
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, status: res.status, message: "DHAN rejected this client ID/token pair — check both values." };
+    }
+    if (!res.ok) {
+      return { ok: false, status: res.status, message: `DHAN request failed with status ${res.status}` };
+    }
+    const json = (await res.json()) as DhanLtpResponseBody;
+    if (json.status !== "success") {
+      return { ok: false, status: res.status, message: `DHAN request returned status "${json.status}"` };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, status: null, message: err instanceof Error ? err.message : "Network error calling DHAN" };
+  }
 }
 
 /**
@@ -51,7 +88,7 @@ export async function fetchLtps(requests: LtpRequestItem[]): Promise<LtpResult> 
   let clientId: string;
   try {
     token = await getActiveDhanToken();
-    clientId = requireClientId();
+    clientId = await getActiveDhanClientId();
   } catch (err) {
     for (const r of requests) failedSecurityIds.add(segmentKey(r));
     return {

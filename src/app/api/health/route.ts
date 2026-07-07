@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { appSettings, holdings, instrumentMap } from "@/lib/db/schema";
-import { getDhanTokenStatus } from "@/lib/dhan/token";
+import { getDhanClientIdStatus, getDhanTokenStatus } from "@/lib/dhan/token";
 
 export async function GET() {
   try {
@@ -26,8 +26,7 @@ export async function GET() {
       .innerJoin(instrumentMap, eq(holdings.isin, instrumentMap.isin))
       .where(eq(holdings.isPriceable, true));
 
-    const tokenStatus = await getDhanTokenStatus();
-    const clientId = process.env.DHAN_CLIENT_ID;
+    const [tokenStatus, clientIdStatus] = await Promise.all([getDhanTokenStatus(), getDhanClientIdStatus()]);
 
     return NextResponse.json({
       db: "ok",
@@ -36,8 +35,7 @@ export async function GET() {
       priceableHoldingsCount: priceableCount,
       mappedPriceableHoldingsCount: mappedPriceableCount,
       dhanToken: tokenStatus,
-      dhanClientIdConfigured: Boolean(clientId),
-      dhanClientIdLength: clientId?.length ?? 0,
+      dhanClientId: clientIdStatus,
     });
   } catch (err) {
     console.error(err);
