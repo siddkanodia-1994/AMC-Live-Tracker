@@ -6,6 +6,7 @@ import { AmcTable } from "./amc-table";
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { AumGrowthTable } from "./aum-growth-table";
 import { AumTrendChart } from "./aum-trend-chart";
+import { TotalAumGrowthTable } from "./total-aum-growth-table";
 import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { SearchBar } from "@/components/layout/search-bar";
@@ -161,6 +162,7 @@ export function AmcGrid({
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="aum-growth">AUM Growth</TabsTrigger>
+            <TabsTrigger value="total-aum-growth">Total AUM Growth</TabsTrigger>
             <TabsTrigger value="cash-holdings">Cash Holdings</TabsTrigger>
           </TabsList>
           <div className="flex items-center gap-1 text-sm">
@@ -203,6 +205,9 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="aum-growth">
           <AumGrowthTable topN={topN} />
+        </TabsContent>
+        <TabsContent value="total-aum-growth">
+          <TotalAumGrowthTable topN={topN} />
         </TabsContent>
         <TabsContent value="cash-holdings">
           <CashHoldingsTable topN={topN} />

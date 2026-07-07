@@ -55,6 +55,11 @@ async function main() {
       const sheetTotalHoldingsValueCr = aprilHoldingRows.reduce((sum, h) => sum + Number(h.marketValueCr), 0);
       const aprilReportedAumCr = Number(mayPeriod.prevReportedAumCr);
       const residualPlugCr = aprilReportedAumCr - sheetTotalHoldingsValueCr;
+      // May's sheet embeds April's true Income/Debt and Other Funds AUM as its own
+      // "prev" values (same technique as prevReportedAumCr above) -- carry them
+      // over directly rather than re-deriving anything.
+      const aprilIncomeDebtAumCr = mayPeriod.prevIncomeDebtAumCr;
+      const aprilOtherFundsAumCr = mayPeriod.prevOtherFundsAumCr;
 
       await tx
         .insert(amcPeriods)
@@ -64,6 +69,8 @@ async function main() {
           reportedAumCr: String(aprilReportedAumCr),
           sheetTotalHoldingsValueCr: String(sheetTotalHoldingsValueCr),
           residualPlugCr: String(residualPlugCr),
+          incomeDebtAumCr: aprilIncomeDebtAumCr,
+          otherFundsAumCr: aprilOtherFundsAumCr,
         })
         .onConflictDoUpdate({
           target: [amcPeriods.amcId, amcPeriods.reportPeriod],
@@ -71,6 +78,8 @@ async function main() {
             reportedAumCr: String(aprilReportedAumCr),
             sheetTotalHoldingsValueCr: String(sheetTotalHoldingsValueCr),
             residualPlugCr: String(residualPlugCr),
+            incomeDebtAumCr: aprilIncomeDebtAumCr,
+            otherFundsAumCr: aprilOtherFundsAumCr,
             importedAt: new Date(),
           },
         });

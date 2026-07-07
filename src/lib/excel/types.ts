@@ -26,6 +26,10 @@ export interface ParsedHolding {
 export interface ParsedAmcSheet {
   sheetName: string;
   equityAumHeaderCr: number | null;
+  incomeDebtAumCr: number | null;
+  prevIncomeDebtAumCr: number | null;
+  otherFundsAumCr: number | null;
+  prevOtherFundsAumCr: number | null;
   holdings: ParsedHolding[];
   sheetTotalHoldingsValueCr: number;
   warnings: string[];

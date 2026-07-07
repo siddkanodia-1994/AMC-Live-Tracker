@@ -5,6 +5,8 @@ import { ISIN_FORMAT, isDebtInstrument } from "./instrument-classification";
 import type { ParsedAmcSheet, ParsedHolding } from "./types";
 
 const EQUITY_AUM_HEADER_ROW_INDEX = 2; // row 3 (1-based)
+const INCOME_DEBT_AUM_HEADER_ROW_INDEX = 3; // row 4 (1-based)
+const OTHER_FUNDS_AUM_HEADER_ROW_INDEX = 4; // row 5 (1-based)
 const HEADER_ROW_INDEX = 7; // row 8 (1-based)
 const DATA_START_INDEX = 8; // row 9 (1-based)
 
@@ -41,6 +43,30 @@ function normalizeIsin(value: unknown): string | null {
   if (value === 0 || value === "0") return null;
   if (value == null || String(value).trim() === "") return null;
   return String(value).trim();
+}
+
+/**
+ * Reads one of the fixed AUM-category header rows (Income/Debt Funds AUM, Other
+ * Funds AUM) that sit directly below the Growth/Equity AUM cross-check row on
+ * every AMC sheet — same column layout (current value at col 4, the embedded
+ * prior-period value at col 7) as the equity row, just never parsed until now.
+ */
+function readCategoryAumRow(
+  rows: unknown[][],
+  rowIndex: number,
+  label: string,
+  sheetName: string,
+  warnings: string[]
+): { currentCr: number | null; prevCr: number | null } {
+  const row = rows[rowIndex] ?? [];
+  const rowLabel = String(row[0] ?? "");
+  if (!/AUM/i.test(rowLabel)) {
+    warnings.push(
+      `[${sheetName}] Could not find the "${label}" header at row ${rowIndex + 1} (found "${rowLabel}") — skipping this category for this AMC.`
+    );
+    return { currentCr: null, prevCr: null };
+  }
+  return { currentCr: toNumber(row[4]), prevCr: toNumber(row[7]) };
 }
 
 interface RawRow {
@@ -86,6 +112,21 @@ export function parseAmcSheet(wb: WorkBook, sheetName: string): ParsedAmcSheet {
       } (found "${aumHeaderLabel}") — skipping cross-check for this AMC.`
     );
   }
+
+  const incomeDebtAumRow = readCategoryAumRow(
+    rows,
+    INCOME_DEBT_AUM_HEADER_ROW_INDEX,
+    "Income/Debt Funds AUM",
+    sheetName,
+    warnings
+  );
+  const otherFundsAumRow = readCategoryAumRow(
+    rows,
+    OTHER_FUNDS_AUM_HEADER_ROW_INDEX,
+    "Other Funds AUM",
+    sheetName,
+    warnings
+  );
 
   const rawRows: RawRow[] = [];
   let foreignHoldingCount = 0;
@@ -213,6 +254,10 @@ export function parseAmcSheet(wb: WorkBook, sheetName: string): ParsedAmcSheet {
   return {
     sheetName,
     equityAumHeaderCr,
+    incomeDebtAumCr: incomeDebtAumRow.currentCr,
+    prevIncomeDebtAumCr: incomeDebtAumRow.prevCr,
+    otherFundsAumCr: otherFundsAumRow.currentCr,
+    prevOtherFundsAumCr: otherFundsAumRow.prevCr,
     holdings,
     sheetTotalHoldingsValueCr,
     warnings,

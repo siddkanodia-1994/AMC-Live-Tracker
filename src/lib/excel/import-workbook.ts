@@ -51,6 +51,11 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
 
       const residualPlugCr = overviewRow.reportedAumCr - parsedSheet.sheetTotalHoldingsValueCr;
 
+      const incomeDebtAumCr = parsedSheet.incomeDebtAumCr != null ? String(parsedSheet.incomeDebtAumCr) : null;
+      const prevIncomeDebtAumCr = parsedSheet.prevIncomeDebtAumCr != null ? String(parsedSheet.prevIncomeDebtAumCr) : null;
+      const otherFundsAumCr = parsedSheet.otherFundsAumCr != null ? String(parsedSheet.otherFundsAumCr) : null;
+      const prevOtherFundsAumCr = parsedSheet.prevOtherFundsAumCr != null ? String(parsedSheet.prevOtherFundsAumCr) : null;
+
       const [amcRow] = await tx
         .insert(amcs)
         .values({ slug: entry.slug, overviewName: entry.overviewName, sheetName: entry.sheetName })
@@ -71,6 +76,10 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
           changeCr: String(overviewRow.changeCr),
           sheetTotalHoldingsValueCr: String(parsedSheet.sheetTotalHoldingsValueCr),
           residualPlugCr: String(residualPlugCr),
+          incomeDebtAumCr,
+          prevIncomeDebtAumCr,
+          otherFundsAumCr,
+          prevOtherFundsAumCr,
         })
         .onConflictDoUpdate({
           target: [amcPeriods.amcId, amcPeriods.reportPeriod],
@@ -81,6 +90,10 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
             changeCr: String(overviewRow.changeCr),
             sheetTotalHoldingsValueCr: String(parsedSheet.sheetTotalHoldingsValueCr),
             residualPlugCr: String(residualPlugCr),
+            incomeDebtAumCr,
+            prevIncomeDebtAumCr,
+            otherFundsAumCr,
+            prevOtherFundsAumCr,
             importedAt: new Date(),
           },
         });

@@ -45,6 +45,15 @@ export const amcPeriods = pgTable(
       scale: 4,
     }).notNull(),
     residualPlugCr: numeric("residual_plug_cr", { precision: 18, scale: 4 }).notNull(),
+    // Every figure above is actually only the AMC's Growth/Equity Funds AUM slice --
+    // confirmed from the source workbook, which breaks each AMC's Total MF AUM into
+    // three categories (Growth/Equity + Income/Debt + Other = Total). These two
+    // categories were never parsed until the Total AUM Growth tab needed them.
+    // Nullable: periods imported before this feature don't have them until backfilled.
+    incomeDebtAumCr: numeric("income_debt_aum_cr", { precision: 18, scale: 4 }),
+    prevIncomeDebtAumCr: numeric("prev_income_debt_aum_cr", { precision: 18, scale: 4 }),
+    otherFundsAumCr: numeric("other_funds_aum_cr", { precision: 18, scale: 4 }),
+    prevOtherFundsAumCr: numeric("prev_other_funds_aum_cr", { precision: 18, scale: 4 }),
     importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("amc_periods_amc_period_idx").on(t.amcId, t.reportPeriod)]
@@ -203,6 +212,29 @@ export const officialCceHistory = pgTable(
     importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("official_cce_history_amc_month_idx").on(t.amcId, t.month)]
+);
+
+// Manual overrides for the Total AUM Growth tab's editable columns (SIP Inflows,
+// Reported AUM, Income/Debt AUM, Other Funds AUM). One row per AMC per report period;
+// each column is nullable, meaning "not overridden -- use the computed/parsed default."
+// Scoped to reportPeriod (not a calendar date) since these represent "current period"
+// figures: overrides naturally stop applying once a new month is imported and
+// current_report_period advances, while old periods' overrides remain as history.
+export const totalAumGrowthOverrides = pgTable(
+  "total_aum_growth_overrides",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    reportPeriod: text("report_period").notNull(),
+    sipInflowOverrideCr: numeric("sip_inflow_override_cr", { precision: 18, scale: 4 }),
+    reportedAumOverrideCr: numeric("reported_aum_override_cr", { precision: 18, scale: 4 }),
+    incomeDebtAumOverrideCr: numeric("income_debt_aum_override_cr", { precision: 18, scale: 4 }),
+    otherFundsAumOverrideCr: numeric("other_funds_aum_override_cr", { precision: 18, scale: 4 }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("total_aum_growth_overrides_amc_period_idx").on(t.amcId, t.reportPeriod)]
 );
 
 // Audit trail for imports.

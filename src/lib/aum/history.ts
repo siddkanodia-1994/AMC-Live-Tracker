@@ -90,6 +90,53 @@ export async function getPreviousDayLiveAum(): Promise<Map<number, PreviousDayAu
   return map;
 }
 
+export interface LiveAumAsOf {
+  liveAumCr: number;
+  snapshotDate: string;
+}
+
+/**
+ * Each AMC's most recent canonical snapshot on or before an arbitrary date --
+ * the batched, date-parameterized sibling of getPreviousDayLiveAum, used by
+ * the Total AUM Growth tab's calendar-picked Live AUM column. AMCs with no
+ * canonical snapshot on or before the date are simply absent from the map.
+ */
+export async function getAllAmcsLiveAumAsOf(date: string): Promise<Map<number, LiveAumAsOf>> {
+  const rows = await db
+    .select({
+      amcId: liveAumDailySnapshot.amcId,
+      snapshotDate: liveAumDailySnapshot.snapshotDate,
+      liveAumCr: liveAumDailySnapshot.liveAumCr,
+    })
+    .from(liveAumDailySnapshot)
+    .where(and(lte(liveAumDailySnapshot.snapshotDate, date), eq(liveAumDailySnapshot.isCanonical, true)))
+    .orderBy(desc(liveAumDailySnapshot.snapshotDate));
+
+  const map = new Map<number, LiveAumAsOf>();
+  for (const r of rows) {
+    if (!map.has(r.amcId)) {
+      map.set(r.amcId, { liveAumCr: Number(r.liveAumCr), snapshotDate: r.snapshotDate });
+    }
+  }
+  return map;
+}
+
+/**
+ * Earliest and latest canonical snapshot dates across the whole app -- bounds
+ * the Total AUM Growth tab's calendar picker, mirroring how the AUM Growth
+ * tab bounds its own picker per report period.
+ */
+export async function getCanonicalSnapshotDateBounds(): Promise<{ minDate: string | null; maxDate: string | null }> {
+  const [row] = await db
+    .select({
+      minDate: sql<string | null>`min(${liveAumDailySnapshot.snapshotDate})`,
+      maxDate: sql<string | null>`max(${liveAumDailySnapshot.snapshotDate})`,
+    })
+    .from(liveAumDailySnapshot)
+    .where(eq(liveAumDailySnapshot.isCanonical, true));
+  return { minDate: row?.minDate ?? null, maxDate: row?.maxDate ?? null };
+}
+
 /**
  * Each priced ISIN's most recent stored price strictly before today (IST) —
  * the per-holding sibling of getPreviousDayLiveAum, keyed by ISIN rather than
