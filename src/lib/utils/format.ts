@@ -30,6 +30,15 @@ export function formatDeltaCr(valueCr: number): string {
   return `${sign}${formatCr(valueCr)}`;
 }
 
+export function formatReportPeriodLabel(period: string): string {
+  const [year, month] = period.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-IN", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 export function formatShortDate(isoDate: string): string {
   return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-IN", {
     day: "numeric",

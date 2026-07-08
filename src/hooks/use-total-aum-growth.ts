@@ -12,9 +12,12 @@ async function fetcher(url: string): Promise<TotalAumGrowthResult> {
 
 // No refreshInterval: Reported/Income-Debt/Other AUM only change on import;
 // Live AUM only changes once a day via the snapshot cron -- not worth polling.
-export function useTotalAumGrowth(asOfDate?: string) {
-  const qs = asOfDate ? `?asOfDate=${asOfDate}` : "";
-  return useSWR<TotalAumGrowthResult>(`/api/total-aum-growth${qs}`, fetcher, {
+export function useTotalAumGrowth(asOfDate?: string, reportPeriod?: string) {
+  const params = new URLSearchParams();
+  if (asOfDate) params.set("asOfDate", asOfDate);
+  if (reportPeriod) params.set("reportPeriod", reportPeriod);
+  const qs = params.toString();
+  return useSWR<TotalAumGrowthResult>(`/api/total-aum-growth${qs ? `?${qs}` : ""}`, fetcher, {
     revalidateOnFocus: false,
   });
 }

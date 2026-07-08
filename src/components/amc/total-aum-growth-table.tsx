@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EditNumberCell } from "./edit-number-cell";
-import { formatCr, formatDeltaCr, formatPct, formatShortDate } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import type { TopNOption } from "@/lib/utils/top-n";
 import { useTotalAumGrowth } from "@/hooks/use-total-aum-growth";
 import type { TotalAumGrowthRow } from "@/lib/aum/total-aum-growth";
@@ -134,18 +134,24 @@ const dateInputClass =
 
 export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
   const [selectedAsOfDate, setSelectedAsOfDate] = useState<string | null>(null);
-  const { data, error, isLoading, mutate } = useTotalAumGrowth(selectedAsOfDate ?? undefined);
+  const [selectedReportPeriod, setSelectedReportPeriod] = useState<string | null>(null);
+  const { data, error, isLoading, mutate } = useTotalAumGrowth(
+    selectedAsOfDate ?? undefined,
+    selectedReportPeriod ?? undefined
+  );
   const [sortKey, setSortKey] = useState<SortKey>("totalReportedCr");
   const [sortDesc, setSortDesc] = useState(true);
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const effectiveAsOfDate = selectedAsOfDate ?? data?.asOfDate ?? null;
+  const effectiveReportPeriod = selectedReportPeriod ?? data?.selectedReportPeriod ?? null;
+  const availableReportPeriods = data?.availableReportPeriods ?? [];
 
   async function saveOverride(amcId: number, field: string, newValue: number | null) {
     const res = await fetch("/api/total-aum-growth/override", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amcId, [field]: newValue }),
+      body: JSON.stringify({ amcId, reportPeriod: effectiveReportPeriod, [field]: newValue }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -205,6 +211,11 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
   }
 
   const liveAumColumnLabel = effectiveAsOfDate ? `Live AUM (${formatShortDate(effectiveAsOfDate)})` : "Live AUM";
+  const reportPeriodLabel = effectiveReportPeriod ? formatReportPeriodLabel(effectiveReportPeriod) : "";
+  const reportedAumColumnLabel = reportPeriodLabel ? `Reported AUM (${reportPeriodLabel})` : "Reported AUM";
+  const incomeDebtColumnLabel = reportPeriodLabel ? `Income/Debt AUM (${reportPeriodLabel})` : "Income/Debt AUM";
+  const otherFundsColumnLabel = reportPeriodLabel ? `Other Funds AUM (${reportPeriodLabel})` : "Other Funds AUM";
+  const totalReportedColumnLabel = reportPeriodLabel ? `Total (Reported) (${reportPeriodLabel})` : "Total (Reported)";
 
   return (
     <div className="space-y-3">
@@ -219,16 +230,29 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
           className={dateInputClass}
           title={`Pick any date -- snaps to the closest date with real tracked history (${formatShortDate(data.minDate)} to ${formatShortDate(data.maxDate)}).`}
         />
+        <span className="ml-4 text-muted-foreground">Reported AUM month</span>
+        <select
+          value={effectiveReportPeriod ?? ""}
+          onChange={(e) => e.target.value && setSelectedReportPeriod(e.target.value)}
+          className={dateInputClass}
+          title="Which month's Reported/Income-Debt/Other Funds AUM to compare against. Independent of the Live AUM date above."
+        >
+          {availableReportPeriods.map((p) => (
+            <option key={p} value={p}>
+              {formatReportPeriodLabel(p)}
+            </option>
+          ))}
+        </select>
       </div>
 
       <p className="text-xs text-muted-foreground">
         Every other tab tracks only each AMC&apos;s Growth/Equity Funds AUM. This tab surfaces the AMC&apos;s{" "}
         <em>true</em> total AUM (Growth/Equity + Income/Debt + Other Funds). Total (Live) estimates the current total
-        by combining the live-tracked, date-picked equity AUM with SIP Inflows (a flow estimate) and the last-reported
-        Income/Debt and Other Funds AUM (assumed unchanged since the last report). Total (Reported) is the AMC&apos;s
-        actual last-reported total. Growth % compares the two. SIP Inflows, Reported AUM, Income/Debt AUM, and Other
-        Funds AUM are editable — click a value to type a new one, or use the × to reset it back to the computed
-        default.
+        by combining the live-tracked, date-picked equity AUM with SIP Inflows (a flow estimate for the current
+        period, independent of the Reported AUM month selected above) and the selected month&apos;s Income/Debt and
+        Other Funds AUM. Total (Reported) is the AMC&apos;s actual reported total for that same selected month.
+        Growth % compares the two. SIP Inflows, Reported AUM, Income/Debt AUM, and Other Funds AUM are editable —
+        click a value to type a new one, or use the × to reset it back to the computed default.
       </p>
 
       <div className="overflow-x-auto rounded-lg border bg-card">
@@ -252,9 +276,9 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
                 {...headProps}
                 title="Defaults to the Overview tab's Est. Net Flow (Cr) for the current period. Editable."
               />
-              <SortableHead label="Reported AUM" sk="reportedAumCr" {...headProps} title="Editable." />
-              <SortableHead label="Income/Debt AUM" sk="incomeDebtAumCr" {...headProps} title="Editable." />
-              <SortableHead label="Other Funds AUM" sk="otherFundsAumCr" {...headProps} title="Editable." />
+              <SortableHead label={reportedAumColumnLabel} sk="reportedAumCr" {...headProps} title="Editable." />
+              <SortableHead label={incomeDebtColumnLabel} sk="incomeDebtAumCr" {...headProps} title="Editable." />
+              <SortableHead label={otherFundsColumnLabel} sk="otherFundsAumCr" {...headProps} title="Editable." />
               <SortableHead
                 label="Total (Live)"
                 sk="totalLiveCr"
@@ -262,7 +286,7 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
                 title="Live AUM + SIP Inflows + Income/Debt AUM + Other Funds AUM"
               />
               <SortableHead
-                label="Total (Reported)"
+                label={totalReportedColumnLabel}
                 sk="totalReportedCr"
                 {...headProps}
                 title="Reported AUM + Income/Debt AUM + Other Funds AUM"

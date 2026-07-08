@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, totalAumGrowthOverrides } from "../db/schema";
+import { getAvailableReportPeriods } from "./aum-growth";
 import { getAllAmcsLiveAumAsOf, getCanonicalSnapshotDateBounds, getNetFlowForPeriod } from "./history";
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
@@ -38,7 +39,9 @@ export interface TotalAumGrowthRow {
 }
 
 export interface TotalAumGrowthResult {
-  reportPeriod: string;
+  currentReportPeriod: string;
+  selectedReportPeriod: string;
+  availableReportPeriods: string[];
   asOfDate: string;
   minDate: string;
   maxDate: string;
@@ -49,18 +52,37 @@ export interface TotalAumGrowthResult {
  * Composes the Total AUM Growth tab: each AMC's true total AUM (Growth/Equity
  * + Income/Debt + Other, not just the Growth/Equity slice every other part of
  * this app tracks), combining live-tracked equity AUM as of a picked date
- * with a manually-adjustable flow estimate against the last reported total.
- * See total_aum_growth_overrides' schema comment for the override semantics.
+ * with a manually-adjustable flow estimate against a selected month's
+ * reported total. See total_aum_growth_overrides' schema comment for the
+ * override semantics.
+ *
+ * Two independent anchors: `asOfDate` (a real calendar date, drives Live AUM
+ * from actual tracked history) and `reportPeriod` (a report month, drives
+ * Reported/Income-Debt/Other AUM and their overrides). SIP Inflows is
+ * anchored to the CURRENT report period always, regardless of which
+ * `reportPeriod` is selected for the other three -- both its default
+ * (getNetFlowForPeriod) and its override always target currentReportPeriod,
+ * by explicit design choice, not an oversight.
  */
-export async function getTotalAumGrowth(requestedAsOfDate?: string): Promise<TotalAumGrowthResult> {
-  const reportPeriod = await getCurrentReportPeriod();
+export async function getTotalAumGrowth(options?: {
+  asOfDate?: string;
+  reportPeriod?: string;
+}): Promise<TotalAumGrowthResult> {
+  const currentReportPeriod = await getCurrentReportPeriod();
+  const availableReportPeriods = await getAvailableReportPeriods();
+  const selectedReportPeriod =
+    options?.reportPeriod && availableReportPeriods.includes(options.reportPeriod)
+      ? options.reportPeriod
+      : currentReportPeriod;
 
   const { minDate, maxDate } = await getCanonicalSnapshotDateBounds();
   if (!minDate || !maxDate) {
     throw new Error("No live AUM history has been captured yet — the daily snapshot cron hasn't run.");
   }
   const asOfDate =
-    requestedAsOfDate && requestedAsOfDate >= minDate && requestedAsOfDate <= maxDate ? requestedAsOfDate : maxDate;
+    options?.asOfDate && options.asOfDate >= minDate && options.asOfDate <= maxDate ? options.asOfDate : maxDate;
+
+  const overridePeriods = Array.from(new Set([currentReportPeriod, selectedReportPeriod]));
 
   const [periodRows, liveAumMap, netFlowMap, overrideRows] = await Promise.all([
     db
@@ -74,32 +96,41 @@ export async function getTotalAumGrowth(requestedAsOfDate?: string): Promise<Tot
       })
       .from(amcPeriods)
       .innerJoin(amcs, eq(amcPeriods.amcId, amcs.id))
-      .where(eq(amcPeriods.reportPeriod, reportPeriod)),
+      .where(eq(amcPeriods.reportPeriod, selectedReportPeriod)),
     getAllAmcsLiveAumAsOf(asOfDate),
-    getNetFlowForPeriod(reportPeriod),
-    db.select().from(totalAumGrowthOverrides).where(eq(totalAumGrowthOverrides.reportPeriod, reportPeriod)),
+    getNetFlowForPeriod(currentReportPeriod),
+    db.select().from(totalAumGrowthOverrides).where(inArray(totalAumGrowthOverrides.reportPeriod, overridePeriods)),
   ]);
 
-  const overrideByAmcId = new Map(overrideRows.map((o) => [o.amcId, o]));
+  // SIP Inflow overrides always come from the currentReportPeriod row; the
+  // other three fields always come from the selectedReportPeriod row -- these
+  // coincide (the common case) when nothing but the current month is selected.
+  const sipOverrideByAmcId = new Map(
+    overrideRows.filter((o) => o.reportPeriod === currentReportPeriod).map((o) => [o.amcId, o])
+  );
+  const otherOverridesByAmcId = new Map(
+    overrideRows.filter((o) => o.reportPeriod === selectedReportPeriod).map((o) => [o.amcId, o])
+  );
 
   const rows: TotalAumGrowthRow[] = periodRows.map((p) => {
-    const override = overrideByAmcId.get(p.amcId);
+    const sipOverrideRow = sipOverrideByAmcId.get(p.amcId);
+    const otherOverrideRow = otherOverridesByAmcId.get(p.amcId);
     const live = liveAumMap.get(p.amcId);
 
     const defaultSipInflowCr = netFlowMap.get(p.amcId)?.netFlowCr ?? 0;
-    const sipOverride = override?.sipInflowOverrideCr ?? null;
+    const sipOverride = sipOverrideRow?.sipInflowOverrideCr ?? null;
     const sipInflowCr = sipOverride !== null ? Number(sipOverride) : defaultSipInflowCr;
 
     const defaultReportedAumCr = Number(p.reportedAumCr);
-    const reportedOverride = override?.reportedAumOverrideCr ?? null;
+    const reportedOverride = otherOverrideRow?.reportedAumOverrideCr ?? null;
     const reportedAumCr = reportedOverride !== null ? Number(reportedOverride) : defaultReportedAumCr;
 
     const defaultIncomeDebtAumCr = p.incomeDebtAumCr != null ? Number(p.incomeDebtAumCr) : 0;
-    const incomeDebtOverride = override?.incomeDebtAumOverrideCr ?? null;
+    const incomeDebtOverride = otherOverrideRow?.incomeDebtAumOverrideCr ?? null;
     const incomeDebtAumCr = incomeDebtOverride !== null ? Number(incomeDebtOverride) : defaultIncomeDebtAumCr;
 
     const defaultOtherFundsAumCr = p.otherFundsAumCr != null ? Number(p.otherFundsAumCr) : 0;
-    const otherFundsOverride = override?.otherFundsAumOverrideCr ?? null;
+    const otherFundsOverride = otherOverrideRow?.otherFundsAumOverrideCr ?? null;
     const otherFundsAumCr = otherFundsOverride !== null ? Number(otherFundsOverride) : defaultOtherFundsAumCr;
 
     const liveAumCr = live ? live.liveAumCr : null;
@@ -127,5 +158,5 @@ export async function getTotalAumGrowth(requestedAsOfDate?: string): Promise<Tot
     };
   });
 
-  return { reportPeriod, asOfDate, minDate, maxDate, rows };
+  return { currentReportPeriod, selectedReportPeriod, availableReportPeriods, asOfDate, minDate, maxDate, rows };
 }

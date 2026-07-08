@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { appSettings, totalAumGrowthOverrides } from "@/lib/db/schema";
 import { withErrorHandling } from "@/lib/api/with-error-handling";
+import { getAvailableReportPeriods } from "@/lib/aum/aum-growth";
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
 
@@ -12,6 +13,17 @@ function parseOverrideField(value: unknown): number | null | undefined {
   if (value === null) return null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
   throw new Error("Override fields must be a finite number or null");
+}
+
+async function upsertOverride(amcId: number, reportPeriod: string, fields: Record<string, string | null>) {
+  if (Object.keys(fields).length === 0) return;
+  await db
+    .insert(totalAumGrowthOverrides)
+    .values({ amcId, reportPeriod, ...fields })
+    .onConflictDoUpdate({
+      target: [totalAumGrowthOverrides.amcId, totalAumGrowthOverrides.reportPeriod],
+      set: { ...fields, updatedAt: new Date() },
+    });
 }
 
 export const POST = withErrorHandling(async (request: Request) => {
@@ -39,32 +51,38 @@ export const POST = withErrorHandling(async (request: Request) => {
   if (!periodRow) {
     return NextResponse.json({ error: "No report period configured — import a workbook first." }, { status: 400 });
   }
-  const reportPeriod = periodRow.value;
+  const currentReportPeriod = periodRow.value;
+
+  // Reported/Income-Debt/Other AUM target whichever period the client has
+  // selected in the dropdown; SIP Inflows always targets the current period
+  // regardless -- by design it doesn't follow that selection (see
+  // total-aum-growth.ts's doc comment on getTotalAumGrowth).
+  let targetReportPeriod = currentReportPeriod;
+  if (typeof body?.reportPeriod === "string" && body.reportPeriod !== currentReportPeriod) {
+    const availablePeriods = await getAvailableReportPeriods();
+    if (availablePeriods.includes(body.reportPeriod)) {
+      targetReportPeriod = body.reportPeriod;
+    }
+  }
 
   const toDbValue = (v: number | null | undefined) => (v === undefined ? undefined : v === null ? null : String(v));
 
-  const values = {
-    amcId,
-    reportPeriod,
-    sipInflowOverrideCr: toDbValue(sipInflowOverrideCr),
-    reportedAumOverrideCr: toDbValue(reportedAumOverrideCr),
-    incomeDebtAumOverrideCr: toDbValue(incomeDebtAumOverrideCr),
-    otherFundsAumOverrideCr: toDbValue(otherFundsAumOverrideCr),
-  };
+  const sipFields: Record<string, string | null> = {};
+  const sipValue = toDbValue(sipInflowOverrideCr);
+  if (sipValue !== undefined) sipFields.sipInflowOverrideCr = sipValue;
 
-  const setValues: Record<string, string | null | Date> = { updatedAt: new Date() };
-  if (values.sipInflowOverrideCr !== undefined) setValues.sipInflowOverrideCr = values.sipInflowOverrideCr;
-  if (values.reportedAumOverrideCr !== undefined) setValues.reportedAumOverrideCr = values.reportedAumOverrideCr;
-  if (values.incomeDebtAumOverrideCr !== undefined) setValues.incomeDebtAumOverrideCr = values.incomeDebtAumOverrideCr;
-  if (values.otherFundsAumOverrideCr !== undefined) setValues.otherFundsAumOverrideCr = values.otherFundsAumOverrideCr;
+  const otherFields: Record<string, string | null> = {};
+  const reportedValue = toDbValue(reportedAumOverrideCr);
+  const incomeDebtValue = toDbValue(incomeDebtAumOverrideCr);
+  const otherFundsValue = toDbValue(otherFundsAumOverrideCr);
+  if (reportedValue !== undefined) otherFields.reportedAumOverrideCr = reportedValue;
+  if (incomeDebtValue !== undefined) otherFields.incomeDebtAumOverrideCr = incomeDebtValue;
+  if (otherFundsValue !== undefined) otherFields.otherFundsAumOverrideCr = otherFundsValue;
 
-  await db
-    .insert(totalAumGrowthOverrides)
-    .values(values)
-    .onConflictDoUpdate({
-      target: [totalAumGrowthOverrides.amcId, totalAumGrowthOverrides.reportPeriod],
-      set: setValues,
-    });
+  await Promise.all([
+    upsertOverride(amcId, currentReportPeriod, sipFields),
+    upsertOverride(amcId, targetReportPeriod, otherFields),
+  ]);
 
   return NextResponse.json({ ok: true });
 });

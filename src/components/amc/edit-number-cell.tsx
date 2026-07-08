@@ -3,9 +3,19 @@
 import { useEffect, useRef, useState } from "react";
 import { TableCell } from "@/components/ui/table";
 
+// Comma-grouped, 1 decimal -- same en-IN convention as formatCr elsewhere, just one
+// fewer decimal place (as requested) since these are manually-typed working figures,
+// not display-only currency values.
+function formatDisplay(value: number): string {
+  return value.toLocaleString("en-IN", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+}
+
 /**
  * A manually-editable numeric table cell -- the first of its kind in this app
- * (every other cell is read-only formatted text). Saves on blur/Enter via
+ * (every other cell is read-only formatted text). Shows a comma-grouped,
+ * 1-decimal value at rest (matching the rest of the table's number styling);
+ * switches to the raw full-precision number while focused so edits aren't
+ * hampered by pre-rounding, then reformats on blur. Saves on blur/Enter via
  * onSave; a × affordance appears once overridden, clearing back to the
  * computed default (onSave(null)). Reverts the draft on save failure.
  */
@@ -18,7 +28,7 @@ export function EditNumberCell({
   isOverridden: boolean;
   onSave: (newValue: number | null) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(() => String(value));
+  const [draft, setDraft] = useState(() => formatDisplay(value));
   const [prevValue, setPrevValue] = useState(value);
   const [focused, setFocused] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -31,7 +41,7 @@ export function EditNumberCell({
   // in-flight edit is never clobbered by a background refetch.
   if (value !== prevValue && !focused) {
     setPrevValue(value);
-    setDraft(String(value));
+    setDraft(formatDisplay(value));
   }
 
   useEffect(() => () => {
@@ -45,20 +55,29 @@ export function EditNumberCell({
   }
 
   async function commit() {
-    const trimmed = draft.trim();
-    const parsed = trimmed === "" ? null : Number(trimmed);
+    const cleaned = draft.replace(/,/g, "").trim();
+    const parsed = cleaned === "" ? null : Number(cleaned);
     if (parsed !== null && !Number.isFinite(parsed)) {
-      setDraft(String(value));
+      setDraft(formatDisplay(value));
       return;
     }
-    if (parsed === null ? !isOverridden : parsed === value && !isOverridden) return;
+    if (parsed === null ? !isOverridden : parsed === value && !isOverridden) {
+      setDraft(formatDisplay(value));
+      return;
+    }
     setSaving(true);
     try {
       await onSave(parsed);
       showFlash("saved");
+      // Reformat immediately using what was just saved -- the resync-on-
+      // external-change block above only fires when the refetched `value`
+      // prop differs from before, which it won't if the saved amount happens
+      // to match what was already stored (e.g. re-saving an unchanged
+      // override), otherwise leaving the raw unformatted draft on screen.
+      if (parsed !== null) setDraft(formatDisplay(parsed));
     } catch {
       showFlash("error");
-      setDraft(String(value));
+      setDraft(formatDisplay(value));
     } finally {
       setSaving(false);
     }
@@ -80,11 +99,14 @@ export function EditNumberCell({
     <TableCell className="text-right tabular-nums">
       <div className="flex items-center justify-end gap-1">
         <input
-          type="number"
-          step="any"
+          type="text"
+          inputMode="decimal"
           value={draft}
           disabled={saving}
-          onFocus={() => setFocused(true)}
+          onFocus={() => {
+            setFocused(true);
+            setDraft(String(value));
+          }}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => {
             setFocused(false);
@@ -93,11 +115,12 @@ export function EditNumberCell({
           onKeyDown={(e) => {
             if (e.key === "Enter") e.currentTarget.blur();
             if (e.key === "Escape") {
-              setDraft(String(value));
+              setDraft(formatDisplay(value));
+              setFocused(false);
               e.currentTarget.blur();
             }
           }}
-          className={`w-28 rounded border bg-background px-1.5 py-0.5 text-right text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-foreground/40 ${
+          className={`w-28 rounded border bg-transparent px-1.5 py-0.5 text-right text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-foreground/40 ${
             isOverridden ? "border-amber-500/60" : ""
           }`}
         />

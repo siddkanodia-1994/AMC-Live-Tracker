@@ -6,9 +6,12 @@ export async function GET(request: Request) {
   const requestedAsOfDateRaw = url.searchParams.get("asOfDate");
   const requestedAsOfDate =
     requestedAsOfDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(requestedAsOfDateRaw) ? requestedAsOfDateRaw : undefined;
+  const requestedReportPeriodRaw = url.searchParams.get("reportPeriod");
+  const requestedReportPeriod =
+    requestedReportPeriodRaw && /^\d{4}-\d{2}$/.test(requestedReportPeriodRaw) ? requestedReportPeriodRaw : undefined;
 
   try {
-    const result = await getTotalAumGrowth(requestedAsOfDate);
+    const result = await getTotalAumGrowth({ asOfDate: requestedAsOfDate, reportPeriod: requestedReportPeriod });
     return NextResponse.json(result);
   } catch (err) {
     console.error(err);
