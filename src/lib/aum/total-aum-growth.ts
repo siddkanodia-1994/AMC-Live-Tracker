@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, totalAumGrowthOverrides } from "../db/schema";
 import { getAvailableReportPeriods } from "./aum-growth";
@@ -34,13 +34,14 @@ export interface TotalAumGrowthRow {
   otherFundsAumCr: number;
   otherFundsAumIsOverridden: boolean;
   totalLiveCr: number | null;
-  totalReportedCr: number;
+  totalReportedCr: number | null;
   growthPct: number | null;
 }
 
 export interface TotalAumGrowthResult {
   currentReportPeriod: string;
-  selectedReportPeriod: string;
+  componentReportPeriod: string;
+  totalReportedReportPeriod: string;
   availableReportPeriods: string[];
   asOfDate: string;
   minDate: string;
@@ -48,31 +49,90 @@ export interface TotalAumGrowthResult {
   rows: TotalAumGrowthRow[];
 }
 
+interface EffectiveReportedFigures {
+  reportedAumCr: number;
+  reportedAumIsOverridden: boolean;
+  incomeDebtAumCr: number;
+  incomeDebtAumIsOverridden: boolean;
+  otherFundsAumCr: number;
+  otherFundsAumIsOverridden: boolean;
+}
+
+/**
+ * Resolves every AMC's effective Reported/Income-Debt/Other Funds AUM for
+ * ONE report period -- that period's own amc_periods row, with that same
+ * period's own total_aum_growth_overrides applied on top. Called twice with
+ * potentially different periods: once for whichever period columns 4-6 are
+ * showing, and independently again for whichever period Total (Reported) is
+ * showing -- the two are user-selectable independently of each other.
+ */
+async function getEffectiveReportedFigures(reportPeriod: string): Promise<Map<number, EffectiveReportedFigures>> {
+  const [periodRows, overrideRows] = await Promise.all([
+    db
+      .select({
+        amcId: amcPeriods.amcId,
+        reportedAumCr: amcPeriods.reportedAumCr,
+        incomeDebtAumCr: amcPeriods.incomeDebtAumCr,
+        otherFundsAumCr: amcPeriods.otherFundsAumCr,
+      })
+      .from(amcPeriods)
+      .where(eq(amcPeriods.reportPeriod, reportPeriod)),
+    db.select().from(totalAumGrowthOverrides).where(eq(totalAumGrowthOverrides.reportPeriod, reportPeriod)),
+  ]);
+
+  const overrideByAmcId = new Map(overrideRows.map((o) => [o.amcId, o]));
+  const map = new Map<number, EffectiveReportedFigures>();
+  for (const p of periodRows) {
+    const override = overrideByAmcId.get(p.amcId);
+    const reportedOverride = override?.reportedAumOverrideCr ?? null;
+    const incomeDebtOverride = override?.incomeDebtAumOverrideCr ?? null;
+    const otherFundsOverride = override?.otherFundsAumOverrideCr ?? null;
+    map.set(p.amcId, {
+      reportedAumCr: reportedOverride !== null ? Number(reportedOverride) : Number(p.reportedAumCr),
+      reportedAumIsOverridden: reportedOverride !== null,
+      incomeDebtAumCr:
+        incomeDebtOverride !== null ? Number(incomeDebtOverride) : p.incomeDebtAumCr != null ? Number(p.incomeDebtAumCr) : 0,
+      incomeDebtAumIsOverridden: incomeDebtOverride !== null,
+      otherFundsAumCr:
+        otherFundsOverride !== null ? Number(otherFundsOverride) : p.otherFundsAumCr != null ? Number(p.otherFundsAumCr) : 0,
+      otherFundsAumIsOverridden: otherFundsOverride !== null,
+    });
+  }
+  return map;
+}
+
 /**
  * Composes the Total AUM Growth tab: each AMC's true total AUM (Growth/Equity
  * + Income/Debt + Other, not just the Growth/Equity slice every other part of
  * this app tracks), combining live-tracked equity AUM as of a picked date
  * with a manually-adjustable flow estimate against a selected month's
- * reported total. See total_aum_growth_overrides' schema comment for the
- * override semantics.
+ * reported total.
  *
- * Two independent anchors: `asOfDate` (a real calendar date, drives Live AUM
- * from actual tracked history) and `reportPeriod` (a report month, drives
- * Reported/Income-Debt/Other AUM and their overrides). SIP Inflows is
- * anchored to the CURRENT report period always, regardless of which
- * `reportPeriod` is selected for the other three -- both its default
- * (getNetFlowForPeriod) and its override always target currentReportPeriod,
- * by explicit design choice, not an oversight.
+ * Three independent anchors:
+ * - `asOfDate` (a real calendar date) drives Live AUM from actual tracked history.
+ * - `reportPeriod` ("componentReportPeriod") drives columns 4-6 (Reported,
+ *   Income-Debt, Other Funds AUM) and their overrides.
+ * - `totalReportedReportPeriod` drives Total (Reported) independently -- its
+ *   own effective figures for whatever month it's set to, via the same
+ *   override-resolution logic, decoupled from whatever columns 4-6 show.
+ * SIP Inflows is anchored to the CURRENT report period always, regardless of
+ * either selection above -- both its default (getNetFlowForPeriod) and its
+ * override always target currentReportPeriod, by explicit design choice.
  */
 export async function getTotalAumGrowth(options?: {
   asOfDate?: string;
   reportPeriod?: string;
+  totalReportedReportPeriod?: string;
 }): Promise<TotalAumGrowthResult> {
   const currentReportPeriod = await getCurrentReportPeriod();
   const availableReportPeriods = await getAvailableReportPeriods();
-  const selectedReportPeriod =
+  const componentReportPeriod =
     options?.reportPeriod && availableReportPeriods.includes(options.reportPeriod)
       ? options.reportPeriod
+      : currentReportPeriod;
+  const totalReportedReportPeriod =
+    options?.totalReportedReportPeriod && availableReportPeriods.includes(options.totalReportedReportPeriod)
+      ? options.totalReportedReportPeriod
       : currentReportPeriod;
 
   const { minDate, maxDate } = await getCanonicalSnapshotDateBounds();
@@ -82,81 +142,77 @@ export async function getTotalAumGrowth(options?: {
   const asOfDate =
     options?.asOfDate && options.asOfDate >= minDate && options.asOfDate <= maxDate ? options.asOfDate : maxDate;
 
-  const overridePeriods = Array.from(new Set([currentReportPeriod, selectedReportPeriod]));
-
-  const [periodRows, liveAumMap, netFlowMap, overrideRows] = await Promise.all([
+  const [amcRows, componentFigures, totalReportedFigures, liveAumMap, netFlowMap, sipOverrideRows] = await Promise.all([
     db
-      .select({
-        amcId: amcPeriods.amcId,
-        slug: amcs.slug,
-        overviewName: amcs.overviewName,
-        reportedAumCr: amcPeriods.reportedAumCr,
-        incomeDebtAumCr: amcPeriods.incomeDebtAumCr,
-        otherFundsAumCr: amcPeriods.otherFundsAumCr,
-      })
+      .select({ amcId: amcPeriods.amcId, slug: amcs.slug, overviewName: amcs.overviewName })
       .from(amcPeriods)
       .innerJoin(amcs, eq(amcPeriods.amcId, amcs.id))
-      .where(eq(amcPeriods.reportPeriod, selectedReportPeriod)),
+      .where(eq(amcPeriods.reportPeriod, componentReportPeriod)),
+    getEffectiveReportedFigures(componentReportPeriod),
+    // Skip the duplicate query when both selections match (the common,
+    // default case) -- reuse componentFigures for Total (Reported) too.
+    totalReportedReportPeriod === componentReportPeriod ? Promise.resolve(null) : getEffectiveReportedFigures(totalReportedReportPeriod),
     getAllAmcsLiveAumAsOf(asOfDate),
     getNetFlowForPeriod(currentReportPeriod),
-    db.select().from(totalAumGrowthOverrides).where(inArray(totalAumGrowthOverrides.reportPeriod, overridePeriods)),
+    db.select().from(totalAumGrowthOverrides).where(eq(totalAumGrowthOverrides.reportPeriod, currentReportPeriod)),
   ]);
 
-  // SIP Inflow overrides always come from the currentReportPeriod row; the
-  // other three fields always come from the selectedReportPeriod row -- these
-  // coincide (the common case) when nothing but the current month is selected.
-  const sipOverrideByAmcId = new Map(
-    overrideRows.filter((o) => o.reportPeriod === currentReportPeriod).map((o) => [o.amcId, o])
-  );
-  const otherOverridesByAmcId = new Map(
-    overrideRows.filter((o) => o.reportPeriod === selectedReportPeriod).map((o) => [o.amcId, o])
-  );
+  const effectiveTotalReportedFigures = totalReportedFigures ?? componentFigures;
+  const sipOverrideByAmcId = new Map(sipOverrideRows.map((o) => [o.amcId, o]));
 
-  const rows: TotalAumGrowthRow[] = periodRows.map((p) => {
-    const sipOverrideRow = sipOverrideByAmcId.get(p.amcId);
-    const otherOverrideRow = otherOverridesByAmcId.get(p.amcId);
-    const live = liveAumMap.get(p.amcId);
+  const rows: TotalAumGrowthRow[] = amcRows.map((amc) => {
+    // Guaranteed present: componentFigures was built from the identical
+    // amc_periods query (same reportPeriod filter) that produced amcRows.
+    const component = componentFigures.get(amc.amcId)!;
+    const live = liveAumMap.get(amc.amcId);
 
-    const defaultSipInflowCr = netFlowMap.get(p.amcId)?.netFlowCr ?? 0;
+    const defaultSipInflowCr = netFlowMap.get(amc.amcId)?.netFlowCr ?? 0;
+    const sipOverrideRow = sipOverrideByAmcId.get(amc.amcId);
     const sipOverride = sipOverrideRow?.sipInflowOverrideCr ?? null;
     const sipInflowCr = sipOverride !== null ? Number(sipOverride) : defaultSipInflowCr;
 
-    const defaultReportedAumCr = Number(p.reportedAumCr);
-    const reportedOverride = otherOverrideRow?.reportedAumOverrideCr ?? null;
-    const reportedAumCr = reportedOverride !== null ? Number(reportedOverride) : defaultReportedAumCr;
-
-    const defaultIncomeDebtAumCr = p.incomeDebtAumCr != null ? Number(p.incomeDebtAumCr) : 0;
-    const incomeDebtOverride = otherOverrideRow?.incomeDebtAumOverrideCr ?? null;
-    const incomeDebtAumCr = incomeDebtOverride !== null ? Number(incomeDebtOverride) : defaultIncomeDebtAumCr;
-
-    const defaultOtherFundsAumCr = p.otherFundsAumCr != null ? Number(p.otherFundsAumCr) : 0;
-    const otherFundsOverride = otherOverrideRow?.otherFundsAumOverrideCr ?? null;
-    const otherFundsAumCr = otherFundsOverride !== null ? Number(otherFundsOverride) : defaultOtherFundsAumCr;
-
     const liveAumCr = live ? live.liveAumCr : null;
-    const totalLiveCr = liveAumCr != null ? liveAumCr + sipInflowCr + incomeDebtAumCr + otherFundsAumCr : null;
-    const totalReportedCr = reportedAumCr + incomeDebtAumCr + otherFundsAumCr;
-    const growthPct = totalLiveCr != null && totalReportedCr !== 0 ? totalLiveCr / totalReportedCr - 1 : null;
+    const totalLiveCr =
+      liveAumCr != null ? liveAumCr + sipInflowCr + component.incomeDebtAumCr + component.otherFundsAumCr : null;
+
+    // Independent of `component` above -- an AMC that didn't exist yet (or
+    // no longer does) in totalReportedReportPeriod simply has no figure here.
+    const totalReportedFigure = effectiveTotalReportedFigures.get(amc.amcId);
+    const totalReportedCr = totalReportedFigure
+      ? totalReportedFigure.reportedAumCr + totalReportedFigure.incomeDebtAumCr + totalReportedFigure.otherFundsAumCr
+      : null;
+
+    const growthPct =
+      totalLiveCr != null && totalReportedCr != null && totalReportedCr !== 0 ? totalLiveCr / totalReportedCr - 1 : null;
 
     return {
-      amcId: p.amcId,
-      slug: p.slug,
-      overviewName: p.overviewName,
+      amcId: amc.amcId,
+      slug: amc.slug,
+      overviewName: amc.overviewName,
       liveAumCr,
       liveAumAsOfDate: live?.snapshotDate ?? null,
       sipInflowCr,
       sipInflowIsOverridden: sipOverride !== null,
-      reportedAumCr,
-      reportedAumIsOverridden: reportedOverride !== null,
-      incomeDebtAumCr,
-      incomeDebtAumIsOverridden: incomeDebtOverride !== null,
-      otherFundsAumCr,
-      otherFundsAumIsOverridden: otherFundsOverride !== null,
+      reportedAumCr: component.reportedAumCr,
+      reportedAumIsOverridden: component.reportedAumIsOverridden,
+      incomeDebtAumCr: component.incomeDebtAumCr,
+      incomeDebtAumIsOverridden: component.incomeDebtAumIsOverridden,
+      otherFundsAumCr: component.otherFundsAumCr,
+      otherFundsAumIsOverridden: component.otherFundsAumIsOverridden,
       totalLiveCr,
       totalReportedCr,
       growthPct,
     };
   });
 
-  return { currentReportPeriod, selectedReportPeriod, availableReportPeriods, asOfDate, minDate, maxDate, rows };
+  return {
+    currentReportPeriod,
+    componentReportPeriod,
+    totalReportedReportPeriod,
+    availableReportPeriods,
+    asOfDate,
+    minDate,
+    maxDate,
+    rows,
+  };
 }

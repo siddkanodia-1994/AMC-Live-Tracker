@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EditNumberCell } from "./edit-number-cell";
-import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
+import { formatDeltaCr, formatPct, formatCr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import type { TopNOption } from "@/lib/utils/top-n";
 import { useTotalAumGrowth } from "@/hooks/use-total-aum-growth";
 import type { TotalAumGrowthRow } from "@/lib/aum/total-aum-growth";
@@ -28,7 +28,7 @@ interface Totals {
   totalIncomeDebtAumCr: number;
   totalOtherFundsAumCr: number;
   totalLiveCr: number | null;
-  totalReportedCr: number;
+  totalReportedCr: number | null;
   growthPct: number | null;
 }
 
@@ -37,18 +37,28 @@ function computeTotals(rows: TotalAumGrowthRow[]): Totals {
   const totalReportedAumCr = rows.reduce((sum, r) => sum + r.reportedAumCr, 0);
   const totalIncomeDebtAumCr = rows.reduce((sum, r) => sum + r.incomeDebtAumCr, 0);
   const totalOtherFundsAumCr = rows.reduce((sum, r) => sum + r.otherFundsAumCr, 0);
-  const totalReportedCr = rows.reduce((sum, r) => sum + r.totalReportedCr, 0);
 
-  // Gated on rows that actually have a live figure yet (a brand-new AMC might
-  // not), same "only sum what's populated" gating the AUM Growth tab's totals
-  // already use -- so growthPct compares like-for-like instead of silently
-  // treating a missing live figure as zero.
+  // Each of these three gates is independent -- Total (Reported)'s own month
+  // can leave some AMCs without a figure (didn't exist that month) even when
+  // Live AUM is fully populated, and vice versa. Growth % specifically needs
+  // BOTH present on the same row, so it gets its own, stricter gate.
+  const withTotalReported = rows.filter((r) => r.totalReportedCr !== null);
+  const totalReportedCr =
+    withTotalReported.length > 0 ? withTotalReported.reduce((sum, r) => sum + (r.totalReportedCr ?? 0), 0) : null;
+
   const withLive = rows.filter((r) => r.liveAumCr !== null);
   const totalLiveAumCr = withLive.length > 0 ? withLive.reduce((sum, r) => sum + (r.liveAumCr ?? 0), 0) : null;
   const totalLiveCr = withLive.length > 0 ? withLive.reduce((sum, r) => sum + (r.totalLiveCr ?? 0), 0) : null;
-  const totalReportedCrForGrowth = withLive.reduce((sum, r) => sum + r.totalReportedCr, 0);
+
+  const withBoth = rows.filter((r) => r.liveAumCr !== null && r.totalReportedCr !== null);
   const growthPct =
-    totalLiveCr !== null && totalReportedCrForGrowth !== 0 ? totalLiveCr / totalReportedCrForGrowth - 1 : null;
+    withBoth.length > 0
+      ? (() => {
+          const liveSum = withBoth.reduce((sum, r) => sum + (r.totalLiveCr ?? 0), 0);
+          const reportedSum = withBoth.reduce((sum, r) => sum + (r.totalReportedCr ?? 0), 0);
+          return reportedSum !== 0 ? liveSum / reportedSum - 1 : null;
+        })()
+      : null;
 
   return {
     totalLiveAumCr,
@@ -93,7 +103,7 @@ function TotalsRow({ label, totals, muted }: { label: string; totals: Totals; mu
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalIncomeDebtAumCr)}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalOtherFundsAumCr)}</TableCell>
       <AumCrCell value={totals.totalLiveCr} />
-      <TableCell className="text-right tabular-nums">{formatCr(totals.totalReportedCr)}</TableCell>
+      <AumCrCell value={totals.totalReportedCr} />
       <PctCell value={totals.growthPct} />
     </TableRow>
   );
@@ -134,24 +144,27 @@ const dateInputClass =
 
 export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
   const [selectedAsOfDate, setSelectedAsOfDate] = useState<string | null>(null);
-  const [selectedReportPeriod, setSelectedReportPeriod] = useState<string | null>(null);
+  const [selectedComponentPeriod, setSelectedComponentPeriod] = useState<string | null>(null);
+  const [selectedTotalReportedPeriod, setSelectedTotalReportedPeriod] = useState<string | null>(null);
   const { data, error, isLoading, mutate } = useTotalAumGrowth(
     selectedAsOfDate ?? undefined,
-    selectedReportPeriod ?? undefined
+    selectedComponentPeriod ?? undefined,
+    selectedTotalReportedPeriod ?? undefined
   );
   const [sortKey, setSortKey] = useState<SortKey>("totalReportedCr");
   const [sortDesc, setSortDesc] = useState(true);
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const effectiveAsOfDate = selectedAsOfDate ?? data?.asOfDate ?? null;
-  const effectiveReportPeriod = selectedReportPeriod ?? data?.selectedReportPeriod ?? null;
+  const effectiveComponentPeriod = selectedComponentPeriod ?? data?.componentReportPeriod ?? null;
+  const effectiveTotalReportedPeriod = selectedTotalReportedPeriod ?? data?.totalReportedReportPeriod ?? null;
   const availableReportPeriods = data?.availableReportPeriods ?? [];
 
   async function saveOverride(amcId: number, field: string, newValue: number | null) {
     const res = await fetch("/api/total-aum-growth/override", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amcId, reportPeriod: effectiveReportPeriod, [field]: newValue }),
+      body: JSON.stringify({ amcId, reportPeriod: effectiveComponentPeriod, [field]: newValue }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -163,10 +176,10 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
   // Ranked by Total (Reported) -- the truest "current size" figure this tab
   // has (unlike the AUM Growth tab, this one has a real Live AUM column too,
   // but that's date-picked and can be null for AMCs with no history yet, so
-  // it's not a stable ranking basis).
+  // it's not a stable ranking basis). Missing figures (null) rank last.
   const limited = useMemo(() => {
     if (topN === "all") return rows;
-    return [...rows].sort((a, b) => b.totalReportedCr - a.totalReportedCr).slice(0, topN);
+    return [...rows].sort((a, b) => (b.totalReportedCr ?? -1) - (a.totalReportedCr ?? -1)).slice(0, topN);
   }, [rows, topN]);
 
   const sorted = useMemo(() => {
@@ -211,11 +224,14 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
   }
 
   const liveAumColumnLabel = effectiveAsOfDate ? `Live AUM (${formatShortDate(effectiveAsOfDate)})` : "Live AUM";
-  const reportPeriodLabel = effectiveReportPeriod ? formatReportPeriodLabel(effectiveReportPeriod) : "";
-  const reportedAumColumnLabel = reportPeriodLabel ? `Reported AUM (${reportPeriodLabel})` : "Reported AUM";
-  const incomeDebtColumnLabel = reportPeriodLabel ? `Income/Debt AUM (${reportPeriodLabel})` : "Income/Debt AUM";
-  const otherFundsColumnLabel = reportPeriodLabel ? `Other Funds AUM (${reportPeriodLabel})` : "Other Funds AUM";
-  const totalReportedColumnLabel = reportPeriodLabel ? `Total (Reported) (${reportPeriodLabel})` : "Total (Reported)";
+  const componentPeriodLabel = effectiveComponentPeriod ? formatReportPeriodLabel(effectiveComponentPeriod) : "";
+  const totalReportedPeriodLabel = effectiveTotalReportedPeriod ? formatReportPeriodLabel(effectiveTotalReportedPeriod) : "";
+  const reportedAumColumnLabel = componentPeriodLabel ? `Reported AUM (${componentPeriodLabel})` : "Reported AUM";
+  const incomeDebtColumnLabel = componentPeriodLabel ? `Income/Debt AUM (${componentPeriodLabel})` : "Income/Debt AUM";
+  const otherFundsColumnLabel = componentPeriodLabel ? `Other Funds AUM (${componentPeriodLabel})` : "Other Funds AUM";
+  const totalReportedColumnLabel = totalReportedPeriodLabel
+    ? `Total (Reported) (${totalReportedPeriodLabel})`
+    : "Total (Reported)";
 
   return (
     <div className="space-y-3">
@@ -230,12 +246,25 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
           className={dateInputClass}
           title={`Pick any date -- snaps to the closest date with real tracked history (${formatShortDate(data.minDate)} to ${formatShortDate(data.maxDate)}).`}
         />
-        <span className="ml-4 text-muted-foreground">Reported AUM month</span>
+        <span className="ml-4 text-muted-foreground">AUM breakdown month</span>
         <select
-          value={effectiveReportPeriod ?? ""}
-          onChange={(e) => e.target.value && setSelectedReportPeriod(e.target.value)}
+          value={effectiveComponentPeriod ?? ""}
+          onChange={(e) => e.target.value && setSelectedComponentPeriod(e.target.value)}
           className={dateInputClass}
-          title="Which month's Reported/Income-Debt/Other Funds AUM to compare against. Independent of the Live AUM date above."
+          title="Which month's Reported/Income-Debt/Other Funds AUM to show in the columns below. Independent of the other selectors."
+        >
+          {availableReportPeriods.map((p) => (
+            <option key={p} value={p}>
+              {formatReportPeriodLabel(p)}
+            </option>
+          ))}
+        </select>
+        <span className="ml-4 text-muted-foreground">Total Reported AUM month</span>
+        <select
+          value={effectiveTotalReportedPeriod ?? ""}
+          onChange={(e) => e.target.value && setSelectedTotalReportedPeriod(e.target.value)}
+          className={dateInputClass}
+          title="Which month's actual total (Reported + Income-Debt + Other Funds AUM) to use for Total (Reported) and Growth %. Independent of the AUM breakdown month above -- the two can differ."
         >
           {availableReportPeriods.map((p) => (
             <option key={p} value={p}>
@@ -249,10 +278,12 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
         Every other tab tracks only each AMC&apos;s Growth/Equity Funds AUM. This tab surfaces the AMC&apos;s{" "}
         <em>true</em> total AUM (Growth/Equity + Income/Debt + Other Funds). Total (Live) estimates the current total
         by combining the live-tracked, date-picked equity AUM with SIP Inflows (a flow estimate for the current
-        period, independent of the Reported AUM month selected above) and the selected month&apos;s Income/Debt and
-        Other Funds AUM. Total (Reported) is the AMC&apos;s actual reported total for that same selected month.
-        Growth % compares the two. SIP Inflows, Reported AUM, Income/Debt AUM, and Other Funds AUM are editable —
-        click a value to type a new one, or use the × to reset it back to the computed default.
+        period, independent of either month selected above) and the AUM breakdown month&apos;s Income/Debt and Other
+        Funds AUM. Total (Reported) is the AMC&apos;s actual reported total for the separately-selected Total
+        Reported AUM month above — the two months can differ, e.g. to see one month&apos;s breakdown against a
+        different month&apos;s actual total. Growth % compares the two regardless of whether they match. SIP
+        Inflows, Reported AUM, Income/Debt AUM, and Other Funds AUM are editable — click a value to type a new one,
+        or use the × to reset it back to the computed default.
       </p>
 
       <div className="overflow-x-auto rounded-lg border bg-card">
@@ -289,7 +320,7 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
                 label={totalReportedColumnLabel}
                 sk="totalReportedCr"
                 {...headProps}
-                title="Reported AUM + Income/Debt AUM + Other Funds AUM"
+                title="That month's own Reported AUM + Income/Debt AUM + Other Funds AUM -- read-only, independent of the AUM breakdown month above."
               />
               <SortableHead label="Growth %" sk="growthPct" {...headProps} title="Total (Live) / Total (Reported) - 1" />
             </TableRow>
@@ -327,9 +358,7 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
                   onSave={(v) => saveOverride(row.amcId, "otherFundsAumOverrideCr", v)}
                 />
                 <AumCrCell value={row.totalLiveCr} />
-                <TableCell className="text-right tabular-nums text-muted-foreground">
-                  {formatCr(row.totalReportedCr)}
-                </TableCell>
+                <AumCrCell value={row.totalReportedCr} />
                 <PctCell value={row.growthPct} />
               </TableRow>
             ))}

@@ -9,9 +9,18 @@ export async function GET(request: Request) {
   const requestedReportPeriodRaw = url.searchParams.get("reportPeriod");
   const requestedReportPeriod =
     requestedReportPeriodRaw && /^\d{4}-\d{2}$/.test(requestedReportPeriodRaw) ? requestedReportPeriodRaw : undefined;
+  const requestedTotalReportedPeriodRaw = url.searchParams.get("totalReportedReportPeriod");
+  const requestedTotalReportedPeriod =
+    requestedTotalReportedPeriodRaw && /^\d{4}-\d{2}$/.test(requestedTotalReportedPeriodRaw)
+      ? requestedTotalReportedPeriodRaw
+      : undefined;
 
   try {
-    const result = await getTotalAumGrowth({ asOfDate: requestedAsOfDate, reportPeriod: requestedReportPeriod });
+    const result = await getTotalAumGrowth({
+      asOfDate: requestedAsOfDate,
+      reportPeriod: requestedReportPeriod,
+      totalReportedReportPeriod: requestedTotalReportedPeriod,
+    });
     return NextResponse.json(result);
   } catch (err) {
     console.error(err);
