@@ -174,6 +174,12 @@ async function runComputation(): Promise<ComputedLiveAum> {
   // fetched once per ISIN and reused everywhere it appears (see priceableIsins
   // above), so "first write wins" here is never actually a conflict in practice.
   const distinctIsinInfo = new Map<string, { isLive: boolean }>();
+  // Distinct ISINs that got NO live price this run despite having a stored
+  // prior price (priceSource "last_close") -- i.e. they WERE being priced
+  // successfully before but aren't now. This is the live-coverage-regression
+  // signal the freshness badge warns on; deterministic per ISIN for the same
+  // reason as distinctIsinInfo above.
+  const distinctLastCloseIsins = new Set<string>();
   // Today's live price per ISIN, deduplicated the same way — written once to
   // isin_daily_price after the loop, seeding tomorrow's "1 Day Change" column.
   const todayPriceByIsin = new Map<string, number>();
@@ -271,6 +277,7 @@ async function runComputation(): Promise<ComputedLiveAum> {
         const isLive = priceSource === "live" || priceSource === "foreign_live" || priceSource === "last_close";
         amcHoldingIsins.add(h.isin);
         if (isLive) amcLivePricedIsins.add(h.isin);
+        if (priceSource === "last_close") distinctLastCloseIsins.add(h.isin);
         const existing = distinctIsinInfo.get(h.isin);
         distinctIsinInfo.set(h.isin, {
           isLive: (existing?.isLive ?? false) || isLive,
@@ -381,6 +388,7 @@ async function runComputation(): Promise<ComputedLiveAum> {
     distinctHoldingsCount: distinctIsinInfo.size,
     distinctDebtInstrumentCount,
     distinctLivePricedCount,
+    distinctLastCloseCount: distinctLastCloseIsins.size,
     priceAsOfDate: tradingDay ? getIstDateString() : lastTradingDayIstString(),
     pricesAreLive: tradingDay,
   };

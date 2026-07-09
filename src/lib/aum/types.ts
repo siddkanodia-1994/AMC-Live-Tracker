@@ -99,6 +99,13 @@ export interface LiveAumSnapshot {
   distinctHoldingsCount: number;
   distinctDebtInstrumentCount: number;
   distinctLivePricedCount: number;
+  // Distinct ISINs that were priced successfully before (a stored prior
+  // close exists) but got NO live price this run — the live-coverage-
+  // regression signal. 0 whenever DHAN coverage is fully intact; benign
+  // never-priceable holdings don't count here. Meaningful only while
+  // pricesAreLive (on non-trading days everything falls back to last close
+  // by design).
+  distinctLastCloseCount: number;
   // The calendar date (IST) the shown prices actually reflect. Equals
   // today's date when pricesAreLive; otherwise the last real trading day's
   // date (see lastTradingDayIstString) — lets the UI show "Prices as of

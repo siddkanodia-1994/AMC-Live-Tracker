@@ -30,22 +30,30 @@ function istTimeLabel(iso: string): string {
 /**
  * Compact always-visible freshness indicator for the Overview: green-ish
  * (default) with the exact IST time the shown prices were computed, amber
- * whenever the numbers can't be trusted as current — DHAN degraded/down,
- * polling stalled, or the daily snapshot cron has stopped writing history.
- * Hydration-safe via the same deterministic-server-snapshot pattern as
- * LiveClockBadge (time-derived text must not be baked into SSR HTML).
+ * ONLY when the numbers genuinely can't be trusted as current — a DHAN
+ * call-level failure (expired token, rate limit, network error, total
+ * outage), stocks that were being priced live before but aren't anymore
+ * (coverage regression), stalled polling, or a dead snapshot cron.
+ * Deliberately NOT amber for dhanStatus "degraded" alone: that fires
+ * perpetually for illiquid holdings DHAN simply never quotes, which is
+ * benign. Hydration-safe via the same deterministic-server-snapshot pattern
+ * as LiveClockBadge (time-derived text must not be baked into SSR HTML).
  */
 export function FreshnessBadge({
   computedAt,
   pricesAreLive,
   priceAsOfDate,
   dhanStatus,
+  dhanErrorDetail,
+  distinctLastCloseCount,
   maxSnapshotDate,
 }: {
   computedAt: string;
   pricesAreLive: boolean;
   priceAsOfDate: string;
   dhanStatus: DhanStatus;
+  dhanErrorDetail: string | null;
+  distinctLastCloseCount: number;
   maxSnapshotDate: string | null;
 }) {
   const now = useSyncExternalStore(
@@ -71,8 +79,10 @@ export function FreshnessBadge({
   let warning: string | null = null;
   if (dhanStatus === "unavailable") {
     warning = "DHAN pricing unavailable — showing last known values";
-  } else if (dhanStatus === "degraded") {
-    warning = "Some prices unavailable — partially stale values";
+  } else if (dhanErrorDetail !== null) {
+    warning = `DHAN call failing: ${dhanErrorDetail}`;
+  } else if (pricesAreLive && distinctLastCloseCount > 0) {
+    warning = `${distinctLastCloseCount} stock${distinctLastCloseCount === 1 ? "" : "s"} lost live pricing — showing their last close`;
   } else if (pricesAreLive && quoteAgeMs > QUOTE_STALE_AFTER_MS) {
     warning = `Stale — last update ${Math.round(quoteAgeMs / 60_000)}m ago; refresh the page`;
   } else if (snapshotAgeDays !== null && snapshotAgeDays > SNAPSHOT_STALE_AFTER_DAYS) {

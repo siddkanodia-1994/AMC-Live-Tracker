@@ -20,13 +20,8 @@ import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
-const DHAN_STATUS_MESSAGE: Record<LiveAumSnapshot["dhanStatus"], string | null> = {
-  ok: null,
-  degraded:
-    "Some holdings couldn't be priced live right now — their last reported value is shown instead.",
-  unavailable:
-    "DHAN pricing is unavailable — every AMC below is showing last reported values. Check the DHAN token in Admin settings.",
-};
+const DHAN_UNAVAILABLE_MESSAGE =
+  "DHAN pricing is unavailable — every AMC below is showing last reported values. Check the DHAN token in Admin settings.";
 
 export function AmcGrid({
   initialData,
@@ -89,13 +84,19 @@ export function AmcGrid({
 
   if (!data || !industryTotals) return null;
 
-  // Prefer the specific reason the last DHAN call failed (expired token, rate
-  // limit, network error) over the generic per-status guess — the generic
-  // messages exist only for the case where DHAN's call succeeded but some
-  // individual holdings just don't have a quote (no specific cause to report).
+  // Warn ONLY on genuine problems: a call-level failure (expired token, rate
+  // limit, network error — dhanErrorDetail), a total outage, or stocks that
+  // were being priced live before but stopped (last-close regression). A
+  // "degraded" status alone stays silent — it fires perpetually for illiquid
+  // holdings DHAN simply never quotes, which is benign.
+  const lastCloseCount = data.distinctLastCloseCount ?? 0;
   const statusMessage = data.dhanErrorDetail
     ? `DHAN pricing issue: ${data.dhanErrorDetail}`
-    : DHAN_STATUS_MESSAGE[data.dhanStatus];
+    : data.dhanStatus === "unavailable"
+      ? DHAN_UNAVAILABLE_MESSAGE
+      : data.pricesAreLive && lastCloseCount > 0
+        ? `${lastCloseCount} stock${lastCloseCount === 1 ? "" : "s"} that previously had live prices ${lastCloseCount === 1 ? "is" : "are"} no longer being priced live — showing their last close instead.`
+        : null;
 
   const reportPeriodLabel = formatReportPeriodLabel(data.reportPeriod);
   // First day of the month after the report period — when the Avg AUM window opened.
@@ -238,6 +239,8 @@ export function AmcGrid({
                 pricesAreLive={data.pricesAreLive}
                 priceAsOfDate={data.priceAsOfDate}
                 dhanStatus={data.dhanStatus}
+                dhanErrorDetail={data.dhanErrorDetail}
+                distinctLastCloseCount={lastCloseCount}
                 maxSnapshotDate={data.maxSnapshotDate ?? null}
               />
             )}
