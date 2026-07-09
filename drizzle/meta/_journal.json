@@ -43,6 +43,13 @@
       "when": 1783422015221,
       "tag": "0005_mighty_barracuda",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783578403272,
+      "tag": "0006_fine_magus",
+      "breakpoints": true
     }
   ]
 }

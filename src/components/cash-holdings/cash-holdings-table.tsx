@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useRegisterExport } from "@/components/layout/export-context";
 import { formatPct } from "@/lib/utils/format";
 import type { TopNOption } from "@/lib/utils/top-n";
 import { useCashHoldings } from "@/hooks/use-cash-holdings";
@@ -102,6 +103,22 @@ export function CashHoldingsTable({ topN }: { topN: TopNOption }) {
     }
   }
 
+  useRegisterExport(() => ({
+    fileName: `cash-holdings-${data?.currentPeriod ?? "latest"}`,
+    sheetName: "Cash Holdings",
+    rows: sorted.map((row) => {
+      const record: Record<string, string | number | null> = { AMC: row.overviewName };
+      for (const month of data?.months ?? []) {
+        record[`${formatMonthLabel(month)} (%)`] =
+          row.historyByMonth[month] !== null && row.historyByMonth[month] !== undefined
+            ? row.historyByMonth[month] * 100
+            : null;
+      }
+      record["Computed (%)"] = row.computedPct !== null ? row.computedPct * 100 : null;
+      return record;
+    }),
+  }));
+
   if (isLoading) {
     return <Skeleton className="h-96 w-full rounded-xl" />;
   }
@@ -151,7 +168,7 @@ export function CashHoldingsTable({ topN }: { topN: TopNOption }) {
           <TableBody>
             {sorted.map((row) => (
               <TableRow key={row.amcId}>
-                <TableCell className="font-medium">{row.overviewName}</TableCell>
+                <TableCell className="font-serif font-medium">{row.overviewName}</TableCell>
                 {data.months.map((month) => (
                   <PctCell key={month} value={row.historyByMonth[month]} />
                 ))}

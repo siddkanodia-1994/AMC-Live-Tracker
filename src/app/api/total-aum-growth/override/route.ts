@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { appSettings, totalAumGrowthOverrides } from "@/lib/db/schema";
+import { appSettings, totalAumGrowthOverrideLog, totalAumGrowthOverrides } from "@/lib/db/schema";
 import { withErrorHandling } from "@/lib/api/with-error-handling";
 import { getAvailableReportPeriods } from "@/lib/aum/aum-growth";
 
@@ -17,6 +17,22 @@ function parseOverrideField(value: unknown): number | null | undefined {
 
 async function upsertOverride(amcId: number, reportPeriod: string, fields: Record<string, string | null>) {
   if (Object.keys(fields).length === 0) return;
+
+  // Audit trail: log each field that actually changes, comparing against the
+  // existing override row (null = "was the computed default").
+  const [existing] = await db
+    .select()
+    .from(totalAumGrowthOverrides)
+    .where(and(eq(totalAumGrowthOverrides.amcId, amcId), eq(totalAumGrowthOverrides.reportPeriod, reportPeriod)));
+  const logEntries = Object.entries(fields)
+    .map(([field, newValue]) => {
+      const oldValue = (existing?.[field as keyof typeof existing] as string | null | undefined) ?? null;
+      const changed =
+        oldValue === null || newValue === null ? oldValue !== newValue : Number(oldValue) !== Number(newValue);
+      return changed ? { amcId, reportPeriod, field, oldValueCr: oldValue, newValueCr: newValue } : null;
+    })
+    .filter((e): e is NonNullable<typeof e> => e !== null);
+
   await db
     .insert(totalAumGrowthOverrides)
     .values({ amcId, reportPeriod, ...fields })
@@ -24,6 +40,9 @@ async function upsertOverride(amcId: number, reportPeriod: string, fields: Recor
       target: [totalAumGrowthOverrides.amcId, totalAumGrowthOverrides.reportPeriod],
       set: { ...fields, updatedAt: new Date() },
     });
+  if (logEntries.length > 0) {
+    await db.insert(totalAumGrowthOverrideLog).values(logEntries);
+  }
 }
 
 export const POST = withErrorHandling(async (request: Request) => {

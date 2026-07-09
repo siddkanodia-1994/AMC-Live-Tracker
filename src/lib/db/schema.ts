@@ -237,6 +237,30 @@ export const totalAumGrowthOverrides = pgTable(
   (t) => [uniqueIndex("total_aum_growth_overrides_amc_period_idx").on(t.amcId, t.reportPeriod)]
 );
 
+// Audit trail for the manual edits above: one row per changed field per save,
+// so hand-entered figures stay traceable (what the override was before, what
+// it became, when). Value semantics match the override columns themselves —
+// null oldValueCr = "was the computed default (not overridden)", null
+// newValueCr = "reset back to the computed default".
+export const totalAumGrowthOverrideLog = pgTable(
+  "total_aum_growth_override_log",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    reportPeriod: text("report_period").notNull(),
+    // Which override column changed — same names as the API/DB fields
+    // (sipInflowOverrideCr, reportedAumOverrideCr, incomeDebtAumOverrideCr,
+    // otherFundsAumOverrideCr).
+    field: text("field").notNull(),
+    oldValueCr: numeric("old_value_cr", { precision: 18, scale: 4 }),
+    newValueCr: numeric("new_value_cr", { precision: 18, scale: 4 }),
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("total_aum_growth_override_log_amc_period_idx").on(t.amcId, t.reportPeriod)]
+);
+
 // Audit trail for imports.
 export const importLog = pgTable("import_log", {
   id: serial("id").primaryKey(),

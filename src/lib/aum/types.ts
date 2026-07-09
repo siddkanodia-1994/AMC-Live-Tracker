@@ -109,6 +109,15 @@ export interface LiveAumSnapshot {
   // skipped it because today isn't a trading day. Drives whether the UI
   // shows a ticking "Updated Xs ago" or a stable "As of {date}'s close".
   pricesAreLive: boolean;
+  // Set on /api/live-aum responses. null = live mode (real-time DHAN
+  // repricing); a date = historical mode, where every AMC shows its
+  // canonical daily snapshot on or before that date instead (see
+  // computeOverviewAsOf). min/maxSnapshotDate bound the Overview's
+  // historical date picker. Optional because computeLiveAum itself doesn't
+  // populate them — the route layer does.
+  asOfDate?: string | null;
+  minSnapshotDate?: string | null;
+  maxSnapshotDate?: string | null;
 }
 
 export interface ComputedLiveAum {

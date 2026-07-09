@@ -23,10 +23,14 @@ export function EditNumberCell({
   value,
   isOverridden,
   onSave,
+  title,
 }: {
   value: number;
   isOverridden: boolean;
   onSave: (newValue: number | null) => Promise<void>;
+  // Hover text for the input -- used for the override audit-trail note
+  // ("Overridden {date} — was {value}").
+  title?: string;
 }) {
   const [draft, setDraft] = useState(() => formatDisplay(value));
   const [prevValue, setPrevValue] = useState(value);
@@ -103,6 +107,7 @@ export function EditNumberCell({
           inputMode="decimal"
           value={draft}
           disabled={saving}
+          title={title}
           onFocus={() => {
             setFocused(true);
             setDraft(String(value));

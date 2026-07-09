@@ -11,10 +11,14 @@ async function fetcher(url: string): Promise<LiveAumSnapshot> {
   return res.json();
 }
 
-export function useLiveAum(initialData?: LiveAumSnapshot) {
-  return useSWR<LiveAumSnapshot>("/api/live-aum", fetcher, {
-    refreshInterval: POLL_INTERVAL_MS,
-    revalidateOnFocus: true,
-    fallbackData: initialData,
+export function useLiveAum(initialData?: LiveAumSnapshot, asOfDate?: string) {
+  const historical = Boolean(asOfDate);
+  return useSWR<LiveAumSnapshot>(historical ? `/api/live-aum?asOfDate=${asOfDate}` : "/api/live-aum", fetcher, {
+    // Historical snapshots never change, so don't poll or revalidate them --
+    // and don't seed them with the live-mode server-rendered fallback, which
+    // is a different date's data.
+    refreshInterval: historical ? 0 : POLL_INTERVAL_MS,
+    revalidateOnFocus: !historical,
+    fallbackData: historical ? undefined : initialData,
   });
 }

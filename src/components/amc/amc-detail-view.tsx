@@ -10,7 +10,8 @@ import { SectorBreakdown } from "./sector-breakdown";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatCr, formatDeltaCr, formatPct, formatRelativeTime, formatShortDate } from "@/lib/utils/format";
+import { RelativeTime } from "@/components/ui/relative-time";
+import { formatCr, formatDeltaCr, formatPct, formatShortDate } from "@/lib/utils/format";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
 export function AmcDetailView({
@@ -49,9 +50,13 @@ export function AmcDetailView({
         <div>
           <h1 className="text-2xl font-semibold">{amc.overviewName}</h1>
           <p className="text-sm text-muted-foreground">
-            {data.pricesAreLive
-              ? `Updated ${formatRelativeTime(data.computedAt)}`
-              : `Prices as of ${formatShortDate(data.priceAsOfDate)} close`}{" "}
+            {data.pricesAreLive ? (
+              <>
+                Updated <RelativeTime iso={data.computedAt} />
+              </>
+            ) : (
+              `Prices as of ${formatShortDate(data.priceAsOfDate)} close`
+            )}{" "}
             · Report period {amc.reportPeriod}
           </p>
         </div>

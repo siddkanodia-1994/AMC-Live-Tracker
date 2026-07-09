@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useRegisterExport } from "@/components/layout/export-context";
 import { EditNumberCell } from "./edit-number-cell";
 import { formatDeltaCr, formatPct, formatCr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import type { TopNOption } from "@/lib/utils/top-n";
 import { useTotalAumGrowth } from "@/hooks/use-total-aum-growth";
-import type { TotalAumGrowthRow } from "@/lib/aum/total-aum-growth";
+import type { OverrideLastChange, TotalAumGrowthRow } from "@/lib/aum/total-aum-growth";
 
 type SortKey =
   | "overviewName"
@@ -142,6 +143,18 @@ function SortableHead({
 const dateInputClass =
   "rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
+// Audit-trail hover text for an overridden cell -- when and from what the
+// hand-entered figure diverged. null oldValueCr = it replaced the computed
+// default directly.
+function overrideTitle(change: OverrideLastChange | null): string | undefined {
+  if (!change) return undefined;
+  const was =
+    change.oldValueCr !== null
+      ? change.oldValueCr.toLocaleString("en-IN", { maximumFractionDigits: 1, minimumFractionDigits: 1 })
+      : "the computed default";
+  return `Overridden ${formatShortDate(change.changedAt.slice(0, 10))} — was ${was}`;
+}
+
 export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
   const [selectedAsOfDate, setSelectedAsOfDate] = useState<string | null>(null);
   const [selectedComponentPeriod, setSelectedComponentPeriod] = useState<string | null>(null);
@@ -205,6 +218,26 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
   }
 
   const headProps = { sortKey, sortDesc, onToggle: toggleSort };
+
+  useRegisterExport(() => {
+    const componentLabel = effectiveComponentPeriod ? formatReportPeriodLabel(effectiveComponentPeriod) : "";
+    const totalReportedLabel = effectiveTotalReportedPeriod ? formatReportPeriodLabel(effectiveTotalReportedPeriod) : "";
+    return {
+      fileName: `total-aum-growth-${effectiveAsOfDate ?? "latest"}`,
+      sheetName: "Total AUM Growth",
+      rows: sorted.map((row) => ({
+        AMC: row.overviewName,
+        [effectiveAsOfDate ? `Live AUM ${formatShortDate(effectiveAsOfDate)} (Cr)` : "Live AUM (Cr)"]: row.liveAumCr,
+        "SIP Inflows (Cr)": row.sipInflowCr,
+        [`Reported AUM ${componentLabel} (Cr)`]: row.reportedAumCr,
+        [`Income/Debt AUM ${componentLabel} (Cr)`]: row.incomeDebtAumCr,
+        [`Other Funds AUM ${componentLabel} (Cr)`]: row.otherFundsAumCr,
+        "Total Live (Cr)": row.totalLiveCr,
+        [`Total Reported ${totalReportedLabel} (Cr)`]: row.totalReportedCr,
+        "Growth (%)": row.growthPct !== null ? row.growthPct * 100 : null,
+      })),
+    };
+  });
 
   const subsetTotals = computeTotals(limited);
   const industryTotals = computeTotals(rows);
@@ -328,7 +361,7 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
           <TableBody>
             {sorted.map((row) => (
               <TableRow key={row.amcId}>
-                <TableCell className="font-medium">
+                <TableCell className="font-serif font-medium">
                   <Link href={`/amc/${row.slug}`} className="hover:underline">
                     {row.overviewName}
                   </Link>
@@ -340,21 +373,25 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
                 <EditNumberCell
                   value={row.sipInflowCr}
                   isOverridden={row.sipInflowIsOverridden}
+                  title={overrideTitle(row.sipInflowLastChange)}
                   onSave={(v) => saveOverride(row.amcId, "sipInflowOverrideCr", v)}
                 />
                 <EditNumberCell
                   value={row.reportedAumCr}
                   isOverridden={row.reportedAumIsOverridden}
+                  title={overrideTitle(row.reportedAumLastChange)}
                   onSave={(v) => saveOverride(row.amcId, "reportedAumOverrideCr", v)}
                 />
                 <EditNumberCell
                   value={row.incomeDebtAumCr}
                   isOverridden={row.incomeDebtAumIsOverridden}
+                  title={overrideTitle(row.incomeDebtAumLastChange)}
                   onSave={(v) => saveOverride(row.amcId, "incomeDebtAumOverrideCr", v)}
                 />
                 <EditNumberCell
                   value={row.otherFundsAumCr}
                   isOverridden={row.otherFundsAumIsOverridden}
+                  title={overrideTitle(row.otherFundsAumLastChange)}
                   onSave={(v) => saveOverride(row.amcId, "otherFundsAumOverrideCr", v)}
                 />
                 <AumCrCell value={row.totalLiveCr} />

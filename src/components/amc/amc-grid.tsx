@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useLiveAum } from "@/hooks/use-live-aum";
 import { AmcTable } from "./amc-table";
 import { AumDeltaBadge } from "./aum-delta-badge";
+import { FreshnessBadge } from "./freshness-badge";
 import { AumGrowthTable } from "./aum-growth-table";
 import { AumTrendChart } from "./aum-trend-chart";
 import { TotalAumGrowthTable } from "./total-aum-growth-table";
@@ -13,7 +14,8 @@ import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatCr, formatRelativeTime, formatShortDate } from "@/lib/utils/format";
+import { RelativeTime } from "@/components/ui/relative-time";
+import { formatCr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import type { AumHistoryPoint } from "@/lib/aum/history";
@@ -33,7 +35,11 @@ export function AmcGrid({
   initialData?: LiveAumSnapshot;
   history?: AumHistoryPoint[];
 }) {
-  const { data, error, isLoading } = useLiveAum(initialData);
+  // null = live mode; a date = the Overview is repriced to that historical
+  // day's canonical snapshots. Deliberately NOT persisted — a refresh always
+  // lands back on live data.
+  const [asOfDate, setAsOfDate] = useState<string | null>(null);
+  const { data, error, isLoading } = useLiveAum(initialData, asOfDate ?? undefined);
   const [query, setQuery] = useState("");
   // Shared across all three tabs -- lifted here (rather than each tab owning
   // its own) so changing it in one applies to all, per the "linked toggle"
@@ -91,6 +97,13 @@ export function AmcGrid({
     ? `DHAN pricing issue: ${data.dhanErrorDetail}`
     : DHAN_STATUS_MESSAGE[data.dhanStatus];
 
+  const reportPeriodLabel = formatReportPeriodLabel(data.reportPeriod);
+  // First day of the month after the report period — when the Avg AUM window opened.
+  const [periodYear, periodMonth] = data.reportPeriod.split("-").map(Number);
+  const avgWindowStartLabel = formatShortDate(
+    `${periodMonth === 12 ? periodYear + 1 : periodYear}-${String((periodMonth % 12) + 1).padStart(2, "0")}-01`
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -111,9 +124,13 @@ export function AmcGrid({
               </div>
               <div className="text-xs text-muted-foreground">
                 Reported: {formatCr(data.totalReportedAumCr)} ·{" "}
-                {data.pricesAreLive
-                  ? `Updated ${formatRelativeTime(data.computedAt)}`
-                  : `Prices as of ${formatShortDate(data.priceAsOfDate)} close`}
+                {data.pricesAreLive ? (
+                  <>
+                    Updated <RelativeTime iso={data.computedAt} />
+                  </>
+                ) : (
+                  `Prices as of ${formatShortDate(data.priceAsOfDate)} close`
+                )}
               </div>
             </CardContent>
           </Card>
@@ -125,15 +142,24 @@ export function AmcGrid({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-1">
-              <div className="flex items-center gap-2">
-                <div className="text-3xl font-semibold tabular-nums">
-                  {formatCr(industryTotals.totalAvgAumCr)}
-                </div>
-                <AumDeltaBadge deltaCr={industryTotals.avgDeltaCr} deltaPct={industryTotals.avgDeltaPct} />
-              </div>
-              <div className="text-xs text-muted-foreground">
-                Reported: {formatCr(data.totalReportedAumCr)} · Averaged since June 1
-              </div>
+              {data.asOfDate ? (
+                <>
+                  <div className="text-3xl font-semibold tabular-nums text-muted-foreground">—</div>
+                  <div className="text-xs text-muted-foreground">Not available for historical dates</div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <div className="text-3xl font-semibold tabular-nums">
+                      {formatCr(industryTotals.totalAvgAumCr)}
+                    </div>
+                    <AumDeltaBadge deltaCr={industryTotals.avgDeltaCr} deltaPct={industryTotals.avgDeltaPct} />
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Reported: {formatCr(data.totalReportedAumCr)} · Averaged since {avgWindowStartLabel}
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -182,9 +208,43 @@ export function AmcGrid({
           </div>
         </div>
         <TabsContent value="overview">
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Live AUM as of</span>
+            <input
+              type="date"
+              value={asOfDate ?? ""}
+              min={data.minSnapshotDate ?? undefined}
+              max={data.maxSnapshotDate ?? undefined}
+              onChange={(e) => setAsOfDate(e.target.value || null)}
+              className="rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40"
+            />
+            {asOfDate && (
+              <button
+                type="button"
+                onClick={() => setAsOfDate(null)}
+                className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                Back to live
+              </button>
+            )}
+            {asOfDate && (
+              <span className="text-xs text-muted-foreground">
+                Historical view — Avg AUM, Est. Net Flow and holdings counts apply only to live data
+              </span>
+            )}
+            {!data.asOfDate && (
+              <FreshnessBadge
+                computedAt={data.computedAt}
+                pricesAreLive={data.pricesAreLive}
+                priceAsOfDate={data.priceAsOfDate}
+                dhanStatus={data.dhanStatus}
+                maxSnapshotDate={data.maxSnapshotDate ?? null}
+              />
+            )}
+          </div>
           <p className="mb-2 text-xs text-muted-foreground">
             &quot;Avg AUM&quot; is the average of daily live AUM since the last reported month closed
-            (May), used to compare against the last officially reported figure. Both total rows&apos;
+            ({reportPeriodLabel}), used to compare against the last officially reported figure. Both total rows&apos;
             Holdings/Debt/Live Priced counts are de-duplicated by stock (a stock held by several
             AMCs counts once, not once per AMC) — the &quot;Industry Total&quot; row always across
             all 56 AMCs, unaffected by the Top-N selector or search, and the row above it across
@@ -195,6 +255,8 @@ export function AmcGrid({
             allAmcs={data.amcs}
             isSearchActive={query.trim() !== ""}
             topN={topN}
+            reportPeriod={data.reportPeriod}
+            asOfDate={data.asOfDate ?? null}
             distinctHoldingsCount={data.distinctHoldingsCount}
             distinctDebtInstrumentCount={data.distinctDebtInstrumentCount}
             distinctLivePricedCount={data.distinctLivePricedCount}

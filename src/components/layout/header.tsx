@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DownloadExcelButton } from "./download-excel-button";
 import { LiveClockBadge } from "./live-clock-badge";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -10,6 +11,7 @@ export function Header() {
           AMC Live AUM Tracker
         </Link>
         <nav className="flex items-center gap-2">
+          <DownloadExcelButton />
           <Link
             href="/admin"
             className="text-sm text-muted-foreground hover:text-foreground px-2 py-1"

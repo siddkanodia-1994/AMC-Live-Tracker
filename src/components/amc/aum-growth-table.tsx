@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useRegisterExport } from "@/components/layout/export-context";
 import { formatCr, formatDeltaCr, formatPct, formatShortDate } from "@/lib/utils/format";
 import { closestDateAtOrBefore } from "@/lib/aum/report-period";
 import type { TopNOption } from "@/lib/utils/top-n";
@@ -280,6 +281,24 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
 
   const headProps = { sortKey, sortDesc, onToggle: toggleSort };
 
+  useRegisterExport(() => ({
+    fileName: `aum-growth-${effectiveA ?? "na"}-to-${effectiveB ?? "na"}`,
+    sheetName: "AUM Growth",
+    rows: sorted.map((row: AumGrowthRow) => ({
+      AMC: row.overviewName,
+      [`Reported AUM ${effectiveA} (Cr)`]: row.periodAReportedAumCr,
+      [`Reported AUM ${effectiveB} (Cr)`]: row.periodBReportedAumCr,
+      "Growth (Cr)": row.growthCr,
+      "Growth (%)": row.growthPct !== null ? row.growthPct * 100 : null,
+      [effectiveAsOfDate ? `Computed AUM ${formatShortDate(effectiveAsOfDate)} (Cr)` : "Computed AUM (Cr)"]:
+        row.computedAtDateCr,
+      "Price Performance (Cr)": row.pricePerformanceCr,
+      "Price Performance (%)": row.pricePerformancePct !== null ? row.pricePerformancePct * 100 : null,
+      "Net Flow (Cr)": row.netFlowCr,
+      [`Net Flow % of ${effectiveA} AUM`]: row.netFlowPct !== null ? row.netFlowPct * 100 : null,
+    })),
+  }));
+
   const subsetTotals = computeGrowthTotals(limited, effectiveBasis);
   const industryTotals = computeGrowthTotals(rows, effectiveBasis);
   const isRestricted = topN !== "all";
@@ -421,7 +440,7 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
           <TableBody>
             {sorted.map((row: AumGrowthRow) => (
               <TableRow key={row.amcId}>
-                <TableCell className="font-medium">
+                <TableCell className="font-serif font-medium">
                   <Link href={`/amc/${row.slug}`} className="hover:underline">
                     {row.overviewName}
                   </Link>

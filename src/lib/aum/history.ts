@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcPeriods, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { getIstDateString } from "../utils/date";
@@ -199,26 +199,30 @@ export interface NetFlowEstimate {
 export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<number, NetFlowEstimate>> {
   const map = new Map<number, NetFlowEstimate>();
 
+  // Each AMC's OWN most recent period strictly before reportPeriod — not one
+  // globally-resolved prior period. A partial backfill that introduces a
+  // brand-new earliest period for a single AMC must never shift every other
+  // AMC's comparison baseline (and silently blank their net flow).
   const priorPeriodRows = await db
-    .selectDistinct({ reportPeriod: amcPeriods.reportPeriod })
+    .select({ amcId: amcPeriods.amcId, priorPeriod: sql<string>`max(${amcPeriods.reportPeriod})` })
     .from(amcPeriods)
     .where(lt(amcPeriods.reportPeriod, reportPeriod))
-    .orderBy(desc(amcPeriods.reportPeriod))
-    .limit(1);
-  const priorPeriod = priorPeriodRows[0]?.reportPeriod;
-  if (!priorPeriod) return map;
+    .groupBy(amcPeriods.amcId);
+  if (priorPeriodRows.length === 0) return map;
+  const priorPeriodByAmcId = new Map(priorPeriodRows.map((r) => [r.amcId, r.priorPeriod]));
+  const distinctPriorPeriods = [...new Set(priorPeriodRows.map((r) => r.priorPeriod))];
 
   const monthEndDate = lastDayOfReportMonth(reportPeriod);
 
-  const [currentPeriods, priorPeriods, baselineSnapshots] = await Promise.all([
+  const [currentPeriods, priorPeriodReported, baselineSnapshots] = await Promise.all([
     db
       .select({ amcId: amcPeriods.amcId, reportedAumCr: amcPeriods.reportedAumCr })
       .from(amcPeriods)
       .where(eq(amcPeriods.reportPeriod, reportPeriod)),
     db
-      .select({ amcId: amcPeriods.amcId, reportedAumCr: amcPeriods.reportedAumCr })
+      .select({ amcId: amcPeriods.amcId, reportPeriod: amcPeriods.reportPeriod, reportedAumCr: amcPeriods.reportedAumCr })
       .from(amcPeriods)
-      .where(eq(amcPeriods.reportPeriod, priorPeriod)),
+      .where(inArray(amcPeriods.reportPeriod, distinctPriorPeriods)),
     // <=, not =: the literal calendar month-end is frequently a weekend or
     // holiday with no snapshot row (e.g. May 2026 ends on a Sunday) — take
     // the most recent trading day's snapshot on or before it instead, same
@@ -227,22 +231,39 @@ export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<num
       .select({
         amcId: liveAumDailySnapshot.amcId,
         snapshotDate: liveAumDailySnapshot.snapshotDate,
+        reportPeriod: liveAumDailySnapshot.reportPeriod,
         liveAumCr: liveAumDailySnapshot.liveAumCr,
       })
       .from(liveAumDailySnapshot)
-      .where(and(eq(liveAumDailySnapshot.reportPeriod, priorPeriod), lte(liveAumDailySnapshot.snapshotDate, monthEndDate)))
+      .where(
+        and(
+          inArray(liveAumDailySnapshot.reportPeriod, distinctPriorPeriods),
+          lte(liveAumDailySnapshot.snapshotDate, monthEndDate)
+        )
+      )
       .orderBy(desc(liveAumDailySnapshot.snapshotDate)),
   ]);
 
+  // Baseline and prior-reported figures only count when they belong to the
+  // AMC's own prior period — rows from some other AMC's prior period are
+  // skipped rather than silently mixed in.
   const baselineByAmcId = new Map<number, number>();
   for (const r of baselineSnapshots) {
+    if (r.reportPeriod !== priorPeriodByAmcId.get(r.amcId)) continue;
     if (!baselineByAmcId.has(r.amcId)) {
       baselineByAmcId.set(r.amcId, Number(r.liveAumCr));
     }
   }
-  const priorReportedByAmcId = new Map(priorPeriods.map((r) => [r.amcId, Number(r.reportedAumCr)]));
+  const priorReportedByAmcId = new Map<number, number>();
+  for (const r of priorPeriodReported) {
+    if (r.reportPeriod === priorPeriodByAmcId.get(r.amcId)) {
+      priorReportedByAmcId.set(r.amcId, Number(r.reportedAumCr));
+    }
+  }
 
   for (const cur of currentPeriods) {
+    const priorPeriod = priorPeriodByAmcId.get(cur.amcId);
+    if (!priorPeriod) continue;
     const baselineCr = baselineByAmcId.get(cur.amcId);
     if (baselineCr === undefined) continue;
     const priorPeriodReportedAumCr = priorReportedByAmcId.get(cur.amcId);

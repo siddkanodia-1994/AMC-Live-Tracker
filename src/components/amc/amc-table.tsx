@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
-import { formatCr, formatDeltaCr, formatPct } from "@/lib/utils/format";
+import { useRegisterExport } from "@/components/layout/export-context";
+import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import type { TopNOption } from "@/lib/utils/top-n";
 import type { AmcLiveAum } from "@/lib/aum/types";
 
@@ -144,28 +145,30 @@ function TotalsRow({
   label,
   totals,
   holdingsTitle,
+  historical,
 }: {
   label: string;
   totals: Totals;
   holdingsTitle?: string;
+  historical: boolean;
 }) {
   return (
     <TableRow>
       <TableCell>{label}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalLiveAumCr)}</TableCell>
       <PctCell value={totals.totalOneDayChangePct} />
-      <TableCell className="text-right tabular-nums">{formatCr(totals.totalAvgAumCr)}</TableCell>
+      <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalAvgAumCr)}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalReportedAumCr)}</TableCell>
       <PctCell value={totals.totalLiveVsReportedPct} />
-      <PctCell value={totals.totalAvgVsReportedPct} />
+      <PctCell value={historical ? null : totals.totalAvgVsReportedPct} />
       <TableCell className="text-right tabular-nums" title={holdingsTitle}>
-        {totals.totalHoldingsCount}
+        {historical ? "—" : totals.totalHoldingsCount}
       </TableCell>
       <TableCell className="text-right tabular-nums" title={holdingsTitle}>
-        {totals.totalDebtInstrumentCount}
+        {historical ? "—" : totals.totalDebtInstrumentCount}
       </TableCell>
       <TableCell className="text-right tabular-nums" title={holdingsTitle}>
-        {totals.totalLivePricedCount}
+        {historical ? "—" : totals.totalLivePricedCount}
       </TableCell>
       <DeltaCrCell value={totals.totalNetFlowCr} />
       <PctCell value={totals.totalNetFlowPct} />
@@ -178,6 +181,8 @@ export function AmcTable({
   allAmcs,
   isSearchActive,
   topN,
+  reportPeriod,
+  asOfDate,
   distinctHoldingsCount,
   distinctDebtInstrumentCount,
   distinctLivePricedCount,
@@ -186,6 +191,8 @@ export function AmcTable({
   allAmcs: AmcLiveAum[];
   isSearchActive: boolean;
   topN: TopNOption;
+  reportPeriod: string;
+  asOfDate: string | null;
   distinctHoldingsCount: number;
   distinctDebtInstrumentCount: number;
   distinctLivePricedCount: number;
@@ -225,6 +232,28 @@ export function AmcTable({
   }
 
   const headProps = { sortKey, sortDesc, onToggle: toggleSort };
+  const periodLabel = formatReportPeriodLabel(reportPeriod);
+  const historical = asOfDate !== null;
+  const liveAumLabel = asOfDate ? `Live AUM (${formatShortDate(asOfDate)})` : "Live AUM";
+
+  useRegisterExport(() => ({
+    fileName: `overview-${asOfDate ?? new Date().toISOString().slice(0, 10)}`,
+    sheetName: "Overview",
+    rows: sorted.map((amc) => ({
+      AMC: amc.overviewName,
+      [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
+      "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
+      "Avg AUM (Cr)": historical ? null : amc.avgLiveAumCr,
+      [`Reported AUM ${periodLabel} (Cr)`]: amc.reportedAumCr,
+      "Live vs Reported (%)": amc.deltaPct * 100,
+      "Avg vs Reported (%)": !historical && amc.avgVsReportedPct !== null ? amc.avgVsReportedPct * 100 : null,
+      Holdings: historical ? null : amc.holdingsCount,
+      Debt: historical ? null : amc.debtInstrumentCount,
+      "Live Priced": historical ? null : amc.livePricedCount,
+      [`Est. Net Flow ${periodLabel} (Cr)`]: amc.netFlowCr,
+      [`Est. Net Flow ${periodLabel} (%)`]: amc.netFlowPct !== null ? amc.netFlowPct * 100 : null,
+    })),
+  }));
 
   const subsetTotals = computeTotals(limited);
   const industryTotals = computeTotals(allAmcs);
@@ -260,23 +289,23 @@ export function AmcTable({
                   <MarketStatusBadge />
                 </div>
               </TableHead>
-              <SortableHead label="Live AUM" sk="liveAumCr" {...headProps} />
+              <SortableHead label={liveAumLabel} sk="liveAumCr" {...headProps} />
               <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
               <SortableHead label="Avg AUM" sk="avgLiveAumCr" {...headProps} />
-              <SortableHead label="Reported AUM (May)" sk="reportedAumCr" {...headProps} />
+              <SortableHead label={`Reported AUM (${periodLabel})`} sk="reportedAumCr" {...headProps} />
               <SortableHead label="Live vs Reported" sk="deltaPct" {...headProps} />
               <SortableHead label="Avg vs Reported" sk="avgVsReportedPct" {...headProps} />
               <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />
               <SortableHead label="Debt" sk="debtInstrumentCount" {...headProps} />
               <SortableHead label="Live Priced" sk="livePricedCount" {...headProps} />
-              <SortableHead label="Est. Net Flow (Cr)" sk="netFlowCr" {...headProps} title={NET_FLOW_TITLE} />
-              <SortableHead label="Est. Net Flow (%)" sk="netFlowPct" {...headProps} title={NET_FLOW_TITLE} />
+              <SortableHead label={`Est. Net Flow Cr (${periodLabel})`} sk="netFlowCr" {...headProps} title={NET_FLOW_TITLE} />
+              <SortableHead label={`Est. Net Flow % (${periodLabel})`} sk="netFlowPct" {...headProps} title={NET_FLOW_TITLE} />
             </TableRow>
           </TableHeader>
           <TableBody>
             {sorted.map((amc) => (
               <TableRow key={amc.amcId}>
-                <TableCell className="font-medium">
+                <TableCell className="font-serif font-medium">
                   <Link href={`/amc/${amc.slug}`} className="hover:underline">
                     {amc.overviewName}
                   </Link>
@@ -291,35 +320,35 @@ export function AmcTable({
                 </TableCell>
                 <PctCell value={amc.deltaPct} />
                 <PctCell value={amc.avgVsReportedPct} />
-                <TableCell className="text-right tabular-nums">{amc.holdingsCount}</TableCell>
+                <TableCell className="text-right tabular-nums">{historical ? "—" : amc.holdingsCount}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">
-                  {amc.debtInstrumentCount}
+                  {historical ? "—" : amc.debtInstrumentCount}
                 </TableCell>
-                <TableCell className="text-right tabular-nums">{amc.livePricedCount}</TableCell>
+                <TableCell className="text-right tabular-nums">{historical ? "—" : amc.livePricedCount}</TableCell>
                 <DeltaCrCell value={amc.netFlowCr} />
                 <PctCell value={amc.netFlowPct} />
               </TableRow>
             ))}
           </TableBody>
           <TableFooter>
-            <TotalsRow label={subsetLabel} totals={subsetTotals} holdingsTitle={isRestricted ? subsetHoldingsTitle : undefined} />
+            <TotalsRow label={subsetLabel} totals={subsetTotals} holdingsTitle={isRestricted ? subsetHoldingsTitle : undefined} historical={historical} />
             {isRestricted && (
               <TableRow className="text-muted-foreground">
                 <TableCell>Industry Total (all {allAmcs.length} AMCs)</TableCell>
                 <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalLiveAumCr)}</TableCell>
                 <PctCell value={industryTotals.totalOneDayChangePct} />
-                <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalAvgAumCr)}</TableCell>
+                <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(industryTotals.totalAvgAumCr)}</TableCell>
                 <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalReportedAumCr)}</TableCell>
                 <PctCell value={industryTotals.totalLiveVsReportedPct} />
-                <PctCell value={industryTotals.totalAvgVsReportedPct} />
+                <PctCell value={historical ? null : industryTotals.totalAvgVsReportedPct} />
                 <TableCell className="text-right tabular-nums" title="Distinct stocks held anywhere in the industry — not a sum of each AMC's count">
-                  {distinctHoldingsCount}
+                  {historical ? "—" : distinctHoldingsCount}
                 </TableCell>
                 <TableCell className="text-right tabular-nums" title="Distinct debt instruments (G-Secs, bank CDs/CPs) across the industry">
-                  {distinctDebtInstrumentCount}
+                  {historical ? "—" : distinctDebtInstrumentCount}
                 </TableCell>
                 <TableCell className="text-right tabular-nums" title="Distinct stocks currently showing a live price, industry-wide">
-                  {distinctLivePricedCount}
+                  {historical ? "—" : distinctLivePricedCount}
                 </TableCell>
                 <DeltaCrCell value={industryTotals.totalNetFlowCr} />
                 <PctCell value={industryTotals.totalNetFlowPct} />

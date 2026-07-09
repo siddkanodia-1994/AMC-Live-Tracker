@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcPeriods, amcs, appSettings, totalAumGrowthOverrides } from "../db/schema";
+import { amcPeriods, amcs, appSettings, totalAumGrowthOverrideLog, totalAumGrowthOverrides } from "../db/schema";
 import { getAvailableReportPeriods } from "./aum-growth";
 import { getAllAmcsLiveAumAsOf, getCanonicalSnapshotDateBounds, getNetFlowForPeriod } from "./history";
 
@@ -19,6 +19,15 @@ async function getCurrentReportPeriod(): Promise<string> {
   return row.value;
 }
 
+// The most recent audit-log entry behind an overridden field — lets the UI
+// show "Overridden {date} — was {oldValue}" without a per-cell fetch. null
+// oldValueCr = the field wasn't overridden before this change (was the
+// computed default).
+export interface OverrideLastChange {
+  oldValueCr: number | null;
+  changedAt: string;
+}
+
 export interface TotalAumGrowthRow {
   amcId: number;
   slug: string;
@@ -27,12 +36,16 @@ export interface TotalAumGrowthRow {
   liveAumAsOfDate: string | null;
   sipInflowCr: number;
   sipInflowIsOverridden: boolean;
+  sipInflowLastChange: OverrideLastChange | null;
   reportedAumCr: number;
   reportedAumIsOverridden: boolean;
+  reportedAumLastChange: OverrideLastChange | null;
   incomeDebtAumCr: number;
   incomeDebtAumIsOverridden: boolean;
+  incomeDebtAumLastChange: OverrideLastChange | null;
   otherFundsAumCr: number;
   otherFundsAumIsOverridden: boolean;
+  otherFundsAumLastChange: OverrideLastChange | null;
   totalLiveCr: number | null;
   totalReportedCr: number | null;
   growthPct: number | null;
@@ -142,7 +155,7 @@ export async function getTotalAumGrowth(options?: {
   const asOfDate =
     options?.asOfDate && options.asOfDate >= minDate && options.asOfDate <= maxDate ? options.asOfDate : maxDate;
 
-  const [amcRows, componentFigures, totalReportedFigures, liveAumMap, netFlowMap, sipOverrideRows] = await Promise.all([
+  const [amcRows, componentFigures, totalReportedFigures, liveAumMap, netFlowMap, sipOverrideRows, overrideLogRows] = await Promise.all([
     db
       .select({ amcId: amcPeriods.amcId, slug: amcs.slug, overviewName: amcs.overviewName })
       .from(amcPeriods)
@@ -155,10 +168,33 @@ export async function getTotalAumGrowth(options?: {
     getAllAmcsLiveAumAsOf(asOfDate),
     getNetFlowForPeriod(currentReportPeriod),
     db.select().from(totalAumGrowthOverrides).where(eq(totalAumGrowthOverrides.reportPeriod, currentReportPeriod)),
+    // Audit trail for the tooltip on overridden cells -- only the two periods
+    // whose overrides are visible here (SIP always lives on the current
+    // period; the other three on the component period).
+    db
+      .select()
+      .from(totalAumGrowthOverrideLog)
+      .where(inArray(totalAumGrowthOverrideLog.reportPeriod, [...new Set([currentReportPeriod, componentReportPeriod])]))
+      .orderBy(desc(totalAumGrowthOverrideLog.changedAt), desc(totalAumGrowthOverrideLog.id)),
   ]);
 
   const effectiveTotalReportedFigures = totalReportedFigures ?? componentFigures;
   const sipOverrideByAmcId = new Map(sipOverrideRows.map((o) => [o.amcId, o]));
+
+  // Latest log entry per (amcId, period, field) -- rows are already ordered
+  // newest-first, so the first one seen wins.
+  const lastChangeByKey = new Map<string, OverrideLastChange>();
+  for (const log of overrideLogRows) {
+    const key = `${log.amcId}|${log.reportPeriod}|${log.field}`;
+    if (!lastChangeByKey.has(key)) {
+      lastChangeByKey.set(key, {
+        oldValueCr: log.oldValueCr !== null ? Number(log.oldValueCr) : null,
+        changedAt: log.changedAt.toISOString(),
+      });
+    }
+  }
+  const lastChange = (amcId: number, period: string, field: string, isOverridden: boolean) =>
+    isOverridden ? (lastChangeByKey.get(`${amcId}|${period}|${field}`) ?? null) : null;
 
   const rows: TotalAumGrowthRow[] = amcRows.map((amc) => {
     // Guaranteed present: componentFigures was built from the identical
@@ -193,12 +229,31 @@ export async function getTotalAumGrowth(options?: {
       liveAumAsOfDate: live?.snapshotDate ?? null,
       sipInflowCr,
       sipInflowIsOverridden: sipOverride !== null,
+      sipInflowLastChange: lastChange(amc.amcId, currentReportPeriod, "sipInflowOverrideCr", sipOverride !== null),
       reportedAumCr: component.reportedAumCr,
       reportedAumIsOverridden: component.reportedAumIsOverridden,
+      reportedAumLastChange: lastChange(
+        amc.amcId,
+        componentReportPeriod,
+        "reportedAumOverrideCr",
+        component.reportedAumIsOverridden
+      ),
       incomeDebtAumCr: component.incomeDebtAumCr,
       incomeDebtAumIsOverridden: component.incomeDebtAumIsOverridden,
+      incomeDebtAumLastChange: lastChange(
+        amc.amcId,
+        componentReportPeriod,
+        "incomeDebtAumOverrideCr",
+        component.incomeDebtAumIsOverridden
+      ),
       otherFundsAumCr: component.otherFundsAumCr,
       otherFundsAumIsOverridden: component.otherFundsAumIsOverridden,
+      otherFundsAumLastChange: lastChange(
+        amc.amcId,
+        componentReportPeriod,
+        "otherFundsAumOverrideCr",
+        component.otherFundsAumIsOverridden
+      ),
       totalLiveCr,
       totalReportedCr,
       growthPct,
