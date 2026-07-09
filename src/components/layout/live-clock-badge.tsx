@@ -3,9 +3,10 @@
 import { useSyncExternalStore } from "react";
 import { Badge } from "@/components/ui/badge";
 import { isMarketOpen } from "@/lib/utils/market-hours";
-import { getIstTimeString } from "@/lib/utils/date";
+import { getIstShortDateString, getIstTimeString } from "@/lib/utils/date";
 
 const PLACEHOLDER_TIME = "--:--:--";
+const PLACEHOLDER_DATE = "";
 
 function subscribe(callback: () => void) {
   const id = setInterval(callback, 1000);
@@ -19,8 +20,13 @@ function getServerSnapshot(): string {
   return PLACEHOLDER_TIME;
 }
 
+function getDateServerSnapshot(): string {
+  return PLACEHOLDER_DATE;
+}
+
 export function LiveClockBadge() {
   const time = useSyncExternalStore(subscribe, getIstTimeString, getServerSnapshot);
+  const date = useSyncExternalStore(subscribe, getIstShortDateString, getDateServerSnapshot);
   const open = time !== PLACEHOLDER_TIME && isMarketOpen();
 
   return (
@@ -38,6 +44,7 @@ export function LiveClockBadge() {
         }`}
       />
       <span className="font-semibold">{open ? "LIVE" : "CLOSED"}</span>
+      {date && <span className="ml-1.5 tabular-nums">{date}</span>}
       <span className="ml-1.5 font-mono tabular-nums">{time}</span>
     </Badge>
   );

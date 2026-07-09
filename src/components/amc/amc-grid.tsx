@@ -113,7 +113,7 @@ export function AmcGrid({
             <CardHeader>
               <div className="flex items-center gap-2">
                 <CardTitle className="text-sm font-normal text-muted-foreground">
-                  Total industry live AUM
+                  Total Industry Equity Live AUM
                 </CardTitle>
                 <MarketStatusBadge />
               </div>
@@ -139,7 +139,7 @@ export function AmcGrid({
           <Card>
             <CardHeader>
               <CardTitle className="text-sm font-normal text-muted-foreground">
-                Average industry AUM since last report
+                Average Industry Equity AUM since last report
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-1">
@@ -176,7 +176,7 @@ export function AmcGrid({
       {history.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Industry AUM Trend</CardTitle>
+            <CardTitle>Industry Equity AUM Trend</CardTitle>
           </CardHeader>
           <CardContent>
             <AumTrendChart data={history} />
@@ -188,7 +188,7 @@ export function AmcGrid({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="aum-growth">AUM Growth</TabsTrigger>
+            <TabsTrigger value="aum-growth">Equity AUM Growth</TabsTrigger>
             <TabsTrigger value="total-aum-growth">Total AUM Growth</TabsTrigger>
             <TabsTrigger value="cash-holdings">Cash Holdings</TabsTrigger>
           </TabsList>

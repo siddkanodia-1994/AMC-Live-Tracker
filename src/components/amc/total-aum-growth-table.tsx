@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -94,13 +95,25 @@ function AumCrCell({ value, title }: { value: number | null; title?: string }) {
   );
 }
 
-function TotalsRow({ label, totals, muted }: { label: string; totals: Totals; muted?: boolean }) {
+function TotalsRow({
+  label,
+  totals,
+  muted,
+  reportedAumExpanded,
+}: {
+  label: string;
+  totals: Totals;
+  muted?: boolean;
+  reportedAumExpanded: boolean;
+}) {
   return (
     <TableRow className={muted ? "text-muted-foreground" : undefined}>
       <TableCell>{label}</TableCell>
       <AumCrCell value={totals.totalLiveAumCr} />
       <TableCell className="text-right tabular-nums">{formatDeltaCr(totals.totalSipInflowCr)}</TableCell>
-      <TableCell className="text-right tabular-nums">{formatCr(totals.totalReportedAumCr)}</TableCell>
+      <TableCell className="text-right tabular-nums">
+        {reportedAumExpanded ? formatCr(totals.totalReportedAumCr) : "—"}
+      </TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalIncomeDebtAumCr)}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalOtherFundsAumCr)}</TableCell>
       <AumCrCell value={totals.totalLiveCr} />
@@ -166,6 +179,9 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
   );
   const [sortKey, setSortKey] = useState<SortKey>("totalReportedCr");
   const [sortDesc, setSortDesc] = useState(true);
+  // Collapsed by default -- resets on every reload, matching the rest of
+  // this tab's selectors, which never persist across refreshes.
+  const [reportedAumExpanded, setReportedAumExpanded] = useState(false);
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const effectiveAsOfDate = selectedAsOfDate ?? data?.asOfDate ?? null;
@@ -225,17 +241,24 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
     return {
       fileName: `total-aum-growth-${effectiveAsOfDate ?? "latest"}`,
       sheetName: "Total AUM Growth",
-      rows: sorted.map((row) => ({
-        AMC: row.overviewName,
-        [effectiveAsOfDate ? `Live AUM ${formatShortDate(effectiveAsOfDate)} (Cr)` : "Live AUM (Cr)"]: row.liveAumCr,
-        "SIP Inflows (Cr)": row.sipInflowCr,
-        [`Reported AUM ${componentLabel} (Cr)`]: row.reportedAumCr,
-        [`Income/Debt AUM ${componentLabel} (Cr)`]: row.incomeDebtAumCr,
-        [`Other Funds AUM ${componentLabel} (Cr)`]: row.otherFundsAumCr,
-        "Total Live (Cr)": row.totalLiveCr,
-        [`Total Reported ${totalReportedLabel} (Cr)`]: row.totalReportedCr,
-        "Growth (%)": row.growthPct !== null ? row.growthPct * 100 : null,
-      })),
+      rows: sorted.map((row) => {
+        const record: Record<string, string | number | null> = {
+          AMC: row.overviewName,
+          [effectiveAsOfDate ? `Live AUM ${formatShortDate(effectiveAsOfDate)} (Cr)` : "Live AUM (Cr)"]: row.liveAumCr,
+          "Net Flow (Cr)": row.sipInflowCr,
+        };
+        // Matches on-screen visibility -- omitted from the export while the
+        // column is collapsed, same as this export already mirrors Top-N/search.
+        if (reportedAumExpanded) {
+          record[`Reported AUM ${componentLabel} (Cr)`] = row.reportedAumCr;
+        }
+        record[`Income/Debt AUM ${componentLabel} (Cr)`] = row.incomeDebtAumCr;
+        record[`Other Funds AUM ${componentLabel} (Cr)`] = row.otherFundsAumCr;
+        record["Total Live (Cr)"] = row.totalLiveCr;
+        record[`Total Reported ${totalReportedLabel} (Cr)`] = row.totalReportedCr;
+        record["Growth (%)"] = row.growthPct !== null ? row.growthPct * 100 : null;
+        return record;
+      }),
     };
   });
 
@@ -310,12 +333,12 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
       <p className="text-xs text-muted-foreground">
         Every other tab tracks only each AMC&apos;s Growth/Equity Funds AUM. This tab surfaces the AMC&apos;s{" "}
         <em>true</em> total AUM (Growth/Equity + Income/Debt + Other Funds). Total (Live) estimates the current total
-        by combining the live-tracked, date-picked equity AUM with SIP Inflows (a flow estimate for the current
+        by combining the live-tracked, date-picked equity AUM with Net Flow (a flow estimate for the current
         period, independent of either month selected above) and the AUM breakdown month&apos;s Income/Debt and Other
         Funds AUM. Total (Reported) is the AMC&apos;s actual reported total for the separately-selected Total
         Reported AUM month above — the two months can differ, e.g. to see one month&apos;s breakdown against a
-        different month&apos;s actual total. Growth % compares the two regardless of whether they match. SIP
-        Inflows, Reported AUM, Income/Debt AUM, and Other Funds AUM are editable — click a value to type a new one,
+        different month&apos;s actual total. Growth % compares the two regardless of whether they match. Net
+        Flow, Reported AUM, Income/Debt AUM, and Other Funds AUM are editable — click a value to type a new one,
         or use the × to reset it back to the computed default.
       </p>
 
@@ -335,19 +358,51 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
               </TableHead>
               <SortableHead label={liveAumColumnLabel} sk="liveAumCr" {...headProps} />
               <SortableHead
-                label="SIP Inflows"
+                label="Net Flow"
                 sk="sipInflowCr"
                 {...headProps}
                 title="Defaults to the Overview tab's Est. Net Flow (Cr) for the current period. Editable."
               />
-              <SortableHead label={reportedAumColumnLabel} sk="reportedAumCr" {...headProps} title="Editable." />
+              {reportedAumExpanded ? (
+                <TableHead className="text-right first:text-left" title="Editable.">
+                  <div className="flex items-center justify-end gap-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("reportedAumCr")}
+                      className={`hover:text-foreground ${sortKey === "reportedAumCr" ? "font-medium text-foreground" : ""}`}
+                    >
+                      {reportedAumColumnLabel}
+                      {sortKey === "reportedAumCr" ? (sortDesc ? " ↓" : " ↑") : ""}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReportedAumExpanded(false)}
+                      title="Hide Reported AUM"
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <ChevronLeft className="size-3.5" />
+                    </button>
+                  </div>
+                </TableHead>
+              ) : (
+                <TableHead className="text-right first:text-left">
+                  <button
+                    type="button"
+                    onClick={() => setReportedAumExpanded(true)}
+                    title="Show Reported AUM"
+                    className="ml-auto flex items-center text-muted-foreground hover:text-foreground"
+                  >
+                    <ChevronRight className="size-3.5" />
+                  </button>
+                </TableHead>
+              )}
               <SortableHead label={incomeDebtColumnLabel} sk="incomeDebtAumCr" {...headProps} title="Editable." />
               <SortableHead label={otherFundsColumnLabel} sk="otherFundsAumCr" {...headProps} title="Editable." />
               <SortableHead
                 label="Total (Live)"
                 sk="totalLiveCr"
                 {...headProps}
-                title="Live AUM + SIP Inflows + Income/Debt AUM + Other Funds AUM"
+                title="Live AUM + Net Flow + Income/Debt AUM + Other Funds AUM"
               />
               <SortableHead
                 label={totalReportedColumnLabel}
@@ -376,12 +431,16 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
                   title={overrideTitle(row.sipInflowLastChange)}
                   onSave={(v) => saveOverride(row.amcId, "sipInflowOverrideCr", v)}
                 />
-                <EditNumberCell
-                  value={row.reportedAumCr}
-                  isOverridden={row.reportedAumIsOverridden}
-                  title={overrideTitle(row.reportedAumLastChange)}
-                  onSave={(v) => saveOverride(row.amcId, "reportedAumOverrideCr", v)}
-                />
+                {reportedAumExpanded ? (
+                  <EditNumberCell
+                    value={row.reportedAumCr}
+                    isOverridden={row.reportedAumIsOverridden}
+                    title={overrideTitle(row.reportedAumLastChange)}
+                    onSave={(v) => saveOverride(row.amcId, "reportedAumOverrideCr", v)}
+                  />
+                ) : (
+                  <TableCell className="text-right text-muted-foreground">—</TableCell>
+                )}
                 <EditNumberCell
                   value={row.incomeDebtAumCr}
                   isOverridden={row.incomeDebtAumIsOverridden}
@@ -401,8 +460,15 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
             ))}
           </TableBody>
           <TableFooter>
-            <TotalsRow label={subsetLabel} totals={subsetTotals} />
-            {isRestricted && <TotalsRow label={`Industry Total (all ${rows.length} AMCs)`} totals={industryTotals} muted />}
+            <TotalsRow label={subsetLabel} totals={subsetTotals} reportedAumExpanded={reportedAumExpanded} />
+            {isRestricted && (
+              <TotalsRow
+                label={`Industry Total (all ${rows.length} AMCs)`}
+                totals={industryTotals}
+                muted
+                reportedAumExpanded={reportedAumExpanded}
+              />
+            )}
           </TableFooter>
         </Table>
       </div>

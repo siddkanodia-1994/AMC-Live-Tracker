@@ -8,6 +8,10 @@ export interface AumHistoryPoint {
   date: string;
   liveAumCr: number;
   reportedAumCr: number;
+  // Which report period reportedAumCr reflects on this date -- lets the
+  // trend chart's tooltip show e.g. "(May 2026)" next to the Reported AUM
+  // value, since that line only steps when a new month is imported.
+  reportPeriod: string;
 }
 
 export async function getAmcAumHistory(amcId: number): Promise<AumHistoryPoint[]> {
@@ -21,6 +25,7 @@ export async function getAmcAumHistory(amcId: number): Promise<AumHistoryPoint[]
     date: r.snapshotDate,
     liveAumCr: Number(r.liveAumCr),
     reportedAumCr: Number(r.reportedAumCr),
+    reportPeriod: r.reportPeriod,
   }));
 }
 
@@ -287,6 +292,11 @@ export async function getIndustryAumHistory(): Promise<AumHistoryPoint[]> {
       date: liveAumDailySnapshot.snapshotDate,
       liveAumCr: sql<number>`sum(${liveAumDailySnapshot.liveAumCr})::float`,
       reportedAumCr: sql<number>`sum(${liveAumDailySnapshot.reportedAumCr})::float`,
+      // Canonical rows for a given date all share one reportPeriod in
+      // practice (the whole industry moves to a new "current" period
+      // together) -- max() is just a safe way to pick the one value out of
+      // the group-by without a second query.
+      reportPeriod: sql<string>`max(${liveAumDailySnapshot.reportPeriod})`,
     })
     .from(liveAumDailySnapshot)
     .where(eq(liveAumDailySnapshot.isCanonical, true))

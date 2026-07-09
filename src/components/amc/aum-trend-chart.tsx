@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { formatCr, formatShortDate } from "@/lib/utils/format";
+import { formatCr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
 // Padding added above/below the combined (live + reported) data range, as a
@@ -82,7 +82,17 @@ export function AumTrendChart({ data }: { data: AumHistoryPoint[] }) {
           />
           <Tooltip
             labelFormatter={(label) => (typeof label === "string" ? formatShortDate(label) : String(label ?? ""))}
-            formatter={(value) => (typeof value === "number" ? formatCr(value) : String(value))}
+            formatter={(value, name, item) => {
+              const formatted = typeof value === "number" ? formatCr(value) : String(value);
+              // Reported AUM only steps once a month (when a new workbook is
+              // imported) -- show which report period it reflects alongside
+              // the value, since the chart's X axis is daily.
+              const reportPeriod = (item?.payload as AumHistoryPoint | undefined)?.reportPeriod;
+              if (name === "Reported AUM" && reportPeriod) {
+                return `${formatted} (${formatReportPeriodLabel(reportPeriod)})`;
+              }
+              return formatted;
+            }}
             contentStyle={{
               backgroundColor: "var(--color-popover)",
               borderColor: "var(--color-border)",
