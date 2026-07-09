@@ -6,9 +6,9 @@ import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
 import { isBankDebtOrRepo, isCashEquivalent, isUsListedEquityIsin } from "../excel/instrument-classification";
 import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { writeIsinDailyPriceRows } from "./isin-price-store";
-import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
+import { CRORE, LIVE_AUM_CACHE_TTL_MS, OFF_HOURS_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
-import { isTradingDay, lastTradingDayIstString } from "../utils/market-hours";
+import { isMarketOpen, isTradingDay, lastTradingDayIstString } from "../utils/market-hours";
 import {
   getCachedHoldings,
   getCachedInstrumentMap,
@@ -514,7 +514,13 @@ async function getOrCompute(forceRefresh: boolean | undefined): Promise<Computed
 
   inFlightComputation = runComputation()
     .then((fresh) => {
-      setCachedLiveAum(fresh, LIVE_AUM_CACHE_TTL_MS);
+      // Outside market hours (evening/night on a trading day, or any
+      // non-trading day) the price can't have moved, so the result is
+      // cached far longer -- see OFF_HOURS_CACHE_TTL_MS's comment. A
+      // forceRefresh call (the cron, or a manual ?refresh=1) always bypasses
+      // the cache read regardless of TTL, so this never blocks a deliberate
+      // refresh, only redundant organic/poll traffic in between.
+      setCachedLiveAum(fresh, isMarketOpen() ? LIVE_AUM_CACHE_TTL_MS : OFF_HOURS_CACHE_TTL_MS);
       return fresh;
     })
     .finally(() => {
