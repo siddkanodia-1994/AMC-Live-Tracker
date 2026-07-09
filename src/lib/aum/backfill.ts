@@ -1,7 +1,8 @@
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcPeriods, amcs, appSettings, holdings, instrumentMap, liveAumDailySnapshot } from "../db/schema";
+import { amcPeriods, amcs, appSettings, holdings, instrumentMap, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { fetchHistoricalClosesForMany } from "../dhan/historical-client";
+import type { HistoricalClose } from "../dhan/historical-client";
 import type { ExchangeSegment } from "../dhan/types";
 import { CRORE } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
@@ -98,31 +99,75 @@ export async function backfillDailySnapshots(options?: {
   }
 
   const isinToSegmentKey = new Map<string, string>();
-  const requests: { securityId: string; exchangeSegment: ExchangeSegment }[] = [];
   for (const isin of priceableIsins) {
     const mapping = instrumentByIsin.get(isin);
     if (!mapping) continue;
-    const key = `${mapping.exchangeSegment}:${mapping.securityId}`;
-    isinToSegmentKey.set(isin, key);
-    requests.push({ securityId: mapping.securityId, exchangeSegment: mapping.exchangeSegment as ExchangeSegment });
+    isinToSegmentKey.set(isin, `${mapping.exchangeSegment}:${mapping.securityId}`);
   }
 
-  if (requests.length === 0) {
+  if (isinToSegmentKey.size === 0) {
     warnings.push("No mapped priceable ISINs found — run the instrument sync first.");
     return { fromDate, toDate, tradingDatesFound: 0, rowsInserted: 0, canonicalRowsInserted: 0, comparisonRowsInserted: 0, warnings };
   }
 
-  const historicalBySecurityKey = await fetchHistoricalClosesForMany(requests, fromDate, toDate, (done, total) => {
-    if (done % 100 === 0 || done === total) {
-      console.log(`  historical fetch progress: ${done}/${total}`);
+  // Skip re-fetching from DHAN for ISINs that already have a stored price
+  // for every known trading day in [fromDate, toDate] -- re-running an
+  // already-backfilled range previously always re-hit DHAN for everything,
+  // wasting rate-limited requests on data we already have (see the
+  // fetch-avoidance audit). "Known trading days" = whatever's already
+  // stored for ANY isin in this window; on a brand-new range nothing's
+  // stored yet, so this set is empty and every isin still gets fetched,
+  // identical to the old unconditional-fetch behavior.
+  const existingPriceRows = await db
+    .select({ isin: isinDailyPrice.isin, snapshotDate: isinDailyPrice.snapshotDate, priceInr: isinDailyPrice.priceInr })
+    .from(isinDailyPrice)
+    .where(and(gte(isinDailyPrice.snapshotDate, fromDate), lte(isinDailyPrice.snapshotDate, toDate)));
+
+  const knownTradingDates = new Set(existingPriceRows.map((r) => r.snapshotDate));
+  const existingByIsin = new Map<string, Map<string, number>>();
+  for (const r of existingPriceRows) {
+    const byDate = existingByIsin.get(r.isin) ?? new Map<string, number>();
+    byDate.set(r.snapshotDate, Number(r.priceInr));
+    existingByIsin.set(r.isin, byDate);
+  }
+
+  const fullyCoveredIsins = new Set<string>();
+  if (knownTradingDates.size > 0) {
+    for (const isin of isinToSegmentKey.keys()) {
+      const stored = existingByIsin.get(isin);
+      if (stored && [...knownTradingDates].every((d) => stored.has(d))) {
+        fullyCoveredIsins.add(isin);
+      }
     }
-  });
+  }
+
+  const requests: { securityId: string; exchangeSegment: ExchangeSegment }[] = [];
+  for (const isin of isinToSegmentKey.keys()) {
+    if (fullyCoveredIsins.has(isin)) continue;
+    const mapping = instrumentByIsin.get(isin)!;
+    requests.push({ securityId: mapping.securityId, exchangeSegment: mapping.exchangeSegment as ExchangeSegment });
+  }
+
+  const historicalBySecurityKey =
+    requests.length > 0
+      ? await fetchHistoricalClosesForMany(requests, fromDate, toDate, (done, total) => {
+          if (done % 100 === 0 || done === total) {
+            console.log(`  historical fetch progress: ${done}/${total}`);
+          }
+        })
+      : new Map<string, HistoricalClose[]>();
 
   // isin -> date -> close
   const closesByIsinAndDate = new Map<string, Map<string, number>>();
   const allTradingDates = new Set<string>();
   let unmatchedIsinCount = 0;
   for (const isin of priceableIsins) {
+    if (fullyCoveredIsins.has(isin)) {
+      const byDate = existingByIsin.get(isin)!;
+      closesByIsinAndDate.set(isin, byDate);
+      for (const date of byDate.keys()) allTradingDates.add(date);
+      continue;
+    }
     const key = isinToSegmentKey.get(isin);
     if (!key) continue;
     const closes = historicalBySecurityKey.get(key) ?? [];
@@ -137,6 +182,9 @@ export async function backfillDailySnapshots(options?: {
 
   if (unmatchedIsinCount > 0) {
     warnings.push(`${unmatchedIsinCount} priceable ISINs had no historical data in range — those holdings fall back to reported value for backfilled dates.`);
+  }
+  if (fullyCoveredIsins.size > 0) {
+    warnings.push(`${fullyCoveredIsins.size} priceable ISINs already had a stored price for every known trading day in range — skipped re-fetching them from DHAN.`);
   }
 
   const sortedDates = [...allTradingDates].sort();
