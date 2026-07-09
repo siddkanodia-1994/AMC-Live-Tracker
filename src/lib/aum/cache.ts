@@ -30,7 +30,21 @@ export function setCachedLiveAum(result: ComputedLiveAum, ttlMs: number): void {
 // reads that were re-downloading `holdings`/`instrument_map` in their
 // entirety on every poll, a top contributor to the Neon egress-quota
 // exhaustion this fixes.
-const STATIC_TABLE_CACHE_TTL_MS = 10 * 60_000;
+//
+// 15 days, not a shorter safety-margin TTL: the explicit invalidation above
+// is the real mechanism for the normal case (an /admin upload clears this
+// instantly), AND a brand-new current-period upload is separately
+// self-correcting regardless of TTL -- getCachedHoldings is keyed by
+// reportPeriod, so a new month's holdings can never be confused with the
+// previous month's cached entry; a cache "hit" on the wrong period is
+// impossible by construction, only a slower-than-ideal miss is possible.
+// The TTL only ever matters as a fallback for a same-period correction
+// applied through a path that bypasses the explicit invalidation entirely
+// (e.g. a script writing directly to the database) -- audited and accepted
+// as a rare, low-blast-radius edge case worth trading for the egress
+// savings of (near) eliminating market-hours re-fetches of these two
+// tables, which otherwise re-download in full every 10 minutes all day.
+const STATIC_TABLE_CACHE_TTL_MS = 15 * 24 * 60 * 60 * 1000;
 
 interface StaticCacheEntry<T> {
   reportPeriod?: string;
