@@ -107,21 +107,32 @@ async function writeDailySnapshot(snapshot: LiveAumSnapshot): Promise<void> {
   }
 }
 
-async function writeDailyIsinPrices(priceByIsin: Map<string, number>): Promise<void> {
-  if (priceByIsin.size === 0) return;
-  try {
-    const today = getIstDateString();
-    const rows = [...priceByIsin.entries()].map(([isin, priceInr]) => ({
-      isin,
-      snapshotDate: today,
-      priceInr: String(priceInr),
-    }));
+export interface IsinDailyPriceRow {
+  isin: string;
+  snapshotDate: string;
+  priceInr: number;
+}
 
-    // Same overwrite-on-conflict reasoning as writeDailySnapshot: today's row
-    // should track the latest computation, not freeze on the first one.
+/**
+ * Bulk-upserts arbitrary (isin, date, price) rows into isin_daily_price --
+ * shared by the live compute path (today's date only, see
+ * writeDailyIsinPrices below) and backfillDailySnapshots (many historical
+ * dates at once, from the same DHAN historical closes it already fetched
+ * for live_aum_daily_snapshot -- see backfill.ts). Without this, a freshly
+ * rebuilt DB has zero price history until the live cron slowly rebuilds it
+ * one day at a time, and every DHAN miss in the meantime falls all the way
+ * to the stale reported value instead of a recent last close.
+ */
+export async function writeIsinDailyPriceRows(rows: IsinDailyPriceRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  try {
     const BATCH_SIZE = 500;
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-      const batch = rows.slice(i, i + BATCH_SIZE);
+      const batch = rows.slice(i, i + BATCH_SIZE).map((r) => ({
+        isin: r.isin,
+        snapshotDate: r.snapshotDate,
+        priceInr: String(r.priceInr),
+      }));
       await db
         .insert(isinDailyPrice)
         .values(batch)
@@ -136,6 +147,17 @@ async function writeDailyIsinPrices(priceByIsin: Map<string, number>): Promise<v
   } catch (err) {
     console.error("Failed to write daily ISIN prices:", err);
   }
+}
+
+async function writeDailyIsinPrices(priceByIsin: Map<string, number>): Promise<void> {
+  if (priceByIsin.size === 0) return;
+  const today = getIstDateString();
+  // Same overwrite-on-conflict reasoning as writeDailySnapshot: today's row
+  // should track the latest computation, not freeze on the first one --
+  // handled inside writeIsinDailyPriceRows' onConflictDoUpdate.
+  await writeIsinDailyPriceRows(
+    [...priceByIsin.entries()].map(([isin, priceInr]) => ({ isin, snapshotDate: today, priceInr }))
+  );
 }
 
 async function runComputation(): Promise<ComputedLiveAum> {

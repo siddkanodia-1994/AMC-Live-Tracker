@@ -5,6 +5,7 @@ import { fetchHistoricalClosesForMany } from "../dhan/historical-client";
 import type { ExchangeSegment } from "../dhan/types";
 import { CRORE } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
+import { writeIsinDailyPriceRows, type IsinDailyPriceRow } from "./compute-live-aum";
 import { firstDayOfNextMonth } from "./report-period";
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
@@ -143,6 +144,21 @@ export async function backfillDailySnapshots(options?: {
     warnings.push("No trading dates found in the historical data returned — nothing to backfill.");
     return { fromDate, toDate, tradingDatesFound: 0, rowsInserted: 0, canonicalRowsInserted: 0, comparisonRowsInserted: 0, warnings };
   }
+
+  // Persist the per-ISIN closes this backfill already fetched into
+  // isin_daily_price too (previously only used in-memory here to build
+  // live_aum_daily_snapshot's AUM totals). Without this, a freshly rebuilt
+  // DB starts with zero price history, so every DHAN miss on a live poll
+  // falls straight to the stale reported value instead of a recent last
+  // close -- see the "fewer live-priced stocks" audit. onConflictDoUpdate
+  // makes this safe to re-run.
+  const isinPriceRows: IsinDailyPriceRow[] = [];
+  for (const [isin, byDate] of closesByIsinAndDate) {
+    for (const [date, close] of byDate) {
+      isinPriceRows.push({ isin, snapshotDate: date, priceInr: close });
+    }
+  }
+  await writeIsinDailyPriceRows(isinPriceRows);
 
   const holdingsByAmcId = new Map<number, typeof holdingRows>();
   for (const h of holdingRows) {
