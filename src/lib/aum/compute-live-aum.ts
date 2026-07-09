@@ -1,10 +1,11 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcPeriods, amcs, appSettings, holdings, instrumentMap, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
+import { amcPeriods, amcs, appSettings, holdings, instrumentMap, liveAumDailySnapshot } from "../db/schema";
 import { fetchLtps, segmentKey } from "../dhan/client";
 import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
 import { isBankDebtOrRepo, isCashEquivalent, isUsListedEquityIsin } from "../excel/instrument-classification";
 import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
+import { writeIsinDailyPriceRows } from "./isin-price-store";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
 import { isTradingDay, lastTradingDayIstString } from "../utils/market-hours";
@@ -104,48 +105,6 @@ async function writeDailySnapshot(snapshot: LiveAumSnapshot): Promise<void> {
       });
   } catch (err) {
     console.error("Failed to write daily live-AUM snapshot:", err);
-  }
-}
-
-export interface IsinDailyPriceRow {
-  isin: string;
-  snapshotDate: string;
-  priceInr: number;
-}
-
-/**
- * Bulk-upserts arbitrary (isin, date, price) rows into isin_daily_price --
- * shared by the live compute path (today's date only, see
- * writeDailyIsinPrices below) and backfillDailySnapshots (many historical
- * dates at once, from the same DHAN historical closes it already fetched
- * for live_aum_daily_snapshot -- see backfill.ts). Without this, a freshly
- * rebuilt DB has zero price history until the live cron slowly rebuilds it
- * one day at a time, and every DHAN miss in the meantime falls all the way
- * to the stale reported value instead of a recent last close.
- */
-export async function writeIsinDailyPriceRows(rows: IsinDailyPriceRow[]): Promise<void> {
-  if (rows.length === 0) return;
-  try {
-    const BATCH_SIZE = 500;
-    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-      const batch = rows.slice(i, i + BATCH_SIZE).map((r) => ({
-        isin: r.isin,
-        snapshotDate: r.snapshotDate,
-        priceInr: String(r.priceInr),
-      }));
-      await db
-        .insert(isinDailyPrice)
-        .values(batch)
-        .onConflictDoUpdate({
-          target: [isinDailyPrice.isin, isinDailyPrice.snapshotDate],
-          set: {
-            priceInr: sql`excluded.price_inr`,
-            computedAt: sql`now()`,
-          },
-        });
-    }
-  } catch (err) {
-    console.error("Failed to write daily ISIN prices:", err);
   }
 }
 

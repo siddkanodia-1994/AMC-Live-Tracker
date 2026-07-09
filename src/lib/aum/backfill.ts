@@ -6,7 +6,7 @@ import type { HistoricalClose } from "../dhan/historical-client";
 import type { ExchangeSegment } from "../dhan/types";
 import { CRORE } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
-import { writeIsinDailyPriceRows, type IsinDailyPriceRow } from "./compute-live-aum";
+import { writeIsinDailyPriceRows, type IsinDailyPriceRow } from "./isin-price-store";
 import { firstDayOfNextMonth } from "./report-period";
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";

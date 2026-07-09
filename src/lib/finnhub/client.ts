@@ -40,14 +40,25 @@ export async function searchByIsin(
   }
 }
 
-/** Current/last price for a symbol. Returns null on any failure (missing key, network, 4xx/5xx). */
-export async function getQuote(symbol: string): Promise<number | null> {
+export interface QuoteResult {
+  current: number;
+  // The prior trading session's close, straight from Finnhub's free /quote
+  // response -- previously fetched and discarded. Used to seed a second,
+  // real historical anchor point (see foreign-pricing.ts) instead of
+  // needing the historical-candles endpoint, which is premium-only.
+  previousClose: number | null;
+}
+
+/** Current/last price (and previous close) for a symbol. Returns null on any failure (missing key, network, 4xx/5xx). */
+export async function getQuote(symbol: string): Promise<QuoteResult | null> {
   const apiKey = requireApiKey();
   try {
     const res = await fetch(`${FINNHUB_BASE_URL}/quote?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`);
     if (!res.ok) return null;
     const json = (await res.json()) as FinnhubQuote;
-    return typeof json.c === "number" && json.c > 0 ? json.c : null;
+    if (typeof json.c !== "number" || json.c <= 0) return null;
+    const previousClose = typeof json.pc === "number" && json.pc > 0 ? json.pc : null;
+    return { current: json.c, previousClose };
   } catch {
     return null;
   }
