@@ -8,7 +8,14 @@ import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
 import { isTradingDay, lastTradingDayIstString } from "../utils/market-hours";
-import { getCachedLiveAum, setCachedLiveAum } from "./cache";
+import {
+  getCachedHoldings,
+  getCachedInstrumentMap,
+  getCachedLiveAum,
+  setCachedHoldings,
+  setCachedInstrumentMap,
+  setCachedLiveAum,
+} from "./cache";
 import { getAverageAumSinceReport, getNetFlowForPeriod, getPreviousDayIsinPrices, getPreviousDayLiveAum } from "./history";
 import type {
   AmcLiveAum,
@@ -20,6 +27,25 @@ import type {
 } from "./types";
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
+
+interface HoldingRow {
+  id: number;
+  amcId: number;
+  companyName: string;
+  sector: string;
+  mcapClassification: string | null;
+  isin: string | null;
+  isPriceable: boolean;
+  marketValueCr: string;
+  shares: string;
+  weightPct: string | null;
+}
+
+interface InstrumentRow {
+  isin: string;
+  securityId: string;
+  exchangeSegment: string;
+}
 
 export class NoDataImportedError extends Error {
   constructor() {
@@ -128,8 +154,42 @@ async function runComputation(): Promise<ComputedLiveAum> {
     .innerJoin(amcs, eq(amcPeriods.amcId, amcs.id))
     .where(eq(amcPeriods.reportPeriod, reportPeriod));
 
-  const holdingRows = await db.select().from(holdings).where(eq(holdings.reportPeriod, reportPeriod));
-  const instrumentRows = await db.select().from(instrumentMap);
+  // Both tables only change on an explicit admin action (workbook upload,
+  // instrument sync) -- cached for STATIC_TABLE_CACHE_TTL_MS and invalidated
+  // immediately by those two routes, so a full-table transfer happens at
+  // most once every ~10 minutes instead of on every 45s poll. Also trimmed
+  // to the columns actually used below (was a bare SELECT *).
+  let holdingRows = getCachedHoldings<HoldingRow[]>(reportPeriod);
+  if (!holdingRows) {
+    holdingRows = await db
+      .select({
+        id: holdings.id,
+        amcId: holdings.amcId,
+        companyName: holdings.companyName,
+        sector: holdings.sector,
+        mcapClassification: holdings.mcapClassification,
+        isin: holdings.isin,
+        isPriceable: holdings.isPriceable,
+        marketValueCr: holdings.marketValueCr,
+        shares: holdings.shares,
+        weightPct: holdings.weightPct,
+      })
+      .from(holdings)
+      .where(eq(holdings.reportPeriod, reportPeriod));
+    setCachedHoldings(reportPeriod, holdingRows);
+  }
+
+  let instrumentRows = getCachedInstrumentMap<InstrumentRow[]>();
+  if (!instrumentRows) {
+    instrumentRows = await db
+      .select({
+        isin: instrumentMap.isin,
+        securityId: instrumentMap.securityId,
+        exchangeSegment: instrumentMap.exchangeSegment,
+      })
+      .from(instrumentMap);
+    setCachedInstrumentMap(instrumentRows);
+  }
 
   const instrumentByIsin = new Map(instrumentRows.map((r) => [r.isin, r]));
 

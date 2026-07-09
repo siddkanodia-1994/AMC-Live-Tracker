@@ -1,4 +1,4 @@
-import { and, desc, eq, lte } from "drizzle-orm";
+import { and, desc, eq, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcs, liveAumDailySnapshot } from "../db/schema";
 import { getCanonicalSnapshotDateBounds } from "./history";
@@ -24,7 +24,13 @@ export async function computeOverviewAsOf(
   }
   const asOfDate = requestedDate < minDate ? minDate : requestedDate > maxDate ? maxDate : requestedDate;
 
-  const [snapshotRows, amcRows] = await Promise.all([
+  // Need only the newest TWO canonical rows per AMC (as-of value + the prior
+  // day for 1D change) -- a row_number() window function bounds what
+  // Postgres sends back to exactly 2 rows/AMC, instead of the old
+  // fetch-every-snapshot-ever-and-dedupe-in-JS query (unbounded, grows every
+  // trading day forever -- a top contributor to the Neon egress-quota
+  // exhaustion this fixes).
+  const ranked = db.$with("ranked_snapshots").as(
     db
       .select({
         amcId: liveAumDailySnapshot.amcId,
@@ -32,10 +38,21 @@ export async function computeOverviewAsOf(
         liveAumCr: liveAumDailySnapshot.liveAumCr,
         reportedAumCr: liveAumDailySnapshot.reportedAumCr,
         reportPeriod: liveAumDailySnapshot.reportPeriod,
+        rn: sql<number>`row_number() over (partition by ${liveAumDailySnapshot.amcId} order by ${liveAumDailySnapshot.snapshotDate} desc)`.as(
+          "rn"
+        ),
       })
       .from(liveAumDailySnapshot)
       .where(and(lte(liveAumDailySnapshot.snapshotDate, asOfDate), eq(liveAumDailySnapshot.isCanonical, true)))
-      .orderBy(desc(liveAumDailySnapshot.snapshotDate)),
+  );
+
+  const [snapshotRows, amcRows] = await Promise.all([
+    db
+      .with(ranked)
+      .select()
+      .from(ranked)
+      .where(sql`${ranked.rn} <= 2`)
+      .orderBy(ranked.amcId, desc(ranked.snapshotDate)),
     db.select({ id: amcs.id, slug: amcs.slug, overviewName: amcs.overviewName }).from(amcs),
   ]);
 

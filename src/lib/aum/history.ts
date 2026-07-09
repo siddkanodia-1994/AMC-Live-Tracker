@@ -71,21 +71,23 @@ export interface PreviousDayAum {
 export async function getPreviousDayLiveAum(): Promise<Map<number, PreviousDayAum>> {
   const today = getIstDateString();
 
+  // DISTINCT ON pushes the "keep only the newest row per AMC" dedup into
+  // Postgres, so the app only ever receives one row per AMC instead of every
+  // historical snapshot ever written for it (previously fetched the ENTIRE
+  // table on every 45s poll -- see the egress-quota incident this fixes).
   const rows = await db
-    .select({
+    .selectDistinctOn([liveAumDailySnapshot.amcId], {
       amcId: liveAumDailySnapshot.amcId,
       snapshotDate: liveAumDailySnapshot.snapshotDate,
       liveAumCr: liveAumDailySnapshot.liveAumCr,
     })
     .from(liveAumDailySnapshot)
     .where(and(lt(liveAumDailySnapshot.snapshotDate, today), eq(liveAumDailySnapshot.isCanonical, true)))
-    .orderBy(desc(liveAumDailySnapshot.snapshotDate));
+    .orderBy(liveAumDailySnapshot.amcId, desc(liveAumDailySnapshot.snapshotDate));
 
   const map = new Map<number, PreviousDayAum>();
   for (const r of rows) {
-    if (!map.has(r.amcId)) {
-      map.set(r.amcId, { liveAumCr: Number(r.liveAumCr), snapshotDate: r.snapshotDate });
-    }
+    map.set(r.amcId, { liveAumCr: Number(r.liveAumCr), snapshotDate: r.snapshotDate });
   }
   return map;
 }
@@ -102,21 +104,20 @@ export interface LiveAumAsOf {
  * canonical snapshot on or before the date are simply absent from the map.
  */
 export async function getAllAmcsLiveAumAsOf(date: string): Promise<Map<number, LiveAumAsOf>> {
+  // Same DISTINCT ON dedup-in-Postgres fix as getPreviousDayLiveAum above.
   const rows = await db
-    .select({
+    .selectDistinctOn([liveAumDailySnapshot.amcId], {
       amcId: liveAumDailySnapshot.amcId,
       snapshotDate: liveAumDailySnapshot.snapshotDate,
       liveAumCr: liveAumDailySnapshot.liveAumCr,
     })
     .from(liveAumDailySnapshot)
     .where(and(lte(liveAumDailySnapshot.snapshotDate, date), eq(liveAumDailySnapshot.isCanonical, true)))
-    .orderBy(desc(liveAumDailySnapshot.snapshotDate));
+    .orderBy(liveAumDailySnapshot.amcId, desc(liveAumDailySnapshot.snapshotDate));
 
   const map = new Map<number, LiveAumAsOf>();
   for (const r of rows) {
-    if (!map.has(r.amcId)) {
-      map.set(r.amcId, { liveAumCr: Number(r.liveAumCr), snapshotDate: r.snapshotDate });
-    }
+    map.set(r.amcId, { liveAumCr: Number(r.liveAumCr), snapshotDate: r.snapshotDate });
   }
   return map;
 }
@@ -147,21 +148,23 @@ export async function getCanonicalSnapshotDateBounds(): Promise<{ minDate: strin
 export async function getPreviousDayIsinPrices(): Promise<Map<string, number>> {
   const today = getIstDateString();
 
+  // DISTINCT ON (isin) -- this table grows by ~one row per priceable ISIN
+  // per trading day forever; the old fetch-everything-then-dedupe-in-JS
+  // query was re-downloading the WHOLE table on every 45s poll and was the
+  // single largest contributor to the Neon egress-quota exhaustion this
+  // fixes. Now Postgres returns exactly one row per ISIN.
   const rows = await db
-    .select({
+    .selectDistinctOn([isinDailyPrice.isin], {
       isin: isinDailyPrice.isin,
-      snapshotDate: isinDailyPrice.snapshotDate,
       priceInr: isinDailyPrice.priceInr,
     })
     .from(isinDailyPrice)
     .where(lt(isinDailyPrice.snapshotDate, today))
-    .orderBy(desc(isinDailyPrice.snapshotDate));
+    .orderBy(isinDailyPrice.isin, desc(isinDailyPrice.snapshotDate));
 
   const map = new Map<string, number>();
   for (const r of rows) {
-    if (!map.has(r.isin)) {
-      map.set(r.isin, Number(r.priceInr));
-    }
+    map.set(r.isin, Number(r.priceInr));
   }
   return map;
 }
@@ -227,8 +230,11 @@ export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<num
     // holiday with no snapshot row (e.g. May 2026 ends on a Sunday) — take
     // the most recent trading day's snapshot on or before it instead, same
     // "most recent regardless of gap" approach as getPreviousDayLiveAum.
+    // DISTINCT ON (amcId, reportPeriod) -- same dedup-in-Postgres fix as
+    // above, applied to the (amcId, reportPeriod) grouping this query needs
+    // instead of just amcId.
     db
-      .select({
+      .selectDistinctOn([liveAumDailySnapshot.amcId, liveAumDailySnapshot.reportPeriod], {
         amcId: liveAumDailySnapshot.amcId,
         snapshotDate: liveAumDailySnapshot.snapshotDate,
         reportPeriod: liveAumDailySnapshot.reportPeriod,
@@ -241,7 +247,7 @@ export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<num
           lte(liveAumDailySnapshot.snapshotDate, monthEndDate)
         )
       )
-      .orderBy(desc(liveAumDailySnapshot.snapshotDate)),
+      .orderBy(liveAumDailySnapshot.amcId, liveAumDailySnapshot.reportPeriod, desc(liveAumDailySnapshot.snapshotDate)),
   ]);
 
   // Baseline and prior-reported figures only count when they belong to the
@@ -250,9 +256,7 @@ export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<num
   const baselineByAmcId = new Map<number, number>();
   for (const r of baselineSnapshots) {
     if (r.reportPeriod !== priorPeriodByAmcId.get(r.amcId)) continue;
-    if (!baselineByAmcId.has(r.amcId)) {
-      baselineByAmcId.set(r.amcId, Number(r.liveAumCr));
-    }
+    baselineByAmcId.set(r.amcId, Number(r.liveAumCr));
   }
   const priorReportedByAmcId = new Map<number, number>();
   for (const r of priorPeriodReported) {

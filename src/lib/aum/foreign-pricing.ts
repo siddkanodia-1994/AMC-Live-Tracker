@@ -116,6 +116,6 @@ export async function getCachedUsdInrRate(): Promise<number | null> {
 }
 
 export async function getAllForeignPrices(): Promise<Map<string, number>> {
-  const rows = await db.select().from(foreignPriceCache);
+  const rows = await db.select({ isin: foreignPriceCache.isin, priceUsd: foreignPriceCache.priceUsd }).from(foreignPriceCache);
   return new Map(rows.map((r) => [r.isin, Number(r.priceUsd)]));
 }
