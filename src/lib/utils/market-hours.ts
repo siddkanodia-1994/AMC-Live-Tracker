@@ -69,3 +69,27 @@ export function isMarketOpen(now: Date = new Date()): boolean {
   const minutesSinceMidnight = ist.getUTCHours() * 60 + ist.getUTCMinutes();
   return minutesSinceMidnight >= MARKET_OPEN_MINUTES && minutesSinceMidnight < MARKET_CLOSE_MINUTES;
 }
+
+/**
+ * Milliseconds from `now` until the next market open (9:15 AM IST on the
+ * next trading day -- today's, if today is a trading day and 9:15 AM hasn't
+ * passed yet). Used to cap the off-hours live-AUM cache TTL so a computation
+ * made shortly before market open can never stay cached past the moment
+ * trading actually resumes, regardless of how long the flat off-hours TTL is
+ * configured to be -- see compute-live-aum.ts's getOrCompute.
+ */
+export function msUntilNextMarketOpen(now: Date = new Date()): number {
+  let cursor = new Date(now);
+  for (let i = 0; i < 15; i++) {
+    if (isTradingDay(cursor)) {
+      const dateStr = toIstDateString(cursor);
+      const marketOpenMs = Date.parse(`${dateStr}T00:00:00.000Z`) + MARKET_OPEN_MINUTES * 60_000 - IST_OFFSET_MS;
+      if (marketOpenMs > now.getTime()) {
+        return marketOpenMs - now.getTime();
+      }
+    }
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+  }
+  // Shouldn't happen given how sparse NSE holidays are; a safe, arbitrary fallback.
+  return 24 * 60 * 60 * 1000;
+}

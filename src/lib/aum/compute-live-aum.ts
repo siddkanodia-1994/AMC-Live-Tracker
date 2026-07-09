@@ -8,7 +8,7 @@ import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { writeIsinDailyPriceRows } from "./isin-price-store";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS, OFF_HOURS_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
-import { isMarketOpen, isTradingDay, lastTradingDayIstString } from "../utils/market-hours";
+import { isMarketOpen, isTradingDay, lastTradingDayIstString, msUntilNextMarketOpen } from "../utils/market-hours";
 import {
   getCachedHoldings,
   getCachedInstrumentMap,
@@ -516,11 +516,17 @@ async function getOrCompute(forceRefresh: boolean | undefined): Promise<Computed
     .then((fresh) => {
       // Outside market hours (evening/night on a trading day, or any
       // non-trading day) the price can't have moved, so the result is
-      // cached far longer -- see OFF_HOURS_CACHE_TTL_MS's comment. A
-      // forceRefresh call (the cron, or a manual ?refresh=1) always bypasses
-      // the cache read regardless of TTL, so this never blocks a deliberate
-      // refresh, only redundant organic/poll traffic in between.
-      setCachedLiveAum(fresh, isMarketOpen() ? LIVE_AUM_CACHE_TTL_MS : OFF_HOURS_CACHE_TTL_MS);
+      // cached far longer -- see OFF_HOURS_CACHE_TTL_MS's comment. Capped at
+      // msUntilNextMarketOpen() so a computation made shortly before the
+      // open (e.g. an 8:45am pre-market check) can never stay cached past
+      // the moment trading actually resumes -- getCachedLiveAum only checks
+      // the expiry timestamp, it never re-evaluates isMarketOpen() on read,
+      // so without this cap the flat off-hours TTL alone could otherwise
+      // bleed a stale snapshot deep into the trading session. A forceRefresh
+      // call (the cron, or a manual ?refresh=1) always bypasses the cache
+      // read regardless of TTL, so this never blocks a deliberate refresh,
+      // only redundant organic/poll traffic in between.
+      setCachedLiveAum(fresh, isMarketOpen() ? LIVE_AUM_CACHE_TTL_MS : Math.min(OFF_HOURS_CACHE_TTL_MS, msUntilNextMarketOpen()));
       return fresh;
     })
     .finally(() => {

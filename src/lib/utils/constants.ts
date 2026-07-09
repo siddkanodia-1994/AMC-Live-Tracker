@@ -5,10 +5,12 @@ export const LIVE_AUM_CACHE_TTL_MS = 45_000;
 // cached far longer than the 45s in-market TTL -- cuts wasted off-hours DHAN
 // calls without ever showing a stale value: the first computation after
 // close still genuinely fetches DHAN's frozen close, it just then gets
-// reused for hours instead of re-fetched every 45s. 4h cycles several times
-// over a ~17.75h overnight closure (15:30-9:15 IST) with wide margin before
-// the next market open.
-export const OFF_HOURS_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
+// reused for hours instead of re-fetched every 45s. Safe to set this as long
+// as it's used together with market-hours.ts's msUntilNextMarketOpen() cap
+// (see compute-live-aum.ts's getOrCompute) -- without that cap, a
+// computation made shortly before market open could otherwise stay cached
+// well into the next trading session.
+export const OFF_HOURS_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
 
 // DHAN's documented limits: up to 1000 instruments per marketfeed request, 1 request/sec.
 export const DHAN_MAX_INSTRUMENTS_PER_REQUEST = 1000;
