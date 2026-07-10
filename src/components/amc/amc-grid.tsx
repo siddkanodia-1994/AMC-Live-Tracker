@@ -16,7 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RelativeTime } from "@/components/ui/relative-time";
-import { formatCr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import type { AumHistoryPoint } from "@/lib/aum/history";
@@ -49,6 +49,8 @@ export function AmcGrid({
   const [avgFrom, setAvgFrom] = useState<string | null>(null);
   const [avgTo, setAvgTo] = useState<string | null>(null);
   const adjustments = useOverviewAdjustments(selectedReportPeriod ?? undefined, avgFrom ?? undefined, avgTo ?? undefined);
+  // Purely a display toggle on the trend chart below -- doesn't touch `history`.
+  const [chartMode, setChartMode] = useState<"absolute" | "change">("absolute");
   // Shared across all three tabs -- lifted here (rather than each tab owning
   // its own) so changing it in one applies to all, per the "linked toggle"
   // requirement. Each tab still independently decides what "Top N" ranks by
@@ -88,12 +90,24 @@ export function AmcGrid({
     const totalAvgAumCr = data.amcs.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
     const liveDeltaCr = data.totalLiveAumCr - data.totalReportedAumCr;
     const avgDeltaCr = totalAvgAumCr - data.totalReportedAumCr;
+    // Falls back to today's own liveAumCr (not skipping the AMC) for any AMC
+    // with no prior-day figure yet -- that AMC contributes zero change to the
+    // total rather than distorting it or requiring a separate exclusion set,
+    // same reasoning as the avgLiveAumCr fallback just above. Deliberately
+    // derived from data.amcs (the live snapshot), not adjustedAmcs -- this
+    // top-level card stays anchored to the current period regardless of the
+    // table's own Reported AUM month / Avg AUM range pickers below.
+    const totalPreviousDayLiveAumCr = data.amcs.reduce((sum, a) => sum + (a.previousDayLiveAumCr ?? a.liveAumCr), 0);
+    const oneDayChangeCr = data.totalLiveAumCr - totalPreviousDayLiveAumCr;
     return {
       totalAvgAumCr,
       liveDeltaCr,
       liveDeltaPct: data.totalReportedAumCr !== 0 ? liveDeltaCr / data.totalReportedAumCr : 0,
       avgDeltaCr,
       avgDeltaPct: data.totalReportedAumCr !== 0 ? avgDeltaCr / data.totalReportedAumCr : 0,
+      totalPreviousDayLiveAumCr,
+      oneDayChangeCr,
+      oneDayChangePct: totalPreviousDayLiveAumCr !== 0 ? oneDayChangeCr / totalPreviousDayLiveAumCr : null,
     };
   }, [data]);
 
@@ -149,65 +163,94 @@ export function AmcGrid({
   const reportPeriodOptions = adjustments.data?.availableReportPeriods ?? [data.reportPeriod];
   const adjustmentsTouched = selectedReportPeriod !== null || avgFrom !== null || avgTo !== null;
 
+  const oneDayChangeIsFlat = Math.abs(industryTotals.oneDayChangeCr) < 0.01;
+  const oneDayChangeColorClass =
+    industryTotals.oneDayChangePct === null || oneDayChangeIsFlat
+      ? "text-muted-foreground"
+      : industryTotals.oneDayChangeCr > 0
+        ? "text-emerald-600 dark:text-emerald-400"
+        : "text-red-600 dark:text-red-400";
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <CardTitle className="text-sm font-normal text-muted-foreground">
-                  Total Industry Equity Live AUM
-                </CardTitle>
-                <MarketStatusBadge />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-1">
-              <div className="flex items-center gap-2">
-                <div className="text-3xl font-bold tabular-nums">{formatCr(data.totalLiveAumCr)}</div>
-                <AumDeltaBadge deltaCr={industryTotals.liveDeltaCr} deltaPct={industryTotals.liveDeltaPct} />
-              </div>
-              <div className="text-xs text-muted-foreground">
-                Reported: {formatCr(data.totalReportedAumCr)} ·{" "}
-                {data.pricesAreLive ? (
-                  <>
-                    Updated <RelativeTime iso={data.computedAt} />
-                  </>
-                ) : (
-                  `Prices as of ${formatShortDate(data.priceAsOfDate)} close`
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
               <CardTitle className="text-sm font-normal text-muted-foreground">
-                Average Industry Equity AUM since last report
+                Total Industry Equity Live AUM
               </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1">
-              {data.asOfDate ? (
+              <MarketStatusBadge />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            <div className="flex items-center gap-2">
+              <div className="text-3xl font-bold tabular-nums">{formatCr(data.totalLiveAumCr)}</div>
+              <AumDeltaBadge deltaCr={industryTotals.liveDeltaCr} deltaPct={industryTotals.liveDeltaPct} />
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Reported: {formatCr(data.totalReportedAumCr)} ·{" "}
+              {data.pricesAreLive ? (
                 <>
-                  <div className="text-3xl font-semibold tabular-nums text-muted-foreground">—</div>
-                  <div className="text-xs text-muted-foreground">Not available for historical dates</div>
+                  Updated <RelativeTime iso={data.computedAt} />
                 </>
               ) : (
-                <>
-                  <div className="flex items-center gap-2">
-                    <div className="text-3xl font-semibold tabular-nums">
-                      {formatCr(industryTotals.totalAvgAumCr)}
-                    </div>
-                    <AumDeltaBadge deltaCr={industryTotals.avgDeltaCr} deltaPct={industryTotals.avgDeltaPct} />
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Reported: {formatCr(data.totalReportedAumCr)} · Averaged since {avgWindowStartLabel}
-                  </div>
-                </>
+                `Prices as of ${formatShortDate(data.priceAsOfDate)} close`
               )}
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-normal text-muted-foreground">
+              Average Industry Equity AUM since last report
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            {data.asOfDate ? (
+              <>
+                <div className="text-3xl font-semibold tabular-nums text-muted-foreground">—</div>
+                <div className="text-xs text-muted-foreground">Not available for historical dates</div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <div className="text-3xl font-semibold tabular-nums">{formatCr(industryTotals.totalAvgAumCr)}</div>
+                  <AumDeltaBadge deltaCr={industryTotals.avgDeltaCr} deltaPct={industryTotals.avgDeltaPct} />
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Reported: {formatCr(data.totalReportedAumCr)} · Averaged since {avgWindowStartLabel}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-normal text-muted-foreground">Industry Equity AUM Daily Change</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            {industryTotals.oneDayChangePct !== null ? (
+              <>
+                <div className={`text-3xl font-bold tabular-nums ${oneDayChangeColorClass}`}>
+                  {formatPct(industryTotals.oneDayChangePct, { alwaysSign: true })}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {`${formatDeltaCr(industryTotals.oneDayChangeCr)} vs yesterday's close (${formatCr(industryTotals.totalPreviousDayLiveAumCr)})`}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-3xl font-semibold tabular-nums text-muted-foreground">—</div>
+                <div className="text-xs text-muted-foreground">No prior-day data yet</div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+      <div className="flex justify-end">
         <SearchBar value={query} onChange={setQuery} />
       </div>
 
@@ -220,10 +263,26 @@ export function AmcGrid({
       {history.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Industry Equity AUM Trend</CardTitle>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle>Industry Equity AUM Trend</CardTitle>
+              <div className="flex items-center gap-1 text-sm">
+                {(["absolute", "change"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setChartMode(mode)}
+                    className={`rounded-md px-2 py-1 ${
+                      chartMode === mode ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {mode === "absolute" ? "Absolute" : "% Change"}
+                  </button>
+                ))}
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <AumTrendChart data={history} />
+            <AumTrendChart data={history} mode={chartMode} />
           </CardContent>
         </Card>
       )}
