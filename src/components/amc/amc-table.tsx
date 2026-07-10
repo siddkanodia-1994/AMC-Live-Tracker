@@ -13,10 +13,11 @@ type SortKey =
   | "overviewName"
   | "liveAumCr"
   | "oneDayChangePct"
-  | "avgLiveAumCr"
   | "reportedAumCr"
   | "deltaPct"
-  | "avgVsReportedPct"
+  | "currentQuarterAvgLiveAumCr"
+  | "avgLiveAumCr"
+  | "avgAumQoQChangePct"
   | "holdingsCount"
   | "debtInstrumentCount"
   | "livePricedCount"
@@ -26,8 +27,8 @@ type SortKey =
 const NET_FLOW_TITLE =
   "Reported AUM minus what AUM would be if the prior period's holdings had simply been repriced through this month-end (no trading), divided by the prior period's reported AUM. Conflates investor subscriptions/redemptions with the manager's own buying/selling — an approximation, not a pure flows figure. Blank until a prior period + its daily-snapshot backfill exist. Same denominator as the AUM Growth tab's Net Flow %, so both show the same percentage for the same underlying flow amount.";
 
-function PctCell({ value }: { value: number | null }) {
-  if (value === null) {
+function PctCell({ value }: { value: number | null | undefined }) {
+  if (value === null || value === undefined) {
     return <TableCell className="text-right tabular-nums">—</TableCell>;
   }
   return (
@@ -85,8 +86,9 @@ function SortableHead({
 interface Totals {
   totalLiveAumCr: number;
   totalAvgAumCr: number;
+  totalCurrentQuarterAvgAumCr: number;
+  totalAvgAumQoQChangePct: number | null;
   totalReportedAumCr: number;
-  totalAvgVsReportedPct: number | null;
   totalLiveVsReportedPct: number | null;
   totalOneDayChangePct: number | null;
   totalHoldingsCount: number;
@@ -99,8 +101,9 @@ interface Totals {
 function computeTotals(list: AmcLiveAum[]): Totals {
   const totalLiveAumCr = list.reduce((sum, a) => sum + a.liveAumCr, 0);
   const totalAvgAumCr = list.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
+  const totalCurrentQuarterAvgAumCr = list.reduce((sum, a) => sum + (a.currentQuarterAvgLiveAumCr ?? a.reportedAumCr), 0);
+  const totalAvgAumQoQChangePct = totalAvgAumCr !== 0 ? totalCurrentQuarterAvgAumCr / totalAvgAumCr - 1 : null;
   const totalReportedAumCr = list.reduce((sum, a) => sum + a.reportedAumCr, 0);
-  const totalAvgVsReportedPct = totalReportedAumCr !== 0 ? totalAvgAumCr / totalReportedAumCr - 1 : null;
   const totalLiveVsReportedPct = totalReportedAumCr !== 0 ? totalLiveAumCr / totalReportedAumCr - 1 : null;
 
   // Only over AMCs with a known previous-day value, so one AMC missing
@@ -126,8 +129,9 @@ function computeTotals(list: AmcLiveAum[]): Totals {
   return {
     totalLiveAumCr,
     totalAvgAumCr,
+    totalCurrentQuarterAvgAumCr,
+    totalAvgAumQoQChangePct,
     totalReportedAumCr,
-    totalAvgVsReportedPct,
     totalLiveVsReportedPct,
     totalOneDayChangePct,
     // Distinct across the shown AMCs, not summed -- a stock held by several
@@ -157,10 +161,11 @@ function TotalsRow({
       <TableCell>{label}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalLiveAumCr)}</TableCell>
       <PctCell value={totals.totalOneDayChangePct} />
-      <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalAvgAumCr)}</TableCell>
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalReportedAumCr)}</TableCell>
       <PctCell value={totals.totalLiveVsReportedPct} />
-      <PctCell value={historical ? null : totals.totalAvgVsReportedPct} />
+      <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalCurrentQuarterAvgAumCr)}</TableCell>
+      <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalAvgAumCr)}</TableCell>
+      <PctCell value={historical ? null : totals.totalAvgAumQoQChangePct} />
       <TableCell className="text-right tabular-nums" title={holdingsTitle}>
         {historical ? "—" : totals.totalHoldingsCount}
       </TableCell>
@@ -184,6 +189,7 @@ export function AmcTable({
   reportPeriod,
   reportedAumPeriodLabel,
   avgWindowLabel,
+  currentAvgWindowLabel,
   asOfDate,
   distinctHoldingsCount,
   distinctDebtInstrumentCount,
@@ -201,7 +207,11 @@ export function AmcTable({
   // decoupled from `reportPeriod` above so switching it can't also relabel
   // Est. Net Flow, whose values never change with this picker.
   reportedAumPeriodLabel: string;
+  // "Avg AUM" column's window -- defaults to the previous fiscal quarter.
   avgWindowLabel: string;
+  // "Avg Live AUM" column's window -- defaults to the current fiscal
+  // quarter to date. Independent picker from avgWindowLabel above.
+  currentAvgWindowLabel: string;
   asOfDate: string | null;
   distinctHoldingsCount: number;
   distinctDebtInstrumentCount: number;
@@ -253,10 +263,11 @@ export function AmcTable({
       AMC: amc.overviewName,
       [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
       "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
-      [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
       [`Reported AUM ${reportedAumPeriodLabel} (Cr)`]: amc.reportedAumCr,
       "Live vs Reported (%)": amc.deltaPct * 100,
-      "Avg vs Reported (%)": !historical && amc.avgVsReportedPct !== null ? amc.avgVsReportedPct * 100 : null,
+      [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: historical ? null : (amc.currentQuarterAvgLiveAumCr ?? null),
+      [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
+      "Avg AUM QoQ Change (%)": !historical && amc.avgAumQoQChangePct != null ? amc.avgAumQoQChangePct * 100 : null,
       Holdings: historical ? null : amc.holdingsCount,
       Debt: historical ? null : amc.debtInstrumentCount,
       "Live Priced": historical ? null : amc.livePricedCount,
@@ -301,10 +312,11 @@ export function AmcTable({
               </TableHead>
               <SortableHead label={liveAumLabel} sk="liveAumCr" {...headProps} />
               <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
-              <SortableHead label={`Avg AUM (${avgWindowLabel})`} sk="avgLiveAumCr" {...headProps} />
               <SortableHead label={`Reported AUM (${reportedAumPeriodLabel})`} sk="reportedAumCr" {...headProps} />
               <SortableHead label="Live vs Reported" sk="deltaPct" {...headProps} />
-              <SortableHead label="Avg vs Reported" sk="avgVsReportedPct" {...headProps} />
+              <SortableHead label={`Avg Live AUM (${currentAvgWindowLabel})`} sk="currentQuarterAvgLiveAumCr" {...headProps} />
+              <SortableHead label={`Avg AUM (${avgWindowLabel})`} sk="avgLiveAumCr" {...headProps} />
+              <SortableHead label="Avg AUM QoQ Change" sk="avgAumQoQChangePct" {...headProps} />
               <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />
               <SortableHead label="Debt" sk="debtInstrumentCount" {...headProps} />
               <SortableHead label="Live Priced" sk="livePricedCount" {...headProps} />
@@ -322,14 +334,17 @@ export function AmcTable({
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{formatCr(amc.liveAumCr)}</TableCell>
                 <PctCell value={amc.oneDayChangePct} />
-                <TableCell className="text-right tabular-nums">
-                  {amc.avgLiveAumCr !== null ? formatCr(amc.avgLiveAumCr) : "—"}
-                </TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {formatCr(amc.reportedAumCr)}
                 </TableCell>
                 <PctCell value={amc.deltaPct} />
-                <PctCell value={amc.avgVsReportedPct} />
+                <TableCell className="text-right tabular-nums">
+                  {amc.currentQuarterAvgLiveAumCr != null ? formatCr(amc.currentQuarterAvgLiveAumCr) : "—"}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {amc.avgLiveAumCr !== null ? formatCr(amc.avgLiveAumCr) : "—"}
+                </TableCell>
+                <PctCell value={amc.avgAumQoQChangePct} />
                 <TableCell className="text-right tabular-nums">{historical ? "—" : amc.holdingsCount}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {historical ? "—" : amc.debtInstrumentCount}
@@ -347,10 +362,13 @@ export function AmcTable({
                 <TableCell>Industry Total (all {allAmcs.length} AMCs)</TableCell>
                 <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalLiveAumCr)}</TableCell>
                 <PctCell value={industryTotals.totalOneDayChangePct} />
-                <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(industryTotals.totalAvgAumCr)}</TableCell>
                 <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalReportedAumCr)}</TableCell>
                 <PctCell value={industryTotals.totalLiveVsReportedPct} />
-                <PctCell value={historical ? null : industryTotals.totalAvgVsReportedPct} />
+                <TableCell className="text-right tabular-nums">
+                  {historical ? "—" : formatCr(industryTotals.totalCurrentQuarterAvgAumCr)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(industryTotals.totalAvgAumCr)}</TableCell>
+                <PctCell value={historical ? null : industryTotals.totalAvgAumQoQChangePct} />
                 <TableCell className="text-right tabular-nums" title="Distinct stocks held anywhere in the industry — not a sum of each AMC's count">
                   {historical ? "—" : distinctHoldingsCount}
                 </TableCell>

@@ -56,6 +56,15 @@ export interface AmcLiveAum {
   avgLiveAumCr: number | null;
   avgVsReportedPct: number | null;
   avgWindowDays: number;
+  // Overview table-only fields, populated client-side by amc-grid.tsx's
+  // adjustedAmcs overlay (never by computeLiveAum/computeOverviewAsOf) --
+  // optional so every other AmcLiveAum construction site is unaffected.
+  // currentQuarterAvgLiveAumCr: average daily Live AUM over the "Avg Live
+  // AUM" column's window (default: current fiscal quarter to date).
+  // avgAumQoQChangePct: currentQuarterAvgLiveAumCr / avgLiveAumCr - 1,
+  // wherever avgLiveAumCr currently resolves to (default or overridden).
+  currentQuarterAvgLiveAumCr?: number | null;
+  avgAumQoQChangePct?: number | null;
   // Most recent prior day's closing live AUM, and the % change from it to
   // today's liveAumCr — null if no prior-day snapshot exists yet (e.g. a
   // brand-new AMC). May span more than 1 calendar day if collection had a gap.

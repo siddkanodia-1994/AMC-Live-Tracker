@@ -9,9 +9,13 @@ export async function GET(request: Request) {
   const avgFrom = avgFromRaw && /^\d{4}-\d{2}-\d{2}$/.test(avgFromRaw) ? avgFromRaw : undefined;
   const avgToRaw = url.searchParams.get("avgTo");
   const avgTo = avgToRaw && /^\d{4}-\d{2}-\d{2}$/.test(avgToRaw) ? avgToRaw : undefined;
+  const currentAvgFromRaw = url.searchParams.get("currentAvgFrom");
+  const currentAvgFrom = currentAvgFromRaw && /^\d{4}-\d{2}-\d{2}$/.test(currentAvgFromRaw) ? currentAvgFromRaw : undefined;
+  const currentAvgToRaw = url.searchParams.get("currentAvgTo");
+  const currentAvgTo = currentAvgToRaw && /^\d{4}-\d{2}-\d{2}$/.test(currentAvgToRaw) ? currentAvgToRaw : undefined;
 
   try {
-    const result = await getOverviewAdjustments({ reportPeriod, avgFrom, avgTo });
+    const result = await getOverviewAdjustments({ reportPeriod, avgFrom, avgTo, currentAvgFrom, currentAvgTo });
     return NextResponse.json(result);
   } catch (err) {
     console.error(err);

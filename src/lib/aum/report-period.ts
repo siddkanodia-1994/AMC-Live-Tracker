@@ -24,6 +24,45 @@ export function lastDayOfReportMonth(reportPeriod: string): string {
   return `${reportPeriod}-${String(days).padStart(2, "0")}`;
 }
 
+interface QuarterBounds {
+  start: string;
+  end: string;
+}
+
+function fiscalQuarterStartMonth(month: number): number {
+  if (month >= 4 && month <= 6) return 4;
+  if (month >= 7 && month <= 9) return 7;
+  if (month >= 10 && month <= 12) return 10;
+  return 1; // Jan-Mar
+}
+
+// Indian fiscal year starts 1 April: Q1 Apr-Jun, Q2 Jul-Sep, Q3 Oct-Dec,
+// Q4 Jan-Mar -- each quarter's calendar dates fall entirely within one
+// calendar year regardless of FY numbering, so no year-rollover handling
+// is needed here (only getPreviousFiscalQuarterBounds crosses a year, when
+// stepping back from Q4/Jan-Mar into the prior year's Oct-Dec).
+export function getFiscalQuarterBounds(dateStr: string): QuarterBounds {
+  const [year, month] = dateStr.split("-").map(Number);
+  const startMonth = fiscalQuarterStartMonth(month);
+  const endMonth = startMonth + 2;
+  const endDay = endMonth === 2 && isLeapYear(year) ? 29 : DAYS_IN_MONTH[endMonth - 1];
+  return {
+    start: `${year}-${String(startMonth).padStart(2, "0")}-01`,
+    end: `${year}-${String(endMonth).padStart(2, "0")}-${String(endDay).padStart(2, "0")}`,
+  };
+}
+
+// The fiscal quarter immediately before the one containing `dateStr` --
+// e.g. "2026-07-10" (Jul-Sep 2026) -> Apr-Jun 2026; "2026-04-15" (Apr-Jun
+// 2026) -> Jan-Mar 2026; "2026-01-05" (Jan-Mar 2026) -> Oct-Dec 2025.
+export function getPreviousFiscalQuarterBounds(dateStr: string): QuarterBounds {
+  const { start } = getFiscalQuarterBounds(dateStr);
+  const [year, month] = start.split("-").map(Number);
+  const prevStartMonth = month === 1 ? 10 : month - 3;
+  const prevYear = month === 1 ? year - 1 : year;
+  return getFiscalQuarterBounds(`${prevYear}-${String(prevStartMonth).padStart(2, "0")}-01`);
+}
+
 // Most recent date in a sorted-ascending list that's <= target, or the
 // earliest available date if none qualify (never returns null when the list
 // is non-empty) -- mirrors the same "closest available on or before" leniency

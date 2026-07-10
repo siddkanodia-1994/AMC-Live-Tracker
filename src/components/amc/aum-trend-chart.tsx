@@ -95,6 +95,22 @@ function computeDailyChangeSeries(data: AumHistoryPoint[]): DailyChangePoint[] {
   return points;
 }
 
+// Colors each day's dot by that day's own sign -- green for an up day, red
+// for a down day, muted for the (rare) day with no computable change --
+// same emerald/red convention used everywhere else in this app (PctCell,
+// AumDeltaBadge), just applied per-point instead of as one flat line color.
+function ChangeDot(props: { cx?: number; cy?: number; payload?: DailyChangePoint }) {
+  const { cx, cy, payload } = props;
+  if (cx === undefined || cy === undefined || !payload) return null;
+  const color =
+    payload.changePct === null
+      ? "var(--color-muted-foreground)"
+      : payload.changePct >= 0
+        ? "var(--color-emerald-500)"
+        : "var(--color-red-500)";
+  return <circle cx={cx} cy={cy} r={3} fill={color} stroke={color} />;
+}
+
 function computePctYAxisDomain(points: DailyChangePoint[]): [number, number] {
   let min = Infinity;
   let max = -Infinity;
@@ -156,7 +172,7 @@ export function AumTrendChart({ data: rawData, mode = "absolute" }: { data: AumH
               name="Live AUM % Change"
               stroke="var(--color-primary)"
               strokeWidth={2}
-              dot={{ r: 3 }}
+              dot={<ChangeDot />}
               connectNulls
             />
           </LineChart>

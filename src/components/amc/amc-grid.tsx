@@ -48,7 +48,17 @@ export function AmcGrid({
   const [selectedReportPeriod, setSelectedReportPeriod] = useState<string | null>(null);
   const [avgFrom, setAvgFrom] = useState<string | null>(null);
   const [avgTo, setAvgTo] = useState<string | null>(null);
-  const adjustments = useOverviewAdjustments(selectedReportPeriod ?? undefined, avgFrom ?? undefined, avgTo ?? undefined);
+  // "Avg Live AUM" column's own independent window -- defaults to the
+  // current fiscal quarter to date, same null-means-default convention.
+  const [currentAvgFrom, setCurrentAvgFrom] = useState<string | null>(null);
+  const [currentAvgTo, setCurrentAvgTo] = useState<string | null>(null);
+  const adjustments = useOverviewAdjustments(
+    selectedReportPeriod ?? undefined,
+    avgFrom ?? undefined,
+    avgTo ?? undefined,
+    currentAvgFrom ?? undefined,
+    currentAvgTo ?? undefined
+  );
   // Purely a display toggle on the trend chart below -- doesn't touch `history`.
   const [chartMode, setChartMode] = useState<"absolute" | "change">("absolute");
   // Shared across all three tabs -- lifted here (rather than each tab owning
@@ -58,12 +68,13 @@ export function AmcGrid({
   // AUM on Cash Holdings), since none of those have a common shared field.
   const [topN, setTopN] = useState<TopNOption>(DEFAULT_TOP_N);
 
-  // Overlays the Reported AUM month / Avg AUM range adjustments onto the
-  // live snapshot's AMC rows, recomputing Live vs Reported and Avg vs
-  // Reported against whichever reported figure is now in effect. Falls back
-  // to the snapshot's own (current-period-default) values until the
-  // adjustments fetch resolves, which numerically match anyway when nothing
-  // has been picked -- no flash of different numbers on first load.
+  // Overlays the Reported AUM month / Avg AUM range / Avg Live AUM range
+  // adjustments onto the live snapshot's AMC rows, recomputing Live vs
+  // Reported and Avg AUM QoQ Change against whichever figures are now in
+  // effect. Falls back to the snapshot's own (current-period-default)
+  // values until the adjustments fetch resolves, which numerically match
+  // anyway when nothing has been picked -- no flash of different numbers on
+  // first load.
   const adjustedAmcs = useMemo(() => {
     if (!data) return [];
     const adj = adjustments.data;
@@ -73,10 +84,26 @@ export function AmcGrid({
       const avgOverride = adj.avgAumByAmcId[amc.amcId];
       const avgLiveAumCr = avgOverride ? avgOverride.avgLiveAumCr : null;
       const avgWindowDays = avgOverride ? avgOverride.daysCount : 0;
+      const currentAvgOverride = adj.currentAvgAumByAmcId[amc.amcId];
+      const currentQuarterAvgLiveAumCr = currentAvgOverride ? currentAvgOverride.avgLiveAumCr : null;
       const deltaCr = amc.liveAumCr - reportedAumCr;
       const deltaPct = reportedAumCr !== 0 ? deltaCr / reportedAumCr : 0;
       const avgVsReportedPct = avgLiveAumCr !== null && reportedAumCr !== 0 ? avgLiveAumCr / reportedAumCr - 1 : null;
-      return { ...amc, reportedAumCr, avgLiveAumCr, avgWindowDays, deltaCr, deltaPct, avgVsReportedPct };
+      const avgAumQoQChangePct =
+        currentQuarterAvgLiveAumCr !== null && avgLiveAumCr !== null && avgLiveAumCr !== 0
+          ? currentQuarterAvgLiveAumCr / avgLiveAumCr - 1
+          : null;
+      return {
+        ...amc,
+        reportedAumCr,
+        avgLiveAumCr,
+        avgWindowDays,
+        deltaCr,
+        deltaPct,
+        avgVsReportedPct,
+        currentQuarterAvgLiveAumCr,
+        avgAumQoQChangePct,
+      };
     });
   }, [data, adjustments.data]);
 
@@ -146,7 +173,6 @@ export function AmcGrid({
         ? `${lastCloseCount} stock${lastCloseCount === 1 ? "" : "s"} that previously had live prices ${lastCloseCount === 1 ? "is" : "are"} no longer being priced live — showing their last close instead.`
         : null;
 
-  const reportPeriodLabel = formatReportPeriodLabel(data.reportPeriod);
   // First day of the month after the report period — when the Avg AUM window opened.
   const [periodYear, periodMonth] = data.reportPeriod.split("-").map(Number);
   const avgWindowStartLabel = formatShortDate(
@@ -160,8 +186,12 @@ export function AmcGrid({
   const avgWindowLabel = adjustments.data
     ? `${formatShortDate(adjustments.data.avgFrom)} – ${formatShortDate(adjustments.data.avgTo)}`
     : `since ${avgWindowStartLabel}`;
+  const currentAvgWindowLabel = adjustments.data
+    ? `${formatShortDate(adjustments.data.currentAvgFrom)} – ${formatShortDate(adjustments.data.currentAvgTo)}`
+    : "current quarter";
   const reportPeriodOptions = adjustments.data?.availableReportPeriods ?? [data.reportPeriod];
-  const adjustmentsTouched = selectedReportPeriod !== null || avgFrom !== null || avgTo !== null;
+  const adjustmentsTouched =
+    selectedReportPeriod !== null || avgFrom !== null || avgTo !== null || currentAvgFrom !== null || currentAvgTo !== null;
 
   const oneDayChangeIsFlat = Math.abs(industryTotals.oneDayChangeCr) < 0.01;
   const oneDayChangeColorClass =
@@ -361,7 +391,7 @@ export function AmcGrid({
                 </option>
               ))}
             </select>
-            <span className="ml-2 text-muted-foreground">Average AUM from</span>
+            <span className="ml-2 text-muted-foreground">Avg AUM from</span>
             <input
               type="date"
               value={avgFrom ?? adjustments.data?.avgFrom ?? ""}
@@ -386,6 +416,8 @@ export function AmcGrid({
                   setSelectedReportPeriod(null);
                   setAvgFrom(null);
                   setAvgTo(null);
+                  setCurrentAvgFrom(null);
+                  setCurrentAvgTo(null);
                 }}
                 className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
               >
@@ -393,9 +425,30 @@ export function AmcGrid({
               </button>
             )}
           </div>
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Avg Live AUM from</span>
+            <input
+              type="date"
+              value={currentAvgFrom ?? adjustments.data?.currentAvgFrom ?? ""}
+              min={adjustments.data?.minSnapshotDate ?? undefined}
+              max={adjustments.data?.maxSnapshotDate ?? undefined}
+              onChange={(e) => setCurrentAvgFrom(e.target.value || null)}
+              className={dateInputClass}
+            />
+            <span className="text-muted-foreground">to</span>
+            <input
+              type="date"
+              value={currentAvgTo ?? adjustments.data?.currentAvgTo ?? ""}
+              min={currentAvgFrom ?? adjustments.data?.minSnapshotDate ?? undefined}
+              max={adjustments.data?.maxSnapshotDate ?? undefined}
+              onChange={(e) => setCurrentAvgTo(e.target.value || null)}
+              className={dateInputClass}
+            />
+          </div>
           <p className="mb-2 text-xs text-muted-foreground">
-            &quot;Avg AUM&quot; is the average of daily live AUM since the last reported month closed
-            ({reportPeriodLabel}), used to compare against the last officially reported figure. Both total rows&apos;
+            &quot;Avg Live AUM&quot; defaults to the current fiscal quarter to date ({currentAvgWindowLabel}), and
+            &quot;Avg AUM&quot; defaults to the previous fiscal quarter ({avgWindowLabel}) — both independently
+            adjustable above. &quot;Avg AUM QoQ Change&quot; divides the two. Both total rows&apos;
             Holdings/Debt/Live Priced counts are de-duplicated by stock (a stock held by several
             AMCs counts once, not once per AMC) — the &quot;Industry Total&quot; row always across
             all 56 AMCs, unaffected by the Top-N selector or search, and the row above it across
@@ -409,6 +462,7 @@ export function AmcGrid({
             reportPeriod={data.reportPeriod}
             reportedAumPeriodLabel={reportedAumPeriodLabel}
             avgWindowLabel={avgWindowLabel}
+            currentAvgWindowLabel={currentAvgWindowLabel}
             asOfDate={data.asOfDate ?? null}
             distinctHoldingsCount={data.distinctHoldingsCount}
             distinctDebtInstrumentCount={data.distinctDebtInstrumentCount}
