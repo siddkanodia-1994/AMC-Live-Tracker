@@ -56,6 +56,27 @@ function computeYAxisDomain(data: AumHistoryPoint[]): [number, number] {
   return [Math.max(0, min - padding), max + padding];
 }
 
+// Real NSE/BSE holiday clusters top out around 3-4 calendar days (a holiday
+// adjacent to a weekend); anything larger is a genuine coverage break in the
+// underlying data (e.g. a historical backfill that was only ever run for a
+// couple of days and never completed), not a holiday.
+const MAX_CONTINUOUS_GAP_DAYS = 5;
+
+// Keeps only the LAST unbroken run of dates -- resets the start index every
+// time a gap larger than the threshold is found, so any earlier orphaned
+// data is dropped while ordinary holiday-sized gaps within the real
+// continuous history are left alone. Purely a display filter; the
+// underlying live_aum_daily_snapshot rows are untouched.
+function trimToLastContinuousRun(data: AumHistoryPoint[]): AumHistoryPoint[] {
+  if (data.length === 0) return data;
+  let startIdx = 0;
+  for (let i = 1; i < data.length; i++) {
+    const gapDays = (Date.parse(data[i].date) - Date.parse(data[i - 1].date)) / 86_400_000;
+    if (gapDays > MAX_CONTINUOUS_GAP_DAYS) startIdx = i;
+  }
+  return data.slice(startIdx);
+}
+
 interface DailyChangePoint {
   date: string;
   changePct: number | null;
@@ -89,7 +110,8 @@ function computePctYAxisDomain(points: DailyChangePoint[]): [number, number] {
   return [min - padding, max + padding];
 }
 
-export function AumTrendChart({ data, mode = "absolute" }: { data: AumHistoryPoint[]; mode?: "absolute" | "change" }) {
+export function AumTrendChart({ data: rawData, mode = "absolute" }: { data: AumHistoryPoint[]; mode?: "absolute" | "change" }) {
+  const data = useMemo(() => trimToLastContinuousRun(rawData), [rawData]);
   const yDomain = useMemo(() => computeYAxisDomain(data), [data]);
   const tickDecimals = useMemo(() => computeTickDecimals(yDomain), [yDomain]);
   const changeSeries = useMemo(() => computeDailyChangeSeries(data), [data]);
