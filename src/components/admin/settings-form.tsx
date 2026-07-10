@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,12 +12,21 @@ interface SettingsStatus {
   dhanClientId: { configured: boolean; value: string | null; updatedAt: string | null; source: "db" | "env" | "none" };
 }
 
+// Only the last 4 characters are ever shown on screen (shoulder-surfing /
+// screen-share safety) -- both for the saved value at rest and while typing
+// a replacement. Number of `*` matches the real hidden length.
+function maskExceptLast4(value: string): string {
+  return value.length <= 4 ? value : "*".repeat(value.length - 4) + value.slice(-4);
+}
+
 export function SettingsForm() {
   const [status, setStatus] = useState<SettingsStatus | null>(null);
   const [clientId, setClientId] = useState("");
+  const [hasStartedEditingClientId, setHasStartedEditingClientId] = useState(false);
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmingPartialEdit, setConfirmingPartialEdit] = useState(false);
+  const clientIdInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch("/api/admin/settings")
@@ -25,9 +34,43 @@ export function SettingsForm() {
       .then((data: SettingsStatus) => {
         setStatus(data);
         setClientId(data.dhanClientId.value ?? "");
+        setHasStartedEditingClientId(false);
       })
       .catch(() => toast.error("Failed to load DHAN settings status"));
   }, []);
+
+  // The input's displayed value is always masked, so `e.target.value` can't
+  // be trusted directly -- it would include literal `*` characters. Instead
+  // read what was actually typed/deleted/pasted from the native InputEvent,
+  // independent of the mask on screen. First edit against the untouched
+  // saved value starts a fresh replacement rather than splicing into the
+  // real saved digits. Only supports append/delete at the end (no mid-string
+  // cursor edits into the masked portion) -- the same assumption any
+  // OTP/PIN-style masked input makes, and the realistic way a client ID gets
+  // retyped or pasted anyway.
+  function handleClientIdInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const native = e.nativeEvent as InputEvent;
+    setClientId((prev) => {
+      const base = hasStartedEditingClientId ? prev : "";
+      if (native.inputType?.startsWith("insert")) return base + (native.data ?? "");
+      if (native.inputType?.startsWith("delete")) return base.slice(0, -1);
+      return base;
+    });
+    setHasStartedEditingClientId(true);
+    setConfirmingPartialEdit(false);
+  }
+
+  // The rendered value is a masked string, so the browser's own
+  // cursor-restoration heuristics have nothing reliable to anchor to after
+  // each keystroke -- pin the cursor to the end, matching the append/delete-
+  // at-end-only editing model above.
+  useEffect(() => {
+    const input = clientIdInputRef.current;
+    if (input && document.activeElement === input) {
+      const end = maskExceptLast4(clientId).length;
+      input.setSelectionRange(end, end);
+    }
+  }, [clientId]);
 
   const clientIdChanged = clientId.trim() !== (status?.dhanClientId.value ?? "");
   const isPartialEdit = clientIdChanged && !token.trim();
@@ -84,13 +127,11 @@ export function SettingsForm() {
         <div className="space-y-1">
           <label className="text-xs font-medium text-muted-foreground">Client ID</label>
           <Input
+            ref={clientIdInputRef}
             type="text"
             placeholder="DHAN client ID"
-            value={clientId}
-            onChange={(e) => {
-              setClientId(e.target.value);
-              setConfirmingPartialEdit(false);
-            }}
+            value={maskExceptLast4(clientId)}
+            onChange={handleClientIdInput}
           />
           {status?.dhanClientId.source === "env" && (
             <p className="text-xs text-muted-foreground">Using DHAN_CLIENT_ID from environment (not yet saved here).</p>
