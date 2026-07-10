@@ -182,6 +182,8 @@ export function AmcTable({
   isSearchActive,
   topN,
   reportPeriod,
+  reportedAumPeriodLabel,
+  avgWindowLabel,
   asOfDate,
   distinctHoldingsCount,
   distinctDebtInstrumentCount,
@@ -191,7 +193,15 @@ export function AmcTable({
   allAmcs: AmcLiveAum[];
   isSearchActive: boolean;
   topN: TopNOption;
+  // Drives "Est. Net Flow" headers/export only -- always the CURRENT report
+  // period, unaffected by the Reported AUM month picker (Net Flow is a
+  // separate metric that isn't part of that adjustment).
   reportPeriod: string;
+  // The (possibly past) period the Reported AUM month picker resolved to --
+  // decoupled from `reportPeriod` above so switching it can't also relabel
+  // Est. Net Flow, whose values never change with this picker.
+  reportedAumPeriodLabel: string;
+  avgWindowLabel: string;
   asOfDate: string | null;
   distinctHoldingsCount: number;
   distinctDebtInstrumentCount: number;
@@ -243,8 +253,8 @@ export function AmcTable({
       AMC: amc.overviewName,
       [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
       "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
-      "Avg AUM (Cr)": historical ? null : amc.avgLiveAumCr,
-      [`Reported AUM ${periodLabel} (Cr)`]: amc.reportedAumCr,
+      [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
+      [`Reported AUM ${reportedAumPeriodLabel} (Cr)`]: amc.reportedAumCr,
       "Live vs Reported (%)": amc.deltaPct * 100,
       "Avg vs Reported (%)": !historical && amc.avgVsReportedPct !== null ? amc.avgVsReportedPct * 100 : null,
       Holdings: historical ? null : amc.holdingsCount,
@@ -291,8 +301,8 @@ export function AmcTable({
               </TableHead>
               <SortableHead label={liveAumLabel} sk="liveAumCr" {...headProps} />
               <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
-              <SortableHead label="Avg AUM" sk="avgLiveAumCr" {...headProps} />
-              <SortableHead label={`Reported AUM (${periodLabel})`} sk="reportedAumCr" {...headProps} />
+              <SortableHead label={`Avg AUM (${avgWindowLabel})`} sk="avgLiveAumCr" {...headProps} />
+              <SortableHead label={`Reported AUM (${reportedAumPeriodLabel})`} sk="reportedAumCr" {...headProps} />
               <SortableHead label="Live vs Reported" sk="deltaPct" {...headProps} />
               <SortableHead label="Avg vs Reported" sk="avgVsReportedPct" {...headProps} />
               <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />

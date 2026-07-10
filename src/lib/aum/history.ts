@@ -4,6 +4,58 @@ import { amcPeriods, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { getIstDateString } from "../utils/date";
 import { firstDayOfNextMonth, lastDayOfReportMonth } from "./report-period";
 
+/**
+ * Each AMC's reported AUM for one arbitrary (possibly past) report period --
+ * amc_periods retains every imported month, never just the current one, so
+ * this works for any period getAvailableReportPeriods() lists. Used by the
+ * Overview table's Reported AUM month picker.
+ */
+export async function getReportedAumForPeriod(reportPeriod: string): Promise<Map<number, number>> {
+  const rows = await db
+    .select({ amcId: amcPeriods.amcId, reportedAumCr: amcPeriods.reportedAumCr })
+    .from(amcPeriods)
+    .where(eq(amcPeriods.reportPeriod, reportPeriod));
+
+  const map = new Map<number, number>();
+  for (const r of rows) {
+    map.set(r.amcId, Number(r.reportedAumCr));
+  }
+  return map;
+}
+
+/**
+ * Average of daily live-AUM snapshots over an arbitrary [startDate, endDate]
+ * window -- the general form getAverageAumSinceReport (below) delegates to
+ * with its own hardcoded window, and what the Overview table's Avg AUM
+ * date-range picker calls directly for a custom window.
+ */
+export async function getAverageAumForRange(
+  startDate: string,
+  endDate: string
+): Promise<Map<number, { avgLiveAumCr: number; daysCount: number }>> {
+  const rows = await db
+    .select({
+      amcId: liveAumDailySnapshot.amcId,
+      avgLiveAumCr: sql<number>`avg(${liveAumDailySnapshot.liveAumCr})::float`,
+      daysCount: sql<number>`count(*)::int`,
+    })
+    .from(liveAumDailySnapshot)
+    .where(
+      and(
+        gte(liveAumDailySnapshot.snapshotDate, startDate),
+        lte(liveAumDailySnapshot.snapshotDate, endDate),
+        eq(liveAumDailySnapshot.isCanonical, true)
+      )
+    )
+    .groupBy(liveAumDailySnapshot.amcId);
+
+  const map = new Map<number, { avgLiveAumCr: number; daysCount: number }>();
+  for (const r of rows) {
+    map.set(r.amcId, { avgLiveAumCr: r.avgLiveAumCr, daysCount: r.daysCount });
+  }
+  return map;
+}
+
 export interface AumHistoryPoint {
   date: string;
   liveAumCr: number;
@@ -43,20 +95,11 @@ export interface AverageAumSinceReport {
  */
 export async function getAverageAumSinceReport(reportPeriod: string): Promise<Map<number, AverageAumSinceReport>> {
   const windowStart = firstDayOfNextMonth(reportPeriod);
-
-  const rows = await db
-    .select({
-      amcId: liveAumDailySnapshot.amcId,
-      avgLiveAumCr: sql<number>`avg(${liveAumDailySnapshot.liveAumCr})::float`,
-      daysCount: sql<number>`count(*)::int`,
-    })
-    .from(liveAumDailySnapshot)
-    .where(and(gte(liveAumDailySnapshot.snapshotDate, windowStart), eq(liveAumDailySnapshot.isCanonical, true)))
-    .groupBy(liveAumDailySnapshot.amcId);
+  const ranged = await getAverageAumForRange(windowStart, getIstDateString());
 
   const map = new Map<number, AverageAumSinceReport>();
-  for (const r of rows) {
-    map.set(r.amcId, { avgLiveAumCr: r.avgLiveAumCr, daysCount: r.daysCount, windowStart });
+  for (const [amcId, v] of ranged) {
+    map.set(amcId, { ...v, windowStart });
   }
   return map;
 }
