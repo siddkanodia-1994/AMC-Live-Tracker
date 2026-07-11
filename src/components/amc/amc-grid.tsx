@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useLiveAum } from "@/hooks/use-live-aum";
 import { useOverviewAdjustments } from "@/hooks/use-overview-adjustments";
 import { AmcTable } from "./amc-table";
@@ -15,7 +15,9 @@ import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { InfoIcon } from "lucide-react";
 import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
@@ -25,7 +27,16 @@ const DHAN_UNAVAILABLE_MESSAGE =
   "DHAN pricing is unavailable — every AMC below is showing last reported values. Check the DHAN token in Admin settings.";
 
 const dateInputClass =
-  "rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
+  "w-full min-w-0 rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
+
+function FieldBox({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-[190px] flex-1 flex-col gap-1 rounded-lg border bg-[var(--toolbar-accent-soft)]/40 px-3 py-2">
+      <span className="text-[10.5px] font-semibold tracking-wide text-muted-foreground uppercase">{label}</span>
+      {children}
+    </div>
+  );
+}
 
 export function AmcGrid({
   initialData,
@@ -38,6 +49,10 @@ export function AmcGrid({
   // day's canonical snapshots. Deliberately NOT persisted — a refresh always
   // lands back on live data.
   const [asOfDate, setAsOfDate] = useState<string | null>(null);
+  // Lifted (rather than Tabs' own uncontrolled defaultValue) so the toolbar
+  // panel below the tab bar can conditionally show the Overview-only field
+  // boxes without duplicating tab-switch logic.
+  const [activeTab, setActiveTab] = useState("overview");
   const { data, error, isLoading } = useLiveAum(initialData, asOfDate ?? undefined);
   const [query, setQuery] = useState("");
   // The Overview table's own two adjustable views -- independent of asOfDate
@@ -317,143 +332,176 @@ export function AmcGrid({
         </Card>
       )}
 
-      <Tabs defaultValue="overview">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="aum-growth">Equity AUM Growth</TabsTrigger>
-            <TabsTrigger value="total-aum-growth">Total AUM Growth</TabsTrigger>
-            <TabsTrigger value="cash-holdings">Cash Holdings</TabsTrigger>
-          </TabsList>
-          <div className="flex items-center gap-1 text-sm">
-            <span className="text-muted-foreground">Show:</span>
-            {TOP_N_OPTIONS.map((option) => (
-              <button
-                key={option}
-                type="button"
-                onClick={() => setTopN(option)}
-                className={`rounded-md px-2 py-1 ${
-                  topN === option ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {option === "all" ? "All" : `Top ${option}`}
-              </button>
-            ))}
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as string)}>
+        <div className="rounded-xl border bg-card p-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2.5">
+            <TabsList variant="line">
+              <TabsTrigger value="overview" className="after:bg-[var(--toolbar-accent)]">
+                Overview
+              </TabsTrigger>
+              <TabsTrigger value="aum-growth" className="after:bg-[var(--toolbar-accent)]">
+                Equity AUM Growth
+              </TabsTrigger>
+              <TabsTrigger value="total-aum-growth" className="after:bg-[var(--toolbar-accent)]">
+                Total AUM Growth
+              </TabsTrigger>
+              <TabsTrigger value="cash-holdings" className="after:bg-[var(--toolbar-accent)]">
+                Cash Holdings
+              </TabsTrigger>
+            </TabsList>
+            <div className="flex items-center gap-1 text-sm">
+              <span className="text-muted-foreground">Show:</span>
+              {TOP_N_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => setTopN(option)}
+                  className={`rounded-md px-2 py-1 ${
+                    topN === option
+                      ? "bg-[var(--toolbar-accent)] text-white"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {option === "all" ? "All" : `Top ${option}`}
+                </button>
+              ))}
+            </div>
           </div>
+
+          {activeTab === "overview" && (
+            <div className="flex flex-wrap items-stretch gap-2.5 pt-3">
+              <FieldBox label="Live AUM as of">
+                <input
+                  type="date"
+                  value={asOfDate ?? ""}
+                  min={data.minSnapshotDate ?? undefined}
+                  max={data.maxSnapshotDate ?? undefined}
+                  onChange={(e) => setAsOfDate(e.target.value || null)}
+                  className={dateInputClass}
+                />
+              </FieldBox>
+              <div className="flex flex-wrap items-center gap-2 self-center text-sm">
+                {asOfDate && (
+                  <button
+                    type="button"
+                    onClick={() => setAsOfDate(null)}
+                    className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Back to live
+                  </button>
+                )}
+                {asOfDate && (
+                  <span className="text-xs text-muted-foreground">
+                    Historical view — Avg AUM, Est. Net Flow and holdings counts apply only to live data
+                  </span>
+                )}
+                {!data.asOfDate && (
+                  <FreshnessBadge
+                    computedAt={data.computedAt}
+                    pricesAreLive={data.pricesAreLive}
+                    priceAsOfDate={data.priceAsOfDate}
+                    dhanStatus={data.dhanStatus}
+                    dhanErrorDetail={data.dhanErrorDetail}
+                    distinctLastCloseCount={lastCloseCount}
+                    maxSnapshotDate={data.maxSnapshotDate ?? null}
+                  />
+                )}
+              </div>
+
+              <FieldBox label="Reported AUM month">
+                <select
+                  value={adjustments.data?.reportPeriod ?? data.reportPeriod}
+                  onChange={(e) => setSelectedReportPeriod(e.target.value)}
+                  className={dateInputClass}
+                >
+                  {reportPeriodOptions.map((p) => (
+                    <option key={p} value={p}>
+                      {formatReportPeriodLabel(p)}
+                    </option>
+                  ))}
+                </select>
+              </FieldBox>
+
+              <FieldBox label="Avg AUM from">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="date"
+                    value={avgFrom ?? adjustments.data?.avgFrom ?? ""}
+                    min={adjustments.data?.minSnapshotDate ?? undefined}
+                    max={adjustments.data?.maxSnapshotDate ?? undefined}
+                    onChange={(e) => setAvgFrom(e.target.value || null)}
+                    className={dateInputClass}
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <input
+                    type="date"
+                    value={avgTo ?? adjustments.data?.avgTo ?? ""}
+                    min={avgFrom ?? adjustments.data?.minSnapshotDate ?? undefined}
+                    max={adjustments.data?.maxSnapshotDate ?? undefined}
+                    onChange={(e) => setAvgTo(e.target.value || null)}
+                    className={dateInputClass}
+                  />
+                </div>
+              </FieldBox>
+
+              <FieldBox label="Avg Live AUM from">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="date"
+                    value={currentAvgFrom ?? adjustments.data?.currentAvgFrom ?? ""}
+                    min={adjustments.data?.minSnapshotDate ?? undefined}
+                    max={adjustments.data?.maxSnapshotDate ?? undefined}
+                    onChange={(e) => setCurrentAvgFrom(e.target.value || null)}
+                    className={dateInputClass}
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <input
+                    type="date"
+                    value={currentAvgTo ?? adjustments.data?.currentAvgTo ?? ""}
+                    min={currentAvgFrom ?? adjustments.data?.minSnapshotDate ?? undefined}
+                    max={adjustments.data?.maxSnapshotDate ?? undefined}
+                    onChange={(e) => setCurrentAvgTo(e.target.value || null)}
+                    className={dateInputClass}
+                  />
+                </div>
+              </FieldBox>
+
+              <div className="flex items-center gap-1 self-center">
+                {adjustmentsTouched && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedReportPeriod(null);
+                      setAvgFrom(null);
+                      setAvgTo(null);
+                      setCurrentAvgFrom(null);
+                      setCurrentAvgTo(null);
+                    }}
+                    className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Reset
+                  </button>
+                )}
+                <Tooltip>
+                  <TooltipTrigger className="rounded-md p-1.5 text-muted-foreground hover:text-foreground">
+                    <InfoIcon className="size-4" />
+                    <span className="sr-only">About these AUM windows</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    &quot;Avg Live AUM&quot; defaults to the current fiscal quarter to date (
+                    {currentAvgWindowLabel}), and &quot;Avg AUM&quot; defaults to the previous fiscal quarter (
+                    {avgWindowLabel}) — both independently adjustable above. &quot;Avg AUM QoQ Change&quot; divides
+                    the two. Both total rows&apos; Holdings/Debt/Live Priced counts are de-duplicated by stock (a
+                    stock held by several AMCs counts once, not once per AMC) — the &quot;Industry Total&quot; row
+                    always across all 56 AMCs, unaffected by the Top-N selector or search, and the row above it
+                    across whichever AMCs are currently shown instead, so it can never exceed the industry figure.
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+          )}
         </div>
         <TabsContent value="overview">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted-foreground">Live AUM as of</span>
-            <input
-              type="date"
-              value={asOfDate ?? ""}
-              min={data.minSnapshotDate ?? undefined}
-              max={data.maxSnapshotDate ?? undefined}
-              onChange={(e) => setAsOfDate(e.target.value || null)}
-              className={dateInputClass}
-            />
-            {asOfDate && (
-              <button
-                type="button"
-                onClick={() => setAsOfDate(null)}
-                className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                Back to live
-              </button>
-            )}
-            {asOfDate && (
-              <span className="text-xs text-muted-foreground">
-                Historical view — Avg AUM, Est. Net Flow and holdings counts apply only to live data
-              </span>
-            )}
-            {!data.asOfDate && (
-              <FreshnessBadge
-                computedAt={data.computedAt}
-                pricesAreLive={data.pricesAreLive}
-                priceAsOfDate={data.priceAsOfDate}
-                dhanStatus={data.dhanStatus}
-                dhanErrorDetail={data.dhanErrorDetail}
-                distinctLastCloseCount={lastCloseCount}
-                maxSnapshotDate={data.maxSnapshotDate ?? null}
-              />
-            )}
-          </div>
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted-foreground">Reported AUM month</span>
-            <select
-              value={adjustments.data?.reportPeriod ?? data.reportPeriod}
-              onChange={(e) => setSelectedReportPeriod(e.target.value)}
-              className={dateInputClass}
-            >
-              {reportPeriodOptions.map((p) => (
-                <option key={p} value={p}>
-                  {formatReportPeriodLabel(p)}
-                </option>
-              ))}
-            </select>
-            <span className="ml-2 text-muted-foreground">Avg AUM from</span>
-            <input
-              type="date"
-              value={avgFrom ?? adjustments.data?.avgFrom ?? ""}
-              min={adjustments.data?.minSnapshotDate ?? undefined}
-              max={adjustments.data?.maxSnapshotDate ?? undefined}
-              onChange={(e) => setAvgFrom(e.target.value || null)}
-              className={dateInputClass}
-            />
-            <span className="text-muted-foreground">to</span>
-            <input
-              type="date"
-              value={avgTo ?? adjustments.data?.avgTo ?? ""}
-              min={avgFrom ?? adjustments.data?.minSnapshotDate ?? undefined}
-              max={adjustments.data?.maxSnapshotDate ?? undefined}
-              onChange={(e) => setAvgTo(e.target.value || null)}
-              className={dateInputClass}
-            />
-            {adjustmentsTouched && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedReportPeriod(null);
-                  setAvgFrom(null);
-                  setAvgTo(null);
-                  setCurrentAvgFrom(null);
-                  setCurrentAvgTo(null);
-                }}
-                className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                Reset
-              </button>
-            )}
-          </div>
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted-foreground">Avg Live AUM from</span>
-            <input
-              type="date"
-              value={currentAvgFrom ?? adjustments.data?.currentAvgFrom ?? ""}
-              min={adjustments.data?.minSnapshotDate ?? undefined}
-              max={adjustments.data?.maxSnapshotDate ?? undefined}
-              onChange={(e) => setCurrentAvgFrom(e.target.value || null)}
-              className={dateInputClass}
-            />
-            <span className="text-muted-foreground">to</span>
-            <input
-              type="date"
-              value={currentAvgTo ?? adjustments.data?.currentAvgTo ?? ""}
-              min={currentAvgFrom ?? adjustments.data?.minSnapshotDate ?? undefined}
-              max={adjustments.data?.maxSnapshotDate ?? undefined}
-              onChange={(e) => setCurrentAvgTo(e.target.value || null)}
-              className={dateInputClass}
-            />
-          </div>
-          <p className="mb-2 text-xs text-muted-foreground">
-            &quot;Avg Live AUM&quot; defaults to the current fiscal quarter to date ({currentAvgWindowLabel}), and
-            &quot;Avg AUM&quot; defaults to the previous fiscal quarter ({avgWindowLabel}) — both independently
-            adjustable above. &quot;Avg AUM QoQ Change&quot; divides the two. Both total rows&apos;
-            Holdings/Debt/Live Priced counts are de-duplicated by stock (a stock held by several
-            AMCs counts once, not once per AMC) — the &quot;Industry Total&quot; row always across
-            all 56 AMCs, unaffected by the Top-N selector or search, and the row above it across
-            whichever AMCs are currently shown instead, so it can never exceed the industry figure.
-          </p>
           <AmcTable
             amcs={filteredAmcs}
             allAmcs={adjustedAmcs}
