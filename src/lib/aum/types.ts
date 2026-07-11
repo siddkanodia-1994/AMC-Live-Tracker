@@ -56,6 +56,14 @@ export interface AmcLiveAum {
   avgLiveAumCr: number | null;
   avgVsReportedPct: number | null;
   avgWindowDays: number;
+  // Fixed rolling-90-calendar-day averages (last 90 days, and the 90 days
+  // before that) -- unlike avgLiveAumCr above (anchored to the current
+  // report period's month-end), these two are a constant-width window that
+  // slides forward every day. Powers the Overview page's "Average Industry
+  // Equity AUM (last 90 days)" summary card; null until this AMC has at
+  // least one canonical snapshot in the respective window.
+  avgLiveAumCr90d: number | null;
+  avgLiveAumCrPrev90d: number | null;
   // Overview table-only fields, populated client-side by amc-grid.tsx's
   // adjustedAmcs overlay (never by computeLiveAum/computeOverviewAsOf) --
   // optional so every other AmcLiveAum construction site is unaffected.
@@ -134,6 +142,15 @@ export interface LiveAumSnapshot {
   asOfDate?: string | null;
   minSnapshotDate?: string | null;
   maxSnapshotDate?: string | null;
+  // Resolved bounds of the two rolling-90-day windows behind
+  // AmcLiveAum.avgLiveAumCr90d/avgLiveAumCrPrev90d -- so the client can
+  // render an exact date range without redoing "today minus N days" math.
+  // Not populated in historical (asOfDate) mode, matching avgLiveAumCr90d
+  // itself being null there.
+  last90Start?: string;
+  last90End?: string;
+  prev90Start?: string;
+  prev90End?: string;
 }
 
 export interface ComputedLiveAum {

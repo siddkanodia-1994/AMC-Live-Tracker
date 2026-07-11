@@ -110,6 +110,8 @@ export async function computeOverviewAsOf(
       avgLiveAumCr: null,
       avgVsReportedPct: null,
       avgWindowDays: 0,
+      avgLiveAumCr90d: null,
+      avgLiveAumCrPrev90d: null,
       previousDayLiveAumCr: s.prevLiveAumCr,
       oneDayChangePct: s.prevLiveAumCr !== null && s.prevLiveAumCr !== 0 ? s.liveAumCr / s.prevLiveAumCr - 1 : null,
       netFlowCr: null,

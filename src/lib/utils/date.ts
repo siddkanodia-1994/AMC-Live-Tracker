@@ -20,3 +20,13 @@ export function getIstShortDateString(): string {
   const istTime = new Date(Date.now() + IST_OFFSET_MS);
   return istTime.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
+
+// Adds (or subtracts, for a negative `days`) whole calendar days to a
+// "YYYY-MM-DD" string, e.g. addDaysToDateString("2026-07-12", -89) ->
+// "2026-04-14". Parses as UTC midnight so this is pure calendar-day
+// arithmetic, unaffected by IST or the server's local timezone.
+export function addDaysToDateString(dateStr: string, days: number): string {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}

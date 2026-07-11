@@ -156,11 +156,13 @@ function TotalsRow({
   totals,
   holdingsTitle,
   historical,
+  showNetFlow,
 }: {
   label: string;
   totals: Totals;
   holdingsTitle?: string;
   historical: boolean;
+  showNetFlow: boolean;
 }) {
   return (
     <TableRow>
@@ -181,8 +183,12 @@ function TotalsRow({
       <TableCell className="text-right tabular-nums" title={holdingsTitle}>
         {historical ? "—" : totals.totalLivePricedCount}
       </TableCell>
-      <DeltaCrCell value={totals.totalNetFlowCr} />
-      <PctCell value={totals.totalNetFlowPct} />
+      {showNetFlow && (
+        <>
+          <DeltaCrCell value={totals.totalNetFlowCr} />
+          <PctCell value={totals.totalNetFlowPct} />
+        </>
+      )}
     </TableRow>
   );
 }
@@ -225,6 +231,9 @@ export function AmcTable({
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("liveAumCr");
   const [sortDesc, setSortDesc] = useState(true);
+  // Hidden by default so the rest of the table can use a larger base font --
+  // these 2 columns are the ones that force everything else to shrink to fit.
+  const [showNetFlow, setShowNetFlow] = useState(false);
 
   // Top-N is always by Live AUM specifically, independent of whatever column
   // the table is currently sorted by for display — and skipped entirely
@@ -255,6 +264,18 @@ export function AmcTable({
       setSortKey(key);
       setSortDesc(true);
     }
+  }
+
+  function toggleNetFlowColumns() {
+    setShowNetFlow((shown) => {
+      const next = !shown;
+      // Never leave the table sorted by a column that's about to be hidden.
+      if (!next && (sortKey === "netFlowCr" || sortKey === "netFlowPct")) {
+        setSortKey("liveAumCr");
+        setSortDesc(true);
+      }
+      return next;
+    });
   }
 
   const headProps = { sortKey, sortDesc, onToggle: toggleSort };
@@ -295,12 +316,21 @@ export function AmcTable({
 
   return (
     <div className="space-y-2">
-      {isSearchActive && (
-        <p className="text-xs text-muted-foreground">Showing all matches — the Top-N selector above is ignored while searching</p>
-      )}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          {isSearchActive && "Showing all matches — the Top-N selector above is ignored while searching"}
+        </p>
+        <button
+          type="button"
+          onClick={toggleNetFlowColumns}
+          className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          {showNetFlow ? "Hide Est. Net Flow columns" : "+ Show Est. Net Flow columns"}
+        </button>
+      </div>
 
       <div className="overflow-x-auto rounded-lg border bg-card">
-        <Table>
+        <Table className={showNetFlow ? "text-sm" : "text-base"}>
           <TableHeader>
             <TableRow>
               <TableHead className="align-bottom">
@@ -336,20 +366,24 @@ export function AmcTable({
               <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />
               <SortableHead label="Debt" sk="debtInstrumentCount" {...headProps} />
               <SortableHead label="Live Priced" sk="livePricedCount" {...headProps} />
-              <SortableHead
-                label="Est. Net Flow Cr"
-                sublabel={periodLabel}
-                sk="netFlowCr"
-                {...headProps}
-                title={NET_FLOW_TITLE}
-              />
-              <SortableHead
-                label="Est. Net Flow %"
-                sublabel={periodLabel}
-                sk="netFlowPct"
-                {...headProps}
-                title={NET_FLOW_TITLE}
-              />
+              {showNetFlow && (
+                <>
+                  <SortableHead
+                    label="Est. Net Flow Cr"
+                    sublabel={periodLabel}
+                    sk="netFlowCr"
+                    {...headProps}
+                    title={NET_FLOW_TITLE}
+                  />
+                  <SortableHead
+                    label="Est. Net Flow %"
+                    sublabel={periodLabel}
+                    sk="netFlowPct"
+                    {...headProps}
+                    title={NET_FLOW_TITLE}
+                  />
+                </>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -378,13 +412,23 @@ export function AmcTable({
                   {historical ? "—" : amc.debtInstrumentCount}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{historical ? "—" : amc.livePricedCount}</TableCell>
-                <DeltaCrCell value={amc.netFlowCr} />
-                <PctCell value={amc.netFlowPct} />
+                {showNetFlow && (
+                  <>
+                    <DeltaCrCell value={amc.netFlowCr} />
+                    <PctCell value={amc.netFlowPct} />
+                  </>
+                )}
               </TableRow>
             ))}
           </TableBody>
           <TableFooter>
-            <TotalsRow label={subsetLabel} totals={subsetTotals} holdingsTitle={isRestricted ? subsetHoldingsTitle : undefined} historical={historical} />
+            <TotalsRow
+              label={subsetLabel}
+              totals={subsetTotals}
+              holdingsTitle={isRestricted ? subsetHoldingsTitle : undefined}
+              historical={historical}
+              showNetFlow={showNetFlow}
+            />
             {isRestricted && (
               <TableRow className="text-muted-foreground">
                 <TableCell>Industry Total (all {allAmcs.length} AMCs)</TableCell>
@@ -406,8 +450,12 @@ export function AmcTable({
                 <TableCell className="text-right tabular-nums" title="Distinct stocks currently showing a live price, industry-wide">
                   {historical ? "—" : distinctLivePricedCount}
                 </TableCell>
-                <DeltaCrCell value={industryTotals.totalNetFlowCr} />
-                <PctCell value={industryTotals.totalNetFlowPct} />
+                {showNetFlow && (
+                  <>
+                    <DeltaCrCell value={industryTotals.totalNetFlowCr} />
+                    <PctCell value={industryTotals.totalNetFlowPct} />
+                  </>
+                )}
               </TableRow>
             )}
           </TableFooter>

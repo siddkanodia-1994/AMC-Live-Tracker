@@ -141,12 +141,23 @@ export function AmcGrid({
     // table's own Reported AUM month / Avg AUM range pickers below.
     const totalPreviousDayLiveAumCr = data.amcs.reduce((sum, a) => sum + (a.previousDayLiveAumCr ?? a.liveAumCr), 0);
     const oneDayChangeCr = data.totalLiveAumCr - totalPreviousDayLiveAumCr;
+    // Fixed rolling 90-calendar-day window (vs. the 90 days before that) --
+    // same per-AMC-fallback-then-sum approach as totalAvgAumCr above, just
+    // sourced from the two rolling-window fields instead of the
+    // since-last-report one.
+    const total90dAvgAumCr = data.amcs.reduce((sum, a) => sum + (a.avgLiveAumCr90d ?? a.reportedAumCr), 0);
+    const totalPrev90dAvgAumCr = data.amcs.reduce((sum, a) => sum + (a.avgLiveAumCrPrev90d ?? a.reportedAumCr), 0);
+    const avgDeltaCr90d = total90dAvgAumCr - totalPrev90dAvgAumCr;
     return {
       totalAvgAumCr,
       liveDeltaCr,
       liveDeltaPct: data.totalReportedAumCr !== 0 ? liveDeltaCr / data.totalReportedAumCr : 0,
       avgDeltaCr,
       avgDeltaPct: data.totalReportedAumCr !== 0 ? avgDeltaCr / data.totalReportedAumCr : 0,
+      total90dAvgAumCr,
+      totalPrev90dAvgAumCr,
+      avgDeltaCr90d,
+      avgDeltaPct90d: totalPrev90dAvgAumCr !== 0 ? avgDeltaCr90d / totalPrev90dAvgAumCr : 0,
       totalPreviousDayLiveAumCr,
       oneDayChangeCr,
       oneDayChangePct: totalPreviousDayLiveAumCr !== 0 ? oneDayChangeCr / totalPreviousDayLiveAumCr : null,
@@ -249,7 +260,7 @@ export function AmcGrid({
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-normal text-muted-foreground">
-              Average Industry Equity AUM since last report
+              Average Industry Equity AUM (last 90 days)
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-1">
@@ -261,11 +272,18 @@ export function AmcGrid({
             ) : (
               <>
                 <div className="flex items-center gap-2">
-                  <div className="text-3xl font-semibold tabular-nums">{formatCr(industryTotals.totalAvgAumCr)}</div>
-                  <AumDeltaBadge deltaCr={industryTotals.avgDeltaCr} deltaPct={industryTotals.avgDeltaPct} />
+                  <div className="text-3xl font-semibold tabular-nums">{formatCr(industryTotals.total90dAvgAumCr)}</div>
+                  <AumDeltaBadge deltaCr={industryTotals.avgDeltaCr90d} deltaPct={industryTotals.avgDeltaPct90d} />
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  Reported: {formatCr(data.totalReportedAumCr)} · Averaged since {avgWindowStartLabel}
+                  Previous 90d avg: {formatCr(industryTotals.totalPrev90dAvgAumCr)}
+                  {data.prev90Start && data.prev90End && data.last90Start && data.last90End && (
+                    <>
+                      {" "}
+                      · {formatShortDate(data.prev90Start)} – {formatShortDate(data.prev90End)} vs{" "}
+                      {formatShortDate(data.last90Start)} – {formatShortDate(data.last90End)}
+                    </>
+                  )}
                 </div>
               </>
             )}
@@ -295,10 +313,6 @@ export function AmcGrid({
           </CardContent>
         </Card>
       </div>
-      <div className="flex justify-end">
-        <SearchBar value={query} onChange={setQuery} />
-      </div>
-
       {statusMessage && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
           {statusMessage}
@@ -349,22 +363,25 @@ export function AmcGrid({
                 Cash Holdings
               </TabsTrigger>
             </TabsList>
-            <div className="flex items-center gap-1 text-sm">
-              <span className="text-muted-foreground">Show:</span>
-              {TOP_N_OPTIONS.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setTopN(option)}
-                  className={`rounded-md px-2 py-1 ${
-                    topN === option
-                      ? "bg-[var(--toolbar-accent)] text-white"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {option === "all" ? "All" : `Top ${option}`}
-                </button>
-              ))}
+            <div className="flex items-center gap-3 text-sm">
+              {activeTab === "overview" && <SearchBar value={query} onChange={setQuery} />}
+              <div className="flex items-center gap-1">
+                <span className="text-muted-foreground">Show:</span>
+                {TOP_N_OPTIONS.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setTopN(option)}
+                    className={`rounded-md px-2 py-1 ${
+                      topN === option
+                        ? "bg-[var(--toolbar-accent)] text-white"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {option === "all" ? "All" : `Top ${option}`}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 

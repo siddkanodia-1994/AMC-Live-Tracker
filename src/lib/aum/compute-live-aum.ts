@@ -17,7 +17,13 @@ import {
   setCachedInstrumentMap,
   setCachedLiveAum,
 } from "./cache";
-import { getAverageAumSinceReport, getNetFlowForPeriod, getPreviousDayIsinPrices, getPreviousDayLiveAum } from "./history";
+import {
+  getAverageAumSinceReport,
+  getNetFlowForPeriod,
+  getPreviousDayIsinPrices,
+  getPreviousDayLiveAum,
+  getRolling90DayAverages,
+} from "./history";
 import type {
   AmcLiveAum,
   ComputedLiveAum,
@@ -382,6 +388,8 @@ async function runComputation(): Promise<ComputedLiveAum> {
       avgLiveAumCr: null,
       avgVsReportedPct: null,
       avgWindowDays: 0,
+      avgLiveAumCr90d: null,
+      avgLiveAumCrPrev90d: null,
       previousDayLiveAumCr: null,
       oneDayChangePct: null,
       netFlowCr: null,
@@ -445,17 +453,31 @@ async function runComputation(): Promise<ComputedLiveAum> {
     await Promise.all([writeDailySnapshot(snapshot), writeDailyIsinPrices(todayPriceByIsin)]);
   }
 
-  const [averages, previousDay, netFlows] = await Promise.all([
+  const [averages, previousDay, netFlows, rolling90] = await Promise.all([
     getAverageAumSinceReport(reportPeriod).catch(() => new Map()),
     getPreviousDayLiveAum().catch(() => new Map()),
     getNetFlowForPeriod(reportPeriod).catch(() => new Map()),
+    getRolling90DayAverages().catch(() => null),
   ]);
+  if (rolling90) {
+    snapshot.last90Start = rolling90.last90Start;
+    snapshot.last90End = rolling90.last90End;
+    snapshot.prev90Start = rolling90.prev90Start;
+    snapshot.prev90End = rolling90.prev90End;
+  }
   for (const amc of amcResults) {
     const avg = averages.get(amc.amcId);
     if (avg) {
       amc.avgLiveAumCr = avg.avgLiveAumCr;
       amc.avgWindowDays = avg.daysCount;
       amc.avgVsReportedPct = amc.reportedAumCr !== 0 ? avg.avgLiveAumCr / amc.reportedAumCr - 1 : null;
+    }
+
+    if (rolling90) {
+      const last90 = rolling90.last90ByAmcId.get(amc.amcId);
+      if (last90) amc.avgLiveAumCr90d = last90.avgLiveAumCr;
+      const prev90 = rolling90.prev90ByAmcId.get(amc.amcId);
+      if (prev90) amc.avgLiveAumCrPrev90d = prev90.avgLiveAumCr;
     }
 
     const prev = previousDay.get(amc.amcId);

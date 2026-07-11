@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcPeriods, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
-import { getIstDateString } from "../utils/date";
+import { addDaysToDateString, getIstDateString } from "../utils/date";
 import { firstDayOfNextMonth, lastDayOfReportMonth } from "./report-period";
 
 /**
@@ -102,6 +102,44 @@ export async function getAverageAumSinceReport(reportPeriod: string): Promise<Ma
     map.set(amcId, { ...v, windowStart });
   }
   return map;
+}
+
+export interface Rolling90DayAverages {
+  last90ByAmcId: Map<number, { avgLiveAumCr: number; daysCount: number }>;
+  prev90ByAmcId: Map<number, { avgLiveAumCr: number; daysCount: number }>;
+  last90Start: string;
+  last90End: string;
+  prev90Start: string;
+  prev90End: string;
+}
+
+/**
+ * Two fixed rolling calendar-day windows ending today: the last 90 days, and
+ * the 90 days immediately before that -- used by the Overview page's
+ * "Average Industry Equity AUM (last 90 days)" card, which (unlike Avg AUM/
+ * Avg Live AUM) is a fixed calendar window rather than anchored to the
+ * current report period or fiscal quarter. Both windows' start dates are
+ * clamped to the earliest canonical snapshot on record, so this stays
+ * well-defined even before 180 days of data exist.
+ */
+export async function getRolling90DayAverages(): Promise<Rolling90DayAverages> {
+  const today = getIstDateString();
+  const { minDate } = await getCanonicalSnapshotDateBounds();
+
+  let last90Start = addDaysToDateString(today, -89);
+  let prev90Start = addDaysToDateString(today, -179);
+  const prev90End = addDaysToDateString(today, -90);
+  if (minDate) {
+    if (last90Start < minDate) last90Start = minDate;
+    if (prev90Start < minDate) prev90Start = minDate;
+  }
+
+  const [last90ByAmcId, prev90ByAmcId] = await Promise.all([
+    getAverageAumForRange(last90Start, today),
+    getAverageAumForRange(prev90Start, prev90End),
+  ]);
+
+  return { last90ByAmcId, prev90ByAmcId, last90Start, last90End: today, prev90Start, prev90End };
 }
 
 export interface PreviousDayAum {

@@ -143,7 +143,7 @@ export function AumTrendChart({ data: rawData, mode = "absolute" }: { data: AumH
 
   if (mode === "change") {
     return (
-      <div className="h-64 w-full">
+      <div className="h-80 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={changeSeries} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -182,7 +182,7 @@ export function AumTrendChart({ data: rawData, mode = "absolute" }: { data: AumH
   }
 
   return (
-    <div className="h-64 w-full">
+    <div className="h-80 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
