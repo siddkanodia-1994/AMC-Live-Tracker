@@ -55,6 +55,7 @@ function DeltaCrCell({ value }: { value: number | null }) {
 
 function SortableHead({
   label,
+  sublabel,
   sk,
   sortKey,
   sortDesc,
@@ -62,6 +63,7 @@ function SortableHead({
   title,
 }: {
   label: string;
+  sublabel?: string;
   sk: SortKey;
   sortKey: SortKey;
   sortDesc: boolean;
@@ -70,7 +72,10 @@ function SortableHead({
 }) {
   const active = sk === sortKey;
   return (
-    <TableHead className="text-right first:text-left" title={title}>
+    <TableHead
+      className={`text-right first:text-left align-bottom ${sublabel ? "whitespace-normal" : ""}`}
+      title={title}
+    >
       <button
         type="button"
         onClick={() => onToggle(sk)}
@@ -78,6 +83,7 @@ function SortableHead({
       >
         {label}
         {active ? (sortDesc ? " ↓" : " ↑") : ""}
+        {sublabel && <span className="block font-bold text-[var(--toolbar-accent)]">{sublabel}</span>}
       </button>
     </TableHead>
   );
@@ -297,7 +303,7 @@ export function AmcTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>
+              <TableHead className="align-bottom">
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -310,18 +316,40 @@ export function AmcTable({
                   <MarketStatusBadge />
                 </div>
               </TableHead>
-              <SortableHead label={liveAumLabel} sk="liveAumCr" {...headProps} />
+              <SortableHead
+                label="Live AUM"
+                sublabel={asOfDate ? formatShortDate(asOfDate) : undefined}
+                sk="liveAumCr"
+                {...headProps}
+              />
               <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
-              <SortableHead label={`Reported AUM (${reportedAumPeriodLabel})`} sk="reportedAumCr" {...headProps} />
+              <SortableHead label="Reported AUM" sublabel={reportedAumPeriodLabel} sk="reportedAumCr" {...headProps} />
               <SortableHead label="Live vs Reported" sk="deltaPct" {...headProps} />
-              <SortableHead label={`Avg Live AUM (${currentAvgWindowLabel})`} sk="currentQuarterAvgLiveAumCr" {...headProps} />
-              <SortableHead label={`Avg AUM (${avgWindowLabel})`} sk="avgLiveAumCr" {...headProps} />
+              <SortableHead
+                label="Avg Live AUM"
+                sublabel={currentAvgWindowLabel}
+                sk="currentQuarterAvgLiveAumCr"
+                {...headProps}
+              />
+              <SortableHead label="Avg AUM" sublabel={avgWindowLabel} sk="avgLiveAumCr" {...headProps} />
               <SortableHead label="Avg AUM QoQ Change" sk="avgAumQoQChangePct" {...headProps} />
               <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />
               <SortableHead label="Debt" sk="debtInstrumentCount" {...headProps} />
               <SortableHead label="Live Priced" sk="livePricedCount" {...headProps} />
-              <SortableHead label={`Est. Net Flow Cr (${periodLabel})`} sk="netFlowCr" {...headProps} title={NET_FLOW_TITLE} />
-              <SortableHead label={`Est. Net Flow % (${periodLabel})`} sk="netFlowPct" {...headProps} title={NET_FLOW_TITLE} />
+              <SortableHead
+                label="Est. Net Flow Cr"
+                sublabel={periodLabel}
+                sk="netFlowCr"
+                {...headProps}
+                title={NET_FLOW_TITLE}
+              />
+              <SortableHead
+                label="Est. Net Flow %"
+                sublabel={periodLabel}
+                sk="netFlowPct"
+                {...headProps}
+                title={NET_FLOW_TITLE}
+              />
             </TableRow>
           </TableHeader>
           <TableBody>
