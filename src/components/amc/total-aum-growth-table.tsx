@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRegisterExport } from "@/components/layout/export-context";
 import { EditNumberCell } from "./edit-number-cell";
+import { FieldBox } from "./field-box";
 import { formatDeltaCr, formatPct, formatCr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import type { TopNOption } from "@/lib/utils/top-n";
 import { useTotalAumGrowth } from "@/hooks/use-total-aum-growth";
@@ -89,7 +90,7 @@ function PctCell({ value }: { value: number | null }) {
 
 function AumCrCell({ value, title }: { value: number | null; title?: string }) {
   return (
-    <TableCell className="text-right tabular-nums text-muted-foreground" title={title}>
+    <TableCell className="text-right tabular-nums" title={title}>
       {value !== null ? formatCr(value) : "—"}
     </TableCell>
   );
@@ -141,11 +142,7 @@ function SortableHead({
   const active = sk === sortKey;
   return (
     <TableHead className="text-right first:text-left" title={title}>
-      <button
-        type="button"
-        onClick={() => onToggle(sk)}
-        className={`hover:text-foreground ${active ? "font-medium text-foreground" : ""}`}
-      >
+      <button type="button" onClick={() => onToggle(sk)} className="hover:text-foreground">
         {label}
         {active ? (sortDesc ? " ↓" : " ↑") : ""}
       </button>
@@ -154,7 +151,7 @@ function SortableHead({
 }
 
 const dateInputClass =
-  "rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
+  "w-full min-w-0 rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
 // Audit-trail hover text for an overridden cell -- when and from what the
 // hand-entered figure diverged. null oldValueCr = it replaced the computed
@@ -291,43 +288,46 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-muted-foreground">Live AUM as of</span>
-        <input
-          type="date"
-          value={effectiveAsOfDate ?? ""}
-          min={data.minDate}
-          max={data.maxDate}
-          onChange={(e) => e.target.value && setSelectedAsOfDate(e.target.value)}
-          className={dateInputClass}
-          title={`Pick any date -- snaps to the closest date with real tracked history (${formatShortDate(data.minDate)} to ${formatShortDate(data.maxDate)}).`}
-        />
-        <span className="ml-4 text-muted-foreground">AUM breakdown month</span>
-        <select
-          value={effectiveComponentPeriod ?? ""}
-          onChange={(e) => e.target.value && setSelectedComponentPeriod(e.target.value)}
-          className={dateInputClass}
-          title="Which month's Reported/Income-Debt/Other Funds AUM to show in the columns below. Independent of the other selectors."
-        >
-          {availableReportPeriods.map((p) => (
-            <option key={p} value={p}>
-              {formatReportPeriodLabel(p)}
-            </option>
-          ))}
-        </select>
-        <span className="ml-4 text-muted-foreground">Total Reported AUM month</span>
-        <select
-          value={effectiveTotalReportedPeriod ?? ""}
-          onChange={(e) => e.target.value && setSelectedTotalReportedPeriod(e.target.value)}
-          className={dateInputClass}
-          title="Which month's actual total (Reported + Income-Debt + Other Funds AUM) to use for Total (Reported) and Growth %. Independent of the AUM breakdown month above -- the two can differ."
-        >
-          {availableReportPeriods.map((p) => (
-            <option key={p} value={p}>
-              {formatReportPeriodLabel(p)}
-            </option>
-          ))}
-        </select>
+      <div className="flex flex-wrap items-stretch gap-2.5">
+        <FieldBox label="Live AUM as of">
+          <input
+            type="date"
+            value={effectiveAsOfDate ?? ""}
+            min={data.minDate}
+            max={data.maxDate}
+            onChange={(e) => e.target.value && setSelectedAsOfDate(e.target.value)}
+            className={dateInputClass}
+            title={`Pick any date -- snaps to the closest date with real tracked history (${formatShortDate(data.minDate)} to ${formatShortDate(data.maxDate)}).`}
+          />
+        </FieldBox>
+        <FieldBox label="AUM breakdown month">
+          <select
+            value={effectiveComponentPeriod ?? ""}
+            onChange={(e) => e.target.value && setSelectedComponentPeriod(e.target.value)}
+            className={dateInputClass}
+            title="Which month's Reported/Income-Debt/Other Funds AUM to show in the columns below. Independent of the other selectors."
+          >
+            {availableReportPeriods.map((p) => (
+              <option key={p} value={p}>
+                {formatReportPeriodLabel(p)}
+              </option>
+            ))}
+          </select>
+        </FieldBox>
+        <FieldBox label="Total Reported AUM month">
+          <select
+            value={effectiveTotalReportedPeriod ?? ""}
+            onChange={(e) => e.target.value && setSelectedTotalReportedPeriod(e.target.value)}
+            className={dateInputClass}
+            title="Which month's actual total (Reported + Income-Debt + Other Funds AUM) to use for Total (Reported) and Growth %. Independent of the AUM breakdown month above -- the two can differ."
+          >
+            {availableReportPeriods.map((p) => (
+              <option key={p} value={p}>
+                {formatReportPeriodLabel(p)}
+              </option>
+            ))}
+          </select>
+        </FieldBox>
       </div>
 
       <p className="text-xs text-muted-foreground">
@@ -350,7 +350,7 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
                 <button
                   type="button"
                   onClick={() => toggleSort("overviewName")}
-                  className={`hover:text-foreground ${sortKey === "overviewName" ? "font-medium text-foreground" : ""}`}
+                  className="hover:text-foreground"
                 >
                   AMC
                   {sortKey === "overviewName" ? (sortDesc ? " ↓" : " ↑") : ""}
@@ -369,7 +369,7 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
                     <button
                       type="button"
                       onClick={() => toggleSort("reportedAumCr")}
-                      className={`hover:text-foreground ${sortKey === "reportedAumCr" ? "font-medium text-foreground" : ""}`}
+                      className="hover:text-foreground"
                     >
                       {reportedAumColumnLabel}
                       {sortKey === "reportedAumCr" ? (sortDesc ? " ↓" : " ↑") : ""}

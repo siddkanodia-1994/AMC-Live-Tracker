@@ -51,7 +51,7 @@ function SortableHead({
       <button
         type="button"
         onClick={() => onToggle(sk)}
-        className={`hover:text-foreground ${active ? "text-foreground font-medium" : ""}`}
+        className="hover:text-foreground"
       >
         {label}
         {active ? (sortDesc ? " ↓" : " ↑") : ""}
@@ -148,7 +148,7 @@ export function CashHoldingsTable({ topN }: { topN: TopNOption }) {
                 <button
                   type="button"
                   onClick={() => toggleSort("overviewName")}
-                  className={`hover:text-foreground ${sortKey === "overviewName" || sortKey === null ? "font-medium text-foreground" : ""}`}
+                  className="hover:text-foreground"
                 >
                   AMC
                   {sortKey === "overviewName" || sortKey === null ? (sortDesc ? " ↓" : " ↑") : ""}

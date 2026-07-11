@@ -9,6 +9,7 @@ import { formatCr, formatDeltaCr, formatPct, formatShortDate } from "@/lib/utils
 import { closestDateAtOrBefore } from "@/lib/aum/report-period";
 import type { TopNOption } from "@/lib/utils/top-n";
 import { useAumGrowth } from "@/hooks/use-aum-growth";
+import { FieldBox } from "./field-box";
 import type { AumGrowthRow, RepriceBasis } from "@/lib/aum/aum-growth";
 
 type SortKey =
@@ -113,9 +114,7 @@ function DeltaCrCell({ value }: { value: number | null }) {
 }
 
 function AumCrCell({ value }: { value: number | null }) {
-  return (
-    <TableCell className="text-right tabular-nums text-muted-foreground">{value !== null ? formatCr(value) : "—"}</TableCell>
-  );
+  return <TableCell className="text-right tabular-nums">{value !== null ? formatCr(value) : "—"}</TableCell>;
 }
 
 function TotalsRow({ label, totals, muted }: { label: string; totals: GrowthTotals; muted?: boolean }) {
@@ -153,11 +152,7 @@ function SortableHead({
   const active = sk === sortKey;
   return (
     <TableHead className="text-right first:text-left" title={title}>
-      <button
-        type="button"
-        onClick={() => onToggle(sk)}
-        className={`hover:text-foreground ${active ? "font-medium text-foreground" : ""}`}
-      >
+      <button type="button" onClick={() => onToggle(sk)} className="hover:text-foreground">
         {label}
         {active ? (sortDesc ? " ↓" : " ↑") : ""}
       </button>
@@ -166,10 +161,10 @@ function SortableHead({
 }
 
 const selectClass =
-  "rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
+  "w-full min-w-0 rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
 const basisToggleClass = (active: boolean) =>
-  `rounded-md px-2 py-1 text-sm ${active ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`;
+  `rounded-md px-2 py-1 text-sm ${active ? "bg-[var(--toolbar-accent)] text-white" : "text-muted-foreground hover:text-foreground"}`;
 
 export function AumGrowthTable({ topN }: { topN: TopNOption }) {
   const [selectedA, setSelectedA] = useState<string | null>(null);
@@ -325,55 +320,66 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-muted-foreground">Compare</span>
-        <select value={effectiveA} onChange={(e) => handlePeriodAChange(e.target.value)} className={selectClass}>
-          {periodAOptions.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        <span className="text-muted-foreground">to</span>
-        <select value={effectiveB} onChange={(e) => handlePeriodBChange(e.target.value)} className={selectClass}>
-          {periodBOptions.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-      </div>
+      <div className="flex flex-wrap items-stretch gap-2.5">
+        <FieldBox label="Compare">
+          <div className="flex items-center gap-1.5">
+            <select value={effectiveA} onChange={(e) => handlePeriodAChange(e.target.value)} className={selectClass}>
+              {periodAOptions.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-muted-foreground">to</span>
+            <select value={effectiveB} onChange={(e) => handlePeriodBChange(e.target.value)} className={selectClass}>
+              {periodBOptions.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
+        </FieldBox>
 
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-muted-foreground">Computed AUM using</span>
-        <div className="flex items-center gap-1">
-          <button type="button" onClick={() => handleBasisChange("A")} className={basisToggleClass(effectiveBasis === "A")}>
-            {effectiveA}&apos;s holdings
-          </button>
-          <button type="button" onClick={() => handleBasisChange("B")} className={basisToggleClass(effectiveBasis === "B")}>
-            {effectiveB}&apos;s holdings
-          </button>
-        </div>
-        <span className="text-muted-foreground">repriced as of</span>
-        {activeDates.length === 0 ? (
-          <span className="text-xs text-muted-foreground">
-            No backfilled data for {basisPeriodLabel} yet — run the historical backfill for it.
-          </span>
-        ) : (
-          <input
-            type="date"
-            value={effectiveAsOfDate ?? ""}
-            min={activeDates[0]}
-            max={activeDates[activeDates.length - 1]}
-            onChange={(e) => handleAsOfDateInputChange(e.target.value)}
-            className={selectClass}
-            title={`Pick any date -- snaps to the closest date with real backfilled data (${formatShortDate(activeDates[0])} to ${formatShortDate(activeDates[activeDates.length - 1])}).`}
-          />
-        )}
+        <FieldBox label="Computed AUM using">
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={() => handleBasisChange("A")} className={basisToggleClass(effectiveBasis === "A")}>
+              {effectiveA}&apos;s holdings
+            </button>
+            <button type="button" onClick={() => handleBasisChange("B")} className={basisToggleClass(effectiveBasis === "B")}>
+              {effectiveB}&apos;s holdings
+            </button>
+          </div>
+        </FieldBox>
+
+        <FieldBox label="Repriced as of">
+          {activeDates.length === 0 ? (
+            <span className="text-xs text-muted-foreground">
+              No backfilled data for {basisPeriodLabel} yet — run the historical backfill for it.
+            </span>
+          ) : (
+            <input
+              type="date"
+              value={effectiveAsOfDate ?? ""}
+              min={activeDates[0]}
+              max={activeDates[activeDates.length - 1]}
+              onChange={(e) => handleAsOfDateInputChange(e.target.value)}
+              className={selectClass}
+              title={`Pick any date -- snaps to the closest date with real backfilled data (${formatShortDate(activeDates[0])} to ${formatShortDate(activeDates[activeDates.length - 1])}).`}
+            />
+          )}
+        </FieldBox>
+
         {hasCustomRepricing && (
-          <button type="button" onClick={handleReset} className="text-xs text-muted-foreground underline hover:text-foreground">
-            Reset
-          </button>
+          <div className="flex items-center self-center">
+            <button
+              type="button"
+              onClick={handleReset}
+              className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Reset
+            </button>
+          </div>
         )}
       </div>
 
@@ -395,7 +401,7 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
                 <button
                   type="button"
                   onClick={() => toggleSort("overviewName")}
-                  className={`hover:text-foreground ${sortKey === "overviewName" ? "font-medium text-foreground" : ""}`}
+                  className="hover:text-foreground"
                 >
                   AMC
                   {sortKey === "overviewName" ? (sortDesc ? " ↓" : " ↑") : ""}
@@ -445,12 +451,8 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
                     {row.overviewName}
                   </Link>
                 </TableCell>
-                <TableCell className="text-right tabular-nums text-muted-foreground">
-                  {formatCr(row.periodAReportedAumCr)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums text-muted-foreground">
-                  {formatCr(row.periodBReportedAumCr)}
-                </TableCell>
+                <TableCell className="text-right tabular-nums">{formatCr(row.periodAReportedAumCr)}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatCr(row.periodBReportedAumCr)}</TableCell>
                 <DeltaCrCell value={row.growthCr} />
                 <PctCell value={row.growthPct} />
                 <AumCrCell value={row.computedAtDateCr} />

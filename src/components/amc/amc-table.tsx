@@ -56,6 +56,7 @@ function DeltaCrCell({ value }: { value: number | null }) {
 function SortableHead({
   label,
   sublabel,
+  sublabelAccent = true,
   sk,
   sortKey,
   sortDesc,
@@ -64,6 +65,10 @@ function SortableHead({
 }: {
   label: string;
   sublabel?: string;
+  // false for a sublabel that's just a second line of static text (e.g.
+  // "QoQ Change"), not a dynamic date/value -- accent-coloring it would
+  // falsely imply it's a resolved variable like the other two-tier headers.
+  sublabelAccent?: boolean;
   sk: SortKey;
   sortKey: SortKey;
   sortDesc: boolean;
@@ -76,14 +81,14 @@ function SortableHead({
       className={`text-right first:text-left align-bottom ${sublabel ? "whitespace-normal" : ""}`}
       title={title}
     >
-      <button
-        type="button"
-        onClick={() => onToggle(sk)}
-        className={`hover:text-foreground ${active ? "font-medium text-foreground" : ""}`}
-      >
+      <button type="button" onClick={() => onToggle(sk)} className="hover:text-foreground">
         {label}
         {active ? (sortDesc ? " ↓" : " ↑") : ""}
-        {sublabel && <span className="block font-bold text-[var(--toolbar-accent)]">{sublabel}</span>}
+        {sublabel && (
+          <span className={`block font-bold ${sublabelAccent ? "text-[var(--toolbar-accent)]" : "text-foreground"}`}>
+            {sublabel}
+          </span>
+        )}
       </button>
     </TableHead>
   );
@@ -338,7 +343,7 @@ export function AmcTable({
                   <button
                     type="button"
                     onClick={() => toggleSort("overviewName")}
-                    className={`hover:text-foreground ${sortKey === "overviewName" ? "font-medium text-foreground" : ""}`}
+                    className="hover:text-foreground"
                   >
                     AMC
                     {sortKey === "overviewName" ? (sortDesc ? " ↓" : " ↑") : ""}
@@ -362,7 +367,13 @@ export function AmcTable({
                 {...headProps}
               />
               <SortableHead label="Avg AUM" sublabel={avgWindowLabel} sk="avgLiveAumCr" {...headProps} />
-              <SortableHead label="Avg AUM QoQ Change" sk="avgAumQoQChangePct" {...headProps} />
+              <SortableHead
+                label="Avg AUM"
+                sublabel="QoQ Change"
+                sublabelAccent={false}
+                sk="avgAumQoQChangePct"
+                {...headProps}
+              />
               <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />
               <SortableHead label="Debt" sk="debtInstrumentCount" {...headProps} />
               <SortableHead label="Live Priced" sk="livePricedCount" {...headProps} />

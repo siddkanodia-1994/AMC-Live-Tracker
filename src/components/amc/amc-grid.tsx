@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useLiveAum } from "@/hooks/use-live-aum";
 import { useOverviewAdjustments } from "@/hooks/use-overview-adjustments";
 import { AmcTable } from "./amc-table";
+import { FieldBox } from "./field-box";
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { FreshnessBadge } from "./freshness-badge";
 import { AumGrowthTable } from "./aum-growth-table";
@@ -28,15 +29,6 @@ const DHAN_UNAVAILABLE_MESSAGE =
 
 const dateInputClass =
   "w-full min-w-0 rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
-
-function FieldBox({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-[190px] flex-1 flex-col gap-1 rounded-lg border bg-[var(--toolbar-accent-soft)]/40 px-3 py-2">
-      <span className="text-[10.5px] font-semibold tracking-wide text-muted-foreground uppercase">{label}</span>
-      {children}
-    </div>
-  );
-}
 
 export function AmcGrid({
   initialData,
