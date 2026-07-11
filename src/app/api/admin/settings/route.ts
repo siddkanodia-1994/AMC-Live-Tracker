@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withErrorHandling } from "@/lib/api/with-error-handling";
+import { withAdminAuth } from "@/lib/api/with-admin-auth";
 import {
   getActiveDhanClientId,
   getActiveDhanToken,
@@ -14,12 +14,12 @@ import { db } from "@/lib/db/client";
 import { instrumentMap } from "@/lib/db/schema";
 import type { ExchangeSegment } from "@/lib/dhan/types";
 
-export const GET = withErrorHandling(async () => {
+export const GET = withAdminAuth(async () => {
   const [dhanToken, dhanClientId] = await Promise.all([getDhanTokenStatus(), getDhanClientIdStatus()]);
   return NextResponse.json({ dhanToken, dhanClientId });
 });
 
-export const POST = withErrorHandling(async (request: Request) => {
+export const POST = withAdminAuth(async (request: Request) => {
   const body = await request.json();
   const submittedClientId = typeof body?.dhanClientId === "string" ? body.dhanClientId.trim() : undefined;
   const submittedToken = typeof body?.dhanAccessToken === "string" ? body.dhanAccessToken.trim() : undefined;

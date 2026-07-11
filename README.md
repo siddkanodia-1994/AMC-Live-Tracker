@@ -51,10 +51,12 @@ been saved there. Each day:
 If the token expires and isn't refreshed, the app keeps working — it just falls back to last-reported
 values for every holding and shows a banner saying pricing is unavailable.
 
-**Note on `/admin`**: this page and its API routes (`/api/admin/*`) are intentionally unauthenticated —
-a deliberate choice for this personal, single-admin deployment, not an oversight. Anyone with the URL
-can upload a new tracker file, trigger an instrument sync, or change the DHAN token. If that stops being
-an acceptable tradeoff, reintroduce a shared-secret or real auth check in front of these routes.
+**Note on `/admin`**: this page and its API routes (`/api/admin/*`) are gated behind a shared secret
+(`ADMIN_SECRET`) — enter it once at `/admin` and it's remembered in this browser (`localStorage`)
+across restarts until you explicitly log out or clear site data, so the daily token-refresh workflow
+above stays just as quick as visiting the page directly. The Client ID is also encrypted at rest
+(`app_settings` table) and only ever shown/returned masked (last 4 characters) — the DHAN access token
+itself is never returned by any endpoint at all, only a "configured/updated" status.
 
 ## US-listed holdings (Finnhub)
 
@@ -87,7 +89,7 @@ Create Database → Neon), and copy its connection string.
 
 ```bash
 cp .env.example .env.local
-# fill in DATABASE_URL, DHAN_CLIENT_ID
+# fill in DATABASE_URL, ADMIN_SECRET, SETTINGS_ENCRYPTION_KEY, DHAN_CLIENT_ID
 npm install
 npm run db:generate   # generate SQL migration from src/lib/db/schema.ts
 npm run db:migrate    # apply it to your database
@@ -131,9 +133,10 @@ This repo is connected to Vercel via GitHub — pushes to `main` deploy automati
 from scratch on a new project:
 
 1. Push this repo to GitHub and connect it under the Vercel project's Settings → Git.
-2. Add the environment variables from `.env.example` (`DATABASE_URL`, `DHAN_CLIENT_ID`,
-   `CRON_SECRET`) in the Vercel project settings. `DATABASE_URL` is set
-   automatically if you provision Postgres via Vercel's Neon marketplace integration.
+2. Add the environment variables from `.env.example` (`DATABASE_URL`, `ADMIN_SECRET`,
+   `SETTINGS_ENCRYPTION_KEY`, `DHAN_CLIENT_ID`, `CRON_SECRET`) in the Vercel project settings.
+   `DATABASE_URL` is set automatically if you provision Postgres via Vercel's Neon marketplace
+   integration.
 3. Deploy. `vercel.json` configures the daily-snapshot cron (`/api/cron/daily-snapshot`) to run twice
    — 4:00 PM and 6:00 PM IST, both after the 3:30 PM market close — so a DHAN blip on the first run
    (rate limit, transient error) gets corrected by the second instead of freezing that day's chart

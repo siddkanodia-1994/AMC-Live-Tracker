@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { adminFetch } from "@/lib/admin-client";
 
 interface ImportResult {
   reportPeriod: string;
@@ -17,7 +18,7 @@ interface SyncResult {
   unmatchedIsins: string[];
 }
 
-export function SyncActions() {
+export function SyncActions({ secret }: { secret: string }) {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -28,7 +29,7 @@ export function SyncActions() {
     setSyncing(true);
     setSyncResult(null);
     try {
-      const res = await fetch("/api/admin/sync-instruments", { method: "POST" });
+      const res = await adminFetch("/api/admin/sync-instruments", secret, { method: "POST" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Sync failed");
@@ -49,7 +50,7 @@ export function SyncActions() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch("/api/admin/upload", { method: "POST", body: formData });
+      const res = await adminFetch("/api/admin/upload", secret, { method: "POST", body: formData });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Upload failed");

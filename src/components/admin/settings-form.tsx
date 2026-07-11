@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { adminFetch } from "@/lib/admin-client";
+import { maskExceptLast4 } from "@/lib/utils/mask";
 import { formatRelativeTime } from "@/lib/utils/format";
 
 interface SettingsStatus {
@@ -12,14 +14,7 @@ interface SettingsStatus {
   dhanClientId: { configured: boolean; value: string | null; updatedAt: string | null; source: "db" | "env" | "none" };
 }
 
-// Only the last 4 characters are ever shown on screen (shoulder-surfing /
-// screen-share safety) -- both for the saved value at rest and while typing
-// a replacement. Number of `*` matches the real hidden length.
-function maskExceptLast4(value: string): string {
-  return value.length <= 4 ? value : "*".repeat(value.length - 4) + value.slice(-4);
-}
-
-export function SettingsForm() {
+export function SettingsForm({ secret }: { secret: string }) {
   const [status, setStatus] = useState<SettingsStatus | null>(null);
   const [clientId, setClientId] = useState("");
   const [hasStartedEditingClientId, setHasStartedEditingClientId] = useState(false);
@@ -29,15 +24,17 @@ export function SettingsForm() {
   const clientIdInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetch("/api/admin/settings")
+    adminFetch("/api/admin/settings", secret)
       .then((res) => res.json())
       .then((data: SettingsStatus) => {
         setStatus(data);
+        // The server now always sends this masked (last 4 only) -- this is
+        // just the at-rest display value, never the real Client ID.
         setClientId(data.dhanClientId.value ?? "");
         setHasStartedEditingClientId(false);
       })
       .catch(() => toast.error("Failed to load DHAN settings status"));
-  }, []);
+  }, [secret]);
 
   // The input's displayed value is always masked, so `e.target.value` can't
   // be trusted directly -- it would include literal `*` characters. Instead
@@ -72,11 +69,14 @@ export function SettingsForm() {
     }
   }, [clientId]);
 
-  const clientIdChanged = clientId.trim() !== (status?.dhanClientId.value ?? "");
-  const isPartialEdit = clientIdChanged && !token.trim();
+  // hasStartedEditingClientId (not a value comparison) is the signal for
+  // "did the user actually change the Client ID" -- once the server only
+  // ever sends a masked value, comparing clientId.trim() against
+  // status?.dhanClientId.value can't distinguish "untouched" from "changed"
+  // (both sides would just be the same masked string at rest).
+  const isPartialEdit = hasStartedEditingClientId && !token.trim();
 
   async function handleSave(force = false) {
-    if (!clientId.trim()) return;
     if (isPartialEdit && !force) {
       setConfirmingPartialEdit(true);
       return;
@@ -84,11 +84,15 @@ export function SettingsForm() {
     setConfirmingPartialEdit(false);
     setSaving(true);
     try {
-      const res = await fetch("/api/admin/settings", {
+      const res = await adminFetch("/api/admin/settings", secret, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          dhanClientId: clientId.trim(),
+          // Only send a new Client ID when it was actually edited -- the API
+          // treats an omitted field as "leave unchanged". Sending the masked
+          // at-rest value here (the old, pre-masking behavior) would
+          // overwrite the real Client ID with asterisks.
+          ...(hasStartedEditingClientId ? { dhanClientId: clientId.trim() } : {}),
           ...(token.trim() ? { dhanAccessToken: token.trim() } : {}),
         }),
       });
@@ -98,6 +102,7 @@ export function SettingsForm() {
       }
       setStatus(body);
       setClientId(body.dhanClientId.value ?? "");
+      setHasStartedEditingClientId(false);
       setToken("");
       if (body.warning) {
         toast.warning(body.warning);
@@ -153,7 +158,10 @@ export function SettingsForm() {
           </p>
         )}
         <div className="flex gap-2">
-          <Button onClick={() => handleSave(confirmingPartialEdit)} disabled={saving || !clientId.trim()}>
+          <Button
+            onClick={() => handleSave(confirmingPartialEdit)}
+            disabled={saving || (!hasStartedEditingClientId && !token.trim())}
+          >
             {saving ? "Saving..." : confirmingPartialEdit ? "Save anyway" : "Save"}
           </Button>
         </div>

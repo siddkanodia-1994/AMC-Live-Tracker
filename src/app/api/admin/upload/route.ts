@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { withErrorHandling } from "@/lib/api/with-error-handling";
+import { withAdminAuth } from "@/lib/api/with-admin-auth";
 import { importWorkbook } from "@/lib/excel/import-workbook";
 import { invalidateLiveAumCache } from "@/lib/aum/cache";
 
 export const maxDuration = 60;
 
-export const POST = withErrorHandling(async (request: Request) => {
+export const POST = withAdminAuth(async (request: Request) => {
   const formData = await request.formData();
   const file = formData.get("file");
 

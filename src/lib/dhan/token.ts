@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { appSettings } from "../db/schema";
+import { decryptSetting, encryptSetting } from "../utils/encryption";
+import { maskExceptLast4 } from "../utils/mask";
 
 const DHAN_TOKEN_KEY = "dhan_access_token";
 const DHAN_CLIENT_ID_KEY = "dhan_client_id";
@@ -22,16 +24,17 @@ export class DhanClientIdMissingError extends Error {
 export async function getActiveDhanToken(): Promise<string> {
   const [row] = await db.select().from(appSettings).where(eq(appSettings.key, DHAN_TOKEN_KEY));
   if (!row) throw new DhanTokenMissingError();
-  return row.value;
+  return decryptSetting(row.value);
 }
 
 export async function setDhanToken(token: string): Promise<void> {
+  const value = encryptSetting(token);
   await db
     .insert(appSettings)
-    .values({ key: DHAN_TOKEN_KEY, value: token })
+    .values({ key: DHAN_TOKEN_KEY, value })
     .onConflictDoUpdate({
       target: appSettings.key,
-      set: { value: token, updatedAt: new Date() },
+      set: { value, updatedAt: new Date() },
     });
 }
 
@@ -52,24 +55,27 @@ export async function getDhanTokenStatus(): Promise<{ configured: boolean; updat
 // row takes precedence permanently.
 export async function getActiveDhanClientId(): Promise<string> {
   const [row] = await db.select().from(appSettings).where(eq(appSettings.key, DHAN_CLIENT_ID_KEY));
-  if (row) return row.value;
+  if (row) return decryptSetting(row.value);
   const envFallback = process.env.DHAN_CLIENT_ID;
   if (envFallback) return envFallback;
   throw new DhanClientIdMissingError();
 }
 
 export async function setDhanClientId(clientId: string): Promise<void> {
+  const value = encryptSetting(clientId);
   await db
     .insert(appSettings)
-    .values({ key: DHAN_CLIENT_ID_KEY, value: clientId })
+    .values({ key: DHAN_CLIENT_ID_KEY, value })
     .onConflictDoUpdate({
       target: appSettings.key,
-      set: { value: clientId, updatedAt: new Date() },
+      set: { value, updatedAt: new Date() },
     });
 }
 
 export interface DhanClientIdStatus {
   configured: boolean;
+  // Always masked (last 4 characters only) -- never the full value, whether
+  // it came from the DB or the env fallback.
   value: string | null;
   updatedAt: string | null;
   source: "db" | "env" | "none";
@@ -78,11 +84,16 @@ export interface DhanClientIdStatus {
 export async function getDhanClientIdStatus(): Promise<DhanClientIdStatus> {
   const [row] = await db.select().from(appSettings).where(eq(appSettings.key, DHAN_CLIENT_ID_KEY));
   if (row) {
-    return { configured: true, value: row.value, updatedAt: row.updatedAt.toISOString(), source: "db" };
+    return {
+      configured: true,
+      value: maskExceptLast4(decryptSetting(row.value)),
+      updatedAt: row.updatedAt.toISOString(),
+      source: "db",
+    };
   }
   const envFallback = process.env.DHAN_CLIENT_ID;
   if (envFallback) {
-    return { configured: true, value: envFallback, updatedAt: null, source: "env" };
+    return { configured: true, value: maskExceptLast4(envFallback), updatedAt: null, source: "env" };
   }
   return { configured: false, value: null, updatedAt: null, source: "none" };
 }
