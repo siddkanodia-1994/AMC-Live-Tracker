@@ -320,67 +320,77 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-stretch gap-2.5">
-        <FieldBox label="Compare">
-          <div className="flex items-center gap-1.5">
-            <select value={effectiveA} onChange={(e) => handlePeriodAChange(e.target.value)} className={selectClass}>
-              {periodAOptions.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <span className="text-xs text-muted-foreground">to</span>
-            <select value={effectiveB} onChange={(e) => handlePeriodBChange(e.target.value)} className={selectClass}>
-              {periodBOptions.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </div>
-        </FieldBox>
+      <div className="rounded-xl border bg-card p-3 shadow-sm">
+        <div className="flex flex-wrap items-stretch gap-2.5">
+          <FieldBox label="Compare">
+            <div className="flex items-center gap-1.5">
+              <select value={effectiveA} onChange={(e) => handlePeriodAChange(e.target.value)} className={selectClass}>
+                {periodAOptions.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-muted-foreground">to</span>
+              <select value={effectiveB} onChange={(e) => handlePeriodBChange(e.target.value)} className={selectClass}>
+                {periodBOptions.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </FieldBox>
 
-        <FieldBox label="Computed AUM using">
-          <div className="flex items-center gap-1">
-            <button type="button" onClick={() => handleBasisChange("A")} className={basisToggleClass(effectiveBasis === "A")}>
-              {effectiveA}&apos;s holdings
-            </button>
-            <button type="button" onClick={() => handleBasisChange("B")} className={basisToggleClass(effectiveBasis === "B")}>
-              {effectiveB}&apos;s holdings
-            </button>
-          </div>
-        </FieldBox>
+          <FieldBox label="Computed AUM using">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => handleBasisChange("A")}
+                className={basisToggleClass(effectiveBasis === "A")}
+              >
+                {effectiveA}&apos;s holdings
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBasisChange("B")}
+                className={basisToggleClass(effectiveBasis === "B")}
+              >
+                {effectiveB}&apos;s holdings
+              </button>
+            </div>
+          </FieldBox>
 
-        <FieldBox label="Repriced as of">
-          {activeDates.length === 0 ? (
-            <span className="text-xs text-muted-foreground">
-              No backfilled data for {basisPeriodLabel} yet — run the historical backfill for it.
-            </span>
-          ) : (
-            <input
-              type="date"
-              value={effectiveAsOfDate ?? ""}
-              min={activeDates[0]}
-              max={activeDates[activeDates.length - 1]}
-              onChange={(e) => handleAsOfDateInputChange(e.target.value)}
-              className={selectClass}
-              title={`Pick any date -- snaps to the closest date with real backfilled data (${formatShortDate(activeDates[0])} to ${formatShortDate(activeDates[activeDates.length - 1])}).`}
-            />
+          <FieldBox label="Repriced as of">
+            {activeDates.length === 0 ? (
+              <span className="text-xs text-muted-foreground">
+                No backfilled data for {basisPeriodLabel} yet — run the historical backfill for it.
+              </span>
+            ) : (
+              <input
+                type="date"
+                value={effectiveAsOfDate ?? ""}
+                min={activeDates[0]}
+                max={activeDates[activeDates.length - 1]}
+                onChange={(e) => handleAsOfDateInputChange(e.target.value)}
+                className={selectClass}
+                title={`Pick any date -- snaps to the closest date with real backfilled data (${formatShortDate(activeDates[0])} to ${formatShortDate(activeDates[activeDates.length - 1])}).`}
+              />
+            )}
+          </FieldBox>
+
+          {hasCustomRepricing && (
+            <div className="flex items-center self-center">
+              <button
+                type="button"
+                onClick={handleReset}
+                className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                Reset
+              </button>
+            </div>
           )}
-        </FieldBox>
-
-        {hasCustomRepricing && (
-          <div className="flex items-center self-center">
-            <button
-              type="button"
-              onClick={handleReset}
-              className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-            >
-              Reset
-            </button>
-          </div>
-        )}
+        </div>
       </div>
 
       <p className="text-xs text-muted-foreground">

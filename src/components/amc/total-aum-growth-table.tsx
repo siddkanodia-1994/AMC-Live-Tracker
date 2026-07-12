@@ -288,46 +288,48 @@ export function TotalAumGrowthTable({ topN }: { topN: TopNOption }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-stretch gap-2.5">
-        <FieldBox label="Live AUM as of">
-          <input
-            type="date"
-            value={effectiveAsOfDate ?? ""}
-            min={data.minDate}
-            max={data.maxDate}
-            onChange={(e) => e.target.value && setSelectedAsOfDate(e.target.value)}
-            className={dateInputClass}
-            title={`Pick any date -- snaps to the closest date with real tracked history (${formatShortDate(data.minDate)} to ${formatShortDate(data.maxDate)}).`}
-          />
-        </FieldBox>
-        <FieldBox label="AUM breakdown month">
-          <select
-            value={effectiveComponentPeriod ?? ""}
-            onChange={(e) => e.target.value && setSelectedComponentPeriod(e.target.value)}
-            className={dateInputClass}
-            title="Which month's Reported/Income-Debt/Other Funds AUM to show in the columns below. Independent of the other selectors."
-          >
-            {availableReportPeriods.map((p) => (
-              <option key={p} value={p}>
-                {formatReportPeriodLabel(p)}
-              </option>
-            ))}
-          </select>
-        </FieldBox>
-        <FieldBox label="Total Reported AUM month">
-          <select
-            value={effectiveTotalReportedPeriod ?? ""}
-            onChange={(e) => e.target.value && setSelectedTotalReportedPeriod(e.target.value)}
-            className={dateInputClass}
-            title="Which month's actual total (Reported + Income-Debt + Other Funds AUM) to use for Total (Reported) and Growth %. Independent of the AUM breakdown month above -- the two can differ."
-          >
-            {availableReportPeriods.map((p) => (
-              <option key={p} value={p}>
-                {formatReportPeriodLabel(p)}
-              </option>
-            ))}
-          </select>
-        </FieldBox>
+      <div className="rounded-xl border bg-card p-3 shadow-sm">
+        <div className="flex flex-wrap items-stretch gap-2.5">
+          <FieldBox label="Live AUM as of">
+            <input
+              type="date"
+              value={effectiveAsOfDate ?? ""}
+              min={data.minDate}
+              max={data.maxDate}
+              onChange={(e) => e.target.value && setSelectedAsOfDate(e.target.value)}
+              className={dateInputClass}
+              title={`Pick any date -- snaps to the closest date with real tracked history (${formatShortDate(data.minDate)} to ${formatShortDate(data.maxDate)}).`}
+            />
+          </FieldBox>
+          <FieldBox label="AUM breakdown month">
+            <select
+              value={effectiveComponentPeriod ?? ""}
+              onChange={(e) => e.target.value && setSelectedComponentPeriod(e.target.value)}
+              className={dateInputClass}
+              title="Which month's Reported/Income-Debt/Other Funds AUM to show in the columns below. Independent of the other selectors."
+            >
+              {availableReportPeriods.map((p) => (
+                <option key={p} value={p}>
+                  {formatReportPeriodLabel(p)}
+                </option>
+              ))}
+            </select>
+          </FieldBox>
+          <FieldBox label="Total Reported AUM month">
+            <select
+              value={effectiveTotalReportedPeriod ?? ""}
+              onChange={(e) => e.target.value && setSelectedTotalReportedPeriod(e.target.value)}
+              className={dateInputClass}
+              title="Which month's actual total (Reported + Income-Debt + Other Funds AUM) to use for Total (Reported) and Growth %. Independent of the AUM breakdown month above -- the two can differ."
+            >
+              {availableReportPeriods.map((p) => (
+                <option key={p} value={p}>
+                  {formatReportPeriodLabel(p)}
+                </option>
+              ))}
+            </select>
+          </FieldBox>
+        </div>
       </div>
 
       <p className="text-xs text-muted-foreground">
