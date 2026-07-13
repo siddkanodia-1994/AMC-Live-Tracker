@@ -255,6 +255,30 @@ export async function getPreviousDayIsinPrices(): Promise<Map<string, number>> {
   return map;
 }
 
+/**
+ * Each priced ISIN's own price already recorded today (IST), if any -- the
+ * fallback tier compute-live-aum.ts checks before falling back to
+ * getPreviousDayIsinPrices' (yesterday's) price, so an off-hours
+ * recomputation after today's close-capture cron reproduces today's actual
+ * close instead of regressing to yesterday's. Exact-date match on the
+ * unique (isin, snapshot_date) index -- at most one row per ISIN, no
+ * DISTINCT ON needed.
+ */
+export async function getTodayIsinPrices(): Promise<Map<string, number>> {
+  const today = getIstDateString();
+
+  const rows = await db
+    .select({ isin: isinDailyPrice.isin, priceInr: isinDailyPrice.priceInr })
+    .from(isinDailyPrice)
+    .where(eq(isinDailyPrice.snapshotDate, today));
+
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    map.set(r.isin, Number(r.priceInr));
+  }
+  return map;
+}
+
 export interface NetFlowEstimate {
   netFlowCr: number;
   netFlowPct: number | null;

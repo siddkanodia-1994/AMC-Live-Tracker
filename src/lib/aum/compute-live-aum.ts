@@ -23,6 +23,7 @@ import {
   getPreviousDayIsinPrices,
   getPreviousDayLiveAum,
   getRolling90DayAverages,
+  getTodayIsinPrices,
 } from "./history";
 import type {
   AmcLiveAum,
@@ -125,8 +126,16 @@ async function writeDailyIsinPrices(priceByIsin: Map<string, number>): Promise<v
   );
 }
 
-async function runComputation(): Promise<ComputedLiveAum> {
+async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   const tradingDay = isTradingDay();
+  // Whether to actually ask DHAN this run: during market hours on a trading
+  // day, or a deliberate forced call (the 4:05 PM close-capture cron, or a
+  // manual admin refresh) -- never organic traffic once the market's
+  // closed, regardless of how stale the cache has gotten. See
+  // msUntilNextMarketOpen's caller below for why the cache TTL alone can't
+  // guarantee this -- it's in-memory and doesn't survive a serverless cold
+  // start, so the actual fetch call site has to carry this gate itself.
+  const shouldFetchLive = tradingDay && (isMarketOpen() || forceRefresh);
   const reportPeriod = await getCurrentReportPeriod();
 
   const periodRows = await db
@@ -198,17 +207,35 @@ async function runComputation(): Promise<ComputedLiveAum> {
     requests.push(item);
   }
 
-  // Don't even ask DHAN on a non-trading day — the market's closed, nothing
-  // can have moved since the last close, and polling anyway is how this app
-  // previously ended up rate-limited (429s) over a weekend for no benefit.
-  const ltpResult = tradingDay
+  // Don't ask DHAN outside market hours (non-trading day, or a trading day
+  // after close / before open) unless this is a deliberate forced call --
+  // nothing can have moved since the last close, and polling anyway is how
+  // this app previously ended up rate-limited (429s) over a weekend for no
+  // benefit. See shouldFetchLive's comment above for the market-hours part.
+  const ltpResult = shouldFetchLive
     ? await fetchLtps(requests)
     : { pricesBySecurityId: new Map<string, number>(), failedSecurityIds: new Set<string>() };
-  const [foreignPrices, usdInrRate, previousIsinPrices] = await Promise.all([
+  const [foreignPrices, usdInrRate, previousIsinPrices, todayIsinPrices] = await Promise.all([
     getAllForeignPrices().catch(() => new Map<string, number>()),
     getCachedUsdInrRate().catch(() => null),
     getPreviousDayIsinPrices().catch(() => new Map<string, number>()),
+    getTodayIsinPrices().catch(() => new Map<string, number>()),
   ]);
+
+  // Whether today's session has genuinely produced any data yet -- true
+  // once we're either actively fetching live (market hours, or the 4:05 PM
+  // close-capture cron) or a capture already happened earlier today
+  // (todayIsinPrices non-empty, e.g. an evening visit after that cron
+  // already ran). Guards both the "as of" date label below and the
+  // persistence gate further down: a bare `tradingDay` check only asks "is
+  // today's calendar date a weekday/non-holiday," not "has today's session
+  // actually happened yet" -- before market open (e.g. 1 AM, after the
+  // calendar day has already rolled over but hours before the 9:15 AM
+  // open), that alone is true while every price on screen is still
+  // yesterday's close carried forward, which would otherwise both mislabel
+  // it "as of <today>" and persist a premature same-day snapshot built from
+  // nothing but yesterday's numbers.
+  const haveTodayData = shouldFetchLive || todayIsinPrices.size > 0;
 
   const holdingsByAmcId = new Map<number, HoldingLiveView[]>();
   const amcResults: AmcLiveAum[] = [];
@@ -281,11 +308,14 @@ async function runComputation(): Promise<ComputedLiveAum> {
           livePricedCount++;
         } else {
           // DHAN didn't give us a live price for this one -- whether because
-          // we didn't ask (non-trading day) or asked and failed (expired
-          // token, rate limit, network error). Prefer the last known good
-          // close over the stale reported value; only fall all the way back
-          // to reportedMarketValueCr if this ISIN has never been priced.
-          const lastKnownPrice = previousIsinPrices.get(h.isin);
+          // we didn't ask (market closed, non-forced) or asked and failed
+          // (expired token, rate limit, network error). Prefer today's own
+          // already-recorded price (e.g. from the 4:05 PM close-capture
+          // cron) over yesterday's close, so an off-hours recomputation
+          // reproduces today's actual close instead of regressing to
+          // yesterday's; only fall all the way back to reportedMarketValueCr
+          // if this ISIN has never been priced at all.
+          const lastKnownPrice = todayIsinPrices.get(h.isin) ?? previousIsinPrices.get(h.isin);
           if (lastKnownPrice !== undefined) {
             priceSource = "last_close";
             livePriceInr = lastKnownPrice;
@@ -405,10 +435,12 @@ async function runComputation(): Promise<ComputedLiveAum> {
   // (needs a sync) even when zero DHAN requests were ever attempted, which
   // is just as much a "not working" state as a failed API call.
   let dhanStatus: DhanStatus;
-  if (!tradingDay) {
-    // We deliberately didn't ask DHAN anything -- that's not a problem to
-    // report, unlike a genuine failure on a trading day (handled below,
-    // unchanged), which still needs to alert the admin to refresh the token.
+  if (!shouldFetchLive) {
+    // We deliberately didn't ask DHAN anything -- non-trading day, or a
+    // trading day outside market hours and not a forced call -- that's not
+    // a problem to report, unlike a genuine failure during an attempted
+    // fetch (handled below, unchanged), which still needs to alert the
+    // admin to refresh the token.
     dhanStatus = "ok";
   } else if (totalPriceable === 0) {
     dhanStatus = "ok";
@@ -438,18 +470,34 @@ async function runComputation(): Promise<ComputedLiveAum> {
     distinctDebtInstrumentCount,
     distinctLivePricedCount,
     distinctLastCloseCount: distinctLastCloseIsins.size,
-    priceAsOfDate: tradingDay ? getIstDateString() : lastTradingDayIstString(),
-    pricesAreLive: tradingDay,
+    priceAsOfDate: tradingDay && haveTodayData ? getIstDateString() : lastTradingDayIstString(),
+    // Deliberately isMarketOpen(), not shouldFetchLive/tradingDay: this
+    // drives the frontend's "live ticking price" framing (FreshnessBadge).
+    // The 4:05 PM close-capture cron is a genuine forced DHAN fetch, but by
+    // then the market's already closed and the price can't move again
+    // until next open -- tying this to the fetch outcome would show a
+    // ticking clock that then falsely goes "stale" a few minutes later and
+    // stays that way for hours. Tying it to the market's actual state means
+    // the badge reads "Prices as of <date> close" immediately, and the
+    // stale-quote / lost-live-pricing warnings (both gated on this field)
+    // stay correctly silent all evening.
+    pricesAreLive: isMarketOpen(),
   };
 
-  // Skip persisting on non-trading days (weekend/holiday) — the computation
-  // above still runs and is still returned/cached so visitors see a live-ish
-  // figure (naturally held over from the last trading day's prices), it just
-  // doesn't get written as a new dated row. Without this, both the cron
-  // (which fires daily regardless of weekday) and any live page/API visit
-  // (force-dynamic pages re-run this on every cache miss) would otherwise
-  // write a spurious snapshot for Saturdays/Sundays/holidays.
-  if (tradingDay) {
+  // Skip persisting on non-trading days (weekend/holiday), and skip it
+  // before today's session has produced any real data yet (see
+  // haveTodayData's comment above) — the computation above still runs and
+  // is still returned/cached so visitors see a live-ish figure (naturally
+  // held over from the last trading day's prices), it just doesn't get
+  // written as a new dated row until there's something genuine to write.
+  // Without the trading-day half, both the cron (which fires daily
+  // regardless of weekday) and any live page/API visit (force-dynamic pages
+  // re-run this on every cache miss) would otherwise write a spurious
+  // snapshot for Saturdays/Sundays/holidays; without the haveTodayData half,
+  // an early-morning visitor before market open would prematurely persist a
+  // "today" snapshot built from nothing but yesterday's carried-forward
+  // prices, hours before today's real close exists.
+  if (tradingDay && haveTodayData) {
     await Promise.all([writeDailySnapshot(snapshot), writeDailyIsinPrices(todayPriceByIsin)]);
   }
 
@@ -534,7 +582,7 @@ async function getOrCompute(forceRefresh: boolean | undefined): Promise<Computed
 
   if (inFlightComputation) return inFlightComputation;
 
-  inFlightComputation = runComputation()
+  inFlightComputation = runComputation(Boolean(forceRefresh))
     .then((fresh) => {
       // Outside market hours (evening/night on a trading day, or any
       // non-trading day) the price can't have moved, so the result is
