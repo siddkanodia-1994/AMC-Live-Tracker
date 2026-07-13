@@ -26,6 +26,18 @@ export function lastDayOfReportMonth(reportPeriod: string): string {
   return `${reportPeriod}-${String(days).padStart(2, "0")}`;
 }
 
+// Last calendar day of the month before whichever month `todayStr` falls
+// in (e.g. "2026-07-13" -> "2026-06-30") -- the default anchor date for the
+// Overview table's "Hist. Live AUM" toggle. Derived from today rather than
+// a fixed date, so it advances on its own each month instead of going stale.
+export function lastDayOfPreviousCalendarMonth(todayStr: string): string {
+  const [year, month] = todayStr.split("-").map(Number);
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  const days = prevMonth === 2 && isLeapYear(prevYear) ? 29 : DAYS_IN_MONTH[prevMonth - 1];
+  return `${prevYear}-${String(prevMonth).padStart(2, "0")}-${String(days).padStart(2, "0")}`;
+}
+
 interface QuarterBounds {
   start: string;
   end: string;

@@ -13,9 +13,18 @@ export async function GET(request: Request) {
   const currentAvgFrom = currentAvgFromRaw && /^\d{4}-\d{2}-\d{2}$/.test(currentAvgFromRaw) ? currentAvgFromRaw : undefined;
   const currentAvgToRaw = url.searchParams.get("currentAvgTo");
   const currentAvgTo = currentAvgToRaw && /^\d{4}-\d{2}-\d{2}$/.test(currentAvgToRaw) ? currentAvgToRaw : undefined;
+  const histLiveDateRaw = url.searchParams.get("histLiveDate");
+  const histLiveDate = histLiveDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(histLiveDateRaw) ? histLiveDateRaw : undefined;
 
   try {
-    const result = await getOverviewAdjustments({ reportPeriod, avgFrom, avgTo, currentAvgFrom, currentAvgTo });
+    const result = await getOverviewAdjustments({
+      reportPeriod,
+      avgFrom,
+      avgTo,
+      currentAvgFrom,
+      currentAvgTo,
+      histLiveDate,
+    });
     return NextResponse.json(result);
   } catch (err) {
     console.error(err);

@@ -71,12 +71,20 @@ export function AmcGrid({
   // current fiscal quarter to date, same null-means-default convention.
   const [currentAvgFrom, setCurrentAvgFrom] = useState<string | null>(null);
   const [currentAvgTo, setCurrentAvgTo] = useState<string | null>(null);
+  // "Reported AUM" column's basis: the officially reported figure for a
+  // selected month, or each AMC's historical live (repriced) AUM as of an
+  // arbitrary past date. Defaults to hist-live per product decision -- the
+  // two modes keep independent state, so switching back and forth doesn't
+  // lose either one's last selection.
+  const [reportedAumMode, setReportedAumMode] = useState<"reported" | "hist-live">("hist-live");
+  const [histLiveDate, setHistLiveDate] = useState<string | null>(null);
   const adjustments = useOverviewAdjustments(
     selectedReportPeriod ?? undefined,
     avgFrom ?? undefined,
     avgTo ?? undefined,
     currentAvgFrom ?? undefined,
-    currentAvgTo ?? undefined
+    currentAvgTo ?? undefined,
+    histLiveDate ?? undefined
   );
   // Every fiscal quarter with real data, oldest first -- powers the "Avg
   // AUM quarter"/"Avg Live AUM quarter" dropdowns. Derived entirely from the
@@ -121,7 +129,10 @@ export function AmcGrid({
     const adj = adjustments.data;
     if (!adj) return data.amcs;
     return data.amcs.map((amc) => {
-      const reportedAumCr = adj.reportedAumByAmcId[amc.amcId] ?? amc.reportedAumCr;
+      const reportedAumCr =
+        reportedAumMode === "hist-live"
+          ? (adj.histLiveAumByAmcId[amc.amcId] ?? amc.liveAumCr)
+          : (adj.reportedAumByAmcId[amc.amcId] ?? amc.reportedAumCr);
       const avgOverride = adj.avgAumByAmcId[amc.amcId];
       const avgLiveAumCr = avgOverride ? avgOverride.avgLiveAumCr : null;
       const avgWindowDays = avgOverride ? avgOverride.daysCount : 0;
@@ -146,7 +157,7 @@ export function AmcGrid({
         avgAumQoQChangePct,
       };
     });
-  }, [data, adjustments.data]);
+  }, [data, adjustments.data, reportedAumMode]);
 
   const filteredAmcs = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -242,8 +253,24 @@ export function AmcGrid({
     ? `${formatShortDate(adjustments.data.currentAvgFrom)} – ${formatShortDate(adjustments.data.currentAvgTo)}`
     : "current quarter";
   const reportPeriodOptions = adjustments.data?.availableReportPeriods ?? [data.reportPeriod];
+  // The "Reported AUM"/"Live vs Reported" columns' labels swap with the
+  // AUM Basis toggle -- everything downstream (adjustedAmcs' reportedAumCr/
+  // deltaPct) already resolves to the right values, this just relabels the
+  // header to match.
+  const reportedColumnLabel = reportedAumMode === "hist-live" ? "Hist. Live AUM" : "Reported AUM";
+  const reportedColumnSublabel =
+    reportedAumMode === "hist-live"
+      ? formatShortDate(adjustments.data?.histLiveDate ?? histLiveDate ?? "")
+      : reportedAumPeriodLabel;
+  const liveVsColumnLabel = reportedAumMode === "hist-live" ? "Live vs Historical" : "Live vs Reported";
   const adjustmentsTouched =
-    selectedReportPeriod !== null || avgFrom !== null || avgTo !== null || currentAvgFrom !== null || currentAvgTo !== null;
+    selectedReportPeriod !== null ||
+    avgFrom !== null ||
+    avgTo !== null ||
+    currentAvgFrom !== null ||
+    currentAvgTo !== null ||
+    reportedAumMode !== "hist-live" ||
+    histLiveDate !== null;
 
   const oneDayChangeIsFlat = Math.abs(industryTotals.oneDayChangeCr) < 0.01;
   const oneDayChangeColorClass =
@@ -456,18 +483,56 @@ export function AmcGrid({
                 )}
               </div>
 
-              <FieldBox label="Reported AUM month">
-                <select
-                  value={adjustments.data?.reportPeriod ?? data.reportPeriod}
-                  onChange={(e) => setSelectedReportPeriod(e.target.value)}
-                  className={dateInputClass}
-                >
-                  {reportPeriodOptions.map((p) => (
-                    <option key={p} value={p}>
-                      {formatReportPeriodLabel(p)}
-                    </option>
-                  ))}
-                </select>
+              <FieldBox label="AUM Basis">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setReportedAumMode("reported")}
+                    className={`rounded-md px-2 py-1 text-sm ${
+                      reportedAumMode === "reported"
+                        ? "bg-[var(--toolbar-accent)] text-white"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Reported AUM
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReportedAumMode("hist-live")}
+                    className={`rounded-md px-2 py-1 text-sm ${
+                      reportedAumMode === "hist-live"
+                        ? "bg-[var(--toolbar-accent)] text-white"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Hist. Live AUM
+                  </button>
+                </div>
+              </FieldBox>
+
+              <FieldBox label={reportedAumMode === "hist-live" ? "Hist. Live AUM date" : "Reported AUM month"}>
+                {reportedAumMode === "hist-live" ? (
+                  <input
+                    type="date"
+                    value={histLiveDate ?? adjustments.data?.histLiveDate ?? ""}
+                    min={adjustments.data?.minSnapshotDate ?? undefined}
+                    max={adjustments.data?.maxSnapshotDate ?? undefined}
+                    onChange={(e) => setHistLiveDate(e.target.value || null)}
+                    className={dateInputClass}
+                  />
+                ) : (
+                  <select
+                    value={adjustments.data?.reportPeriod ?? data.reportPeriod}
+                    onChange={(e) => setSelectedReportPeriod(e.target.value)}
+                    className={dateInputClass}
+                  >
+                    {reportPeriodOptions.map((p) => (
+                      <option key={p} value={p}>
+                        {formatReportPeriodLabel(p)}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </FieldBox>
 
               <FieldBox label="Avg AUM quarter">
@@ -567,6 +632,8 @@ export function AmcGrid({
                       setAvgTo(null);
                       setCurrentAvgFrom(null);
                       setCurrentAvgTo(null);
+                      setReportedAumMode("hist-live");
+                      setHistLiveDate(null);
                     }}
                     className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
                   >
@@ -599,7 +666,9 @@ export function AmcGrid({
             isSearchActive={query.trim() !== ""}
             topN={topN}
             reportPeriod={data.reportPeriod}
-            reportedAumPeriodLabel={reportedAumPeriodLabel}
+            reportedColumnLabel={reportedColumnLabel}
+            reportedColumnSublabel={reportedColumnSublabel}
+            liveVsColumnLabel={liveVsColumnLabel}
             avgWindowLabel={avgWindowLabel}
             currentAvgWindowLabel={currentAvgWindowLabel}
             asOfDate={data.asOfDate ?? null}

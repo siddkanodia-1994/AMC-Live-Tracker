@@ -19,7 +19,8 @@ export function useOverviewAdjustments(
   avgFrom?: string,
   avgTo?: string,
   currentAvgFrom?: string,
-  currentAvgTo?: string
+  currentAvgTo?: string,
+  histLiveDate?: string
 ) {
   const params = new URLSearchParams();
   if (reportPeriod) params.set("reportPeriod", reportPeriod);
@@ -27,6 +28,7 @@ export function useOverviewAdjustments(
   if (avgTo) params.set("avgTo", avgTo);
   if (currentAvgFrom) params.set("currentAvgFrom", currentAvgFrom);
   if (currentAvgTo) params.set("currentAvgTo", currentAvgTo);
+  if (histLiveDate) params.set("histLiveDate", histLiveDate);
   const qs = params.toString();
   return useSWR<OverviewAdjustments>(`/api/overview-adjustments${qs ? `?${qs}` : ""}`, fetcher, {
     revalidateOnFocus: false,

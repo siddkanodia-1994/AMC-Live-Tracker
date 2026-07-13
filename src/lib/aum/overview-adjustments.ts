@@ -3,8 +3,8 @@ import { db } from "../db/client";
 import { appSettings } from "../db/schema";
 import { getIstDateString } from "../utils/date";
 import { getAvailableReportPeriods } from "./aum-growth";
-import { getAverageAumForRange, getCanonicalSnapshotDateBounds, getReportedAumForPeriod } from "./history";
-import { getFiscalQuarterBounds, getPreviousFiscalQuarterBounds } from "./report-period";
+import { getAllAmcsLiveAumAsOf, getAverageAumForRange, getCanonicalSnapshotDateBounds, getReportedAumForPeriod } from "./history";
+import { getFiscalQuarterBounds, getPreviousFiscalQuarterBounds, lastDayOfPreviousCalendarMonth } from "./report-period";
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
 
@@ -25,6 +25,12 @@ export interface OverviewAdjustments {
   currentAvgAumByAmcId: Record<number, { avgLiveAumCr: number; daysCount: number }>;
   minSnapshotDate: string | null;
   maxSnapshotDate: string | null;
+  // The Overview table's "Hist. Live AUM" toggle mode -- each AMC's live
+  // (repriced) AUM as of an arbitrary past date, an alternative to
+  // reportedAumByAmcId above. Defaults to the last day of the most
+  // recently completed calendar month when not explicitly requested.
+  histLiveDate: string;
+  histLiveAumByAmcId: Record<number, number>;
 }
 
 /**
@@ -44,6 +50,7 @@ export async function getOverviewAdjustments(options?: {
   avgTo?: string;
   currentAvgFrom?: string;
   currentAvgTo?: string;
+  histLiveDate?: string;
 }): Promise<OverviewAdjustments> {
   const [currentReportPeriod, availableReportPeriods, bounds] = await Promise.all([
     getCurrentReportPeriod(),
@@ -73,10 +80,15 @@ export async function getOverviewAdjustments(options?: {
   let currentAvgTo = options?.currentAvgTo ? clamp(options.currentAvgTo) : clamp(today);
   if (currentAvgFrom > currentAvgTo) [currentAvgFrom, currentAvgTo] = [currentAvgTo, currentAvgFrom];
 
-  const [reportedAumMap, avgAumMap, currentAvgAumMap] = await Promise.all([
+  const histLiveDate = options?.histLiveDate
+    ? clamp(options.histLiveDate)
+    : clamp(lastDayOfPreviousCalendarMonth(today));
+
+  const [reportedAumMap, avgAumMap, currentAvgAumMap, histLiveAumMap] = await Promise.all([
     getReportedAumForPeriod(reportPeriod),
     getAverageAumForRange(avgFrom, avgTo),
     getAverageAumForRange(currentAvgFrom, currentAvgTo),
+    getAllAmcsLiveAumAsOf(histLiveDate),
   ]);
 
   return {
@@ -91,5 +103,7 @@ export async function getOverviewAdjustments(options?: {
     currentAvgAumByAmcId: Object.fromEntries(currentAvgAumMap),
     minSnapshotDate: minDate,
     maxSnapshotDate: maxDate,
+    histLiveDate,
+    histLiveAumByAmcId: Object.fromEntries([...histLiveAumMap].map(([amcId, v]) => [amcId, v.liveAumCr])),
   };
 }

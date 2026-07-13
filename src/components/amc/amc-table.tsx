@@ -204,7 +204,9 @@ export function AmcTable({
   isSearchActive,
   topN,
   reportPeriod,
-  reportedAumPeriodLabel,
+  reportedColumnLabel,
+  reportedColumnSublabel,
+  liveVsColumnLabel,
   avgWindowLabel,
   currentAvgWindowLabel,
   asOfDate,
@@ -220,10 +222,15 @@ export function AmcTable({
   // period, unaffected by the Reported AUM month picker (Net Flow is a
   // separate metric that isn't part of that adjustment).
   reportPeriod: string;
-  // The (possibly past) period the Reported AUM month picker resolved to --
-  // decoupled from `reportPeriod` above so switching it can't also relabel
-  // Est. Net Flow, whose values never change with this picker.
-  reportedAumPeriodLabel: string;
+  // "Reported AUM"/"Hist. Live AUM" column's label + sublabel, and the
+  // adjacent "Live vs Reported"/"Live vs Historical" column's label --
+  // all three swap together with the Overview toolbar's AUM Basis toggle.
+  // The underlying amc.reportedAumCr/deltaPct values are already resolved
+  // to the right source upstream (amc-grid.tsx) -- these three props are
+  // display-only.
+  reportedColumnLabel: string;
+  reportedColumnSublabel: string;
+  liveVsColumnLabel: string;
   // "Avg AUM" column's window -- defaults to the previous fiscal quarter.
   avgWindowLabel: string;
   // "Avg Live AUM" column's window -- defaults to the current fiscal
@@ -295,8 +302,8 @@ export function AmcTable({
       AMC: amc.overviewName,
       [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
       "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
-      [`Reported AUM ${reportedAumPeriodLabel} (Cr)`]: amc.reportedAumCr,
-      "Live vs Reported (%)": amc.deltaPct * 100,
+      [`${reportedColumnLabel} ${reportedColumnSublabel} (Cr)`]: amc.reportedAumCr,
+      [`${liveVsColumnLabel} (%)`]: amc.deltaPct * 100,
       [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: historical ? null : (amc.currentQuarterAvgLiveAumCr ?? null),
       [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
       "Avg AUM QoQ Change (%)": !historical && amc.avgAumQoQChangePct != null ? amc.avgAumQoQChangePct * 100 : null,
@@ -358,8 +365,8 @@ export function AmcTable({
                 {...headProps}
               />
               <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
-              <SortableHead label="Reported AUM" sublabel={reportedAumPeriodLabel} sk="reportedAumCr" {...headProps} />
-              <SortableHead label="Live vs Reported" sk="deltaPct" {...headProps} />
+              <SortableHead label={reportedColumnLabel} sublabel={reportedColumnSublabel} sk="reportedAumCr" {...headProps} />
+              <SortableHead label={liveVsColumnLabel} sk="deltaPct" {...headProps} />
               <SortableHead
                 label="Avg Live AUM"
                 sublabel={currentAvgWindowLabel}
