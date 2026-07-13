@@ -11,6 +11,7 @@ import { AumGrowthTable } from "./aum-growth-table";
 import { AumTrendChart } from "./aum-trend-chart";
 import { TotalAumGrowthTable } from "./total-aum-growth-table";
 import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-table";
+import { StockTab } from "@/components/stock/stock-tab";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -354,26 +355,31 @@ export function AmcGrid({
               <TabsTrigger value="cash-holdings" className="after:bg-[var(--toolbar-accent)]">
                 Cash Holdings
               </TabsTrigger>
+              <TabsTrigger value="stock" className="after:bg-[var(--toolbar-accent)]">
+                Stock
+              </TabsTrigger>
             </TabsList>
             <div className="flex items-center gap-3 text-sm">
               {activeTab === "overview" && <SearchBar value={query} onChange={setQuery} />}
-              <div className="flex items-center gap-1">
-                <span className="text-muted-foreground">Show:</span>
-                {TOP_N_OPTIONS.map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => setTopN(option)}
-                    className={`rounded-md px-2 py-1 ${
-                      topN === option
-                        ? "bg-[var(--toolbar-accent)] text-white"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {option === "all" ? "All" : `Top ${option}`}
-                  </button>
-                ))}
-              </div>
+              {activeTab !== "stock" && (
+                <div className="flex items-center gap-1">
+                  <span className="text-muted-foreground">Show:</span>
+                  {TOP_N_OPTIONS.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setTopN(option)}
+                      className={`rounded-md px-2 py-1 ${
+                        topN === option
+                          ? "bg-[var(--toolbar-accent)] text-white"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {option === "all" ? "All" : `Top ${option}`}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -537,6 +543,9 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="cash-holdings">
           <CashHoldingsTable topN={topN} />
+        </TabsContent>
+        <TabsContent value="stock">
+          <StockTab />
         </TabsContent>
       </Tabs>
     </div>
