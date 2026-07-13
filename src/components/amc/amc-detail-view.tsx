@@ -63,11 +63,28 @@ export function AmcDetailView({
         <AumDeltaBadge deltaCr={amc.deltaCr} deltaPct={amc.deltaPct} />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
         <Stat
           label="Live AUM"
           value={formatCr(amc.liveAumCr)}
           badge={<AumDeltaBadge deltaCr={amc.deltaCr} deltaPct={amc.deltaPct} />}
+        />
+        <Stat
+          label="Daily % Change"
+          value={amc.previousDayLiveAumCr !== null ? formatDeltaCr(amc.liveAumCr - amc.previousDayLiveAumCr) : "—"}
+          badge={
+            amc.oneDayChangePct !== null ? (
+              <AumDeltaBadge
+                deltaCr={amc.liveAumCr - (amc.previousDayLiveAumCr ?? amc.liveAumCr)}
+                deltaPct={amc.oneDayChangePct}
+              />
+            ) : undefined
+          }
+          subtext={
+            amc.previousDayLiveAumCr !== null
+              ? `vs yesterday's close (${formatCr(amc.previousDayLiveAumCr)})`
+              : "No prior-day data yet"
+          }
         />
         <Stat label="Reported AUM" value={formatCr(amc.reportedAumCr)} />
         <Stat

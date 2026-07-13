@@ -57,6 +57,29 @@ export function HoldingsTable({ holdings }: { holdings: HoldingLiveView[] }) {
     [holdings]
   );
 
+  const totals = useMemo(() => {
+    const totalReportedValueCr = augmented.reduce((sum, h) => sum + h.reportedMarketValueCr, 0);
+    const totalLiveValueCr = augmented.reduce((sum, h) => sum + h.liveMarketValueCr, 0);
+    const liveVsReportedPct = totalReportedValueCr !== 0 ? totalLiveValueCr / totalReportedValueCr - 1 : null;
+
+    // Same "filter to holdings with known prior-day data, then sum both
+    // sides of the ratio" pattern amc-table.tsx already uses for the
+    // AMC-level total's own 1D Change -- a holding with no prior close
+    // doesn't skew the total. Previous-day value per holding is
+    // back-derived from today's live value and its own price % change,
+    // since shares are constant day-to-day.
+    const withPrevDay = augmented.filter((h) => h.oneDayChangePct !== null && h.oneDayChangePct !== -1);
+    const totalLiveValueCrWithPrevDay = withPrevDay.reduce((sum, h) => sum + h.liveMarketValueCr, 0);
+    const totalPreviousDayLiveValueCr = withPrevDay.reduce(
+      (sum, h) => sum + h.liveMarketValueCr / (1 + (h.oneDayChangePct as number)),
+      0
+    );
+    const oneDayChangePct =
+      totalPreviousDayLiveValueCr !== 0 ? totalLiveValueCrWithPrevDay / totalPreviousDayLiveValueCr - 1 : null;
+
+    return { totalReportedValueCr, totalLiveValueCr, liveVsReportedPct, oneDayChangePct };
+  }, [augmented]);
+
   const sorted = useMemo(() => {
     const key = sortKey ?? DEFAULT_SORT_KEY;
     const desc = sortKey === null ? true : sortDesc;
@@ -105,6 +128,19 @@ export function HoldingsTable({ holdings }: { holdings: HoldingLiveView[] }) {
           </TableRow>
         </TableHeader>
         <TableBody>
+          <TableRow className="border-b bg-muted/50 font-bold">
+            <TableCell className="font-bold">Total ({sorted.length} holdings)</TableCell>
+            <TableCell />
+            <TableCell />
+            <TableCell />
+            <TableCell className="text-right tabular-nums">{formatCr(totals.totalReportedValueCr)}</TableCell>
+            <TableCell />
+            <TableCell className="text-right tabular-nums">{formatCr(totals.totalLiveValueCr)}</TableCell>
+            <PctCell value={totals.liveVsReportedPct} />
+            <PctCell value={totals.oneDayChangePct} />
+            <TableCell />
+            <TableCell />
+          </TableRow>
           {sorted.map((h) => (
             <TableRow key={h.id}>
               <TableCell className="font-medium">{h.companyName}</TableCell>
@@ -151,7 +187,7 @@ function SortableHead({
       <button
         type="button"
         onClick={() => onToggle(sk)}
-        className={`hover:text-foreground ${active ? "text-foreground font-medium" : ""}`}
+        className="hover:text-foreground"
       >
         {label}
         {active ? (sortDesc ? " ↓" : " ↑") : ""}
