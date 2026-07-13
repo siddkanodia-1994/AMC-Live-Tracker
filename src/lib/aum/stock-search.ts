@@ -84,6 +84,11 @@ export interface StockHoldingResult {
   // reportPeriod, same as StockAmcRow.byPeriod. An AMC absent for a given
   // period (didn't hold the stock that month) contributes 0.
   industryTotalSharesByPeriod: Record<string, number>;
+  // Sum of changeSharesLatest/changeMarketValueCrLatest across every
+  // returned AMC -- an AMC with no latest-period change (null, e.g. it
+  // exited before the latest period) contributes 0.
+  industryTotalChangeSharesLatest: number;
+  industryTotalChangeMarketValueCrLatest: number;
 }
 
 /**
@@ -186,6 +191,9 @@ export async function getStockHoldingsAcrossAmcs(isin: string): Promise<StockHol
     industryTotalSharesByPeriod[period] = amcRows.reduce((sum, a) => sum + (a.byPeriod[period]?.shares ?? 0), 0);
   }
 
+  const industryTotalChangeSharesLatest = amcRows.reduce((sum, a) => sum + (a.changeSharesLatest ?? 0), 0);
+  const industryTotalChangeMarketValueCrLatest = amcRows.reduce((sum, a) => sum + (a.changeMarketValueCrLatest ?? 0), 0);
+
   return {
     isin,
     companyName: latestNameRow.companyName,
@@ -193,5 +201,7 @@ export async function getStockHoldingsAcrossAmcs(isin: string): Promise<StockHol
     amcs: amcRows,
     industryTotalLatestValueCr,
     industryTotalSharesByPeriod,
+    industryTotalChangeSharesLatest,
+    industryTotalChangeMarketValueCrLatest,
   };
 }

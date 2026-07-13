@@ -1,3 +1,5 @@
+import { addDaysToDateString } from "../utils/date";
+
 // "Since last report" window start: the 1st of the month after the current
 // report period (e.g. reportPeriod "2026-05" -> "2026-06-01"). Used both by
 // the backfill job and the average-AUM-since-report query so the window
@@ -61,6 +63,41 @@ export function getPreviousFiscalQuarterBounds(dateStr: string): QuarterBounds {
   const prevStartMonth = month === 1 ? 10 : month - 3;
   const prevYear = month === 1 ? year - 1 : year;
   return getFiscalQuarterBounds(`${prevYear}-${String(prevStartMonth).padStart(2, "0")}-01`);
+}
+
+// Indian FY is named by the calendar year it ENDS in -- Jan-Mar of year Y is
+// Q4 of "FYY" (that fiscal year started the previous April); Apr-Jun of year
+// Y is Q1 of "FY(Y+1)" (a new fiscal year just started). Confirmed against
+// real examples: Jan-Mar 2026 = Q4FY26, Apr-Jun 2026 = Q1FY27.
+function fyQuarterNumber(quarterStartMonth: number, year: number): { fy: number; q: number } {
+  if (quarterStartMonth === 1) return { fy: year, q: 4 };
+  if (quarterStartMonth === 4) return { fy: year + 1, q: 1 };
+  if (quarterStartMonth === 7) return { fy: year + 1, q: 2 };
+  return { fy: year + 1, q: 3 }; // quarterStartMonth === 10
+}
+
+export interface FiscalQuarterOption {
+  key: string; // "FY26-Q4"
+  label: string; // "Q4FY26"
+  start: string;
+  end: string;
+}
+
+// Every Indian fiscal quarter overlapping [minDate, maxDate], oldest first --
+// for the Overview toolbar's quarter-picker dropdowns. Purely derived from
+// whatever data bounds are passed in (no hardcoded quarter list), so it
+// grows on its own as new quarters accumulate real data.
+export function listFiscalQuarters(minDate: string, maxDate: string): FiscalQuarterOption[] {
+  const quarters: FiscalQuarterOption[] = [];
+  let bounds = getFiscalQuarterBounds(minDate);
+  while (bounds.start <= maxDate) {
+    const [year, month] = bounds.start.split("-").map(Number);
+    const { fy, q } = fyQuarterNumber(month, year);
+    const fyLabel = String(fy).slice(-2);
+    quarters.push({ key: `FY${fyLabel}-Q${q}`, label: `Q${q}FY${fyLabel}`, start: bounds.start, end: bounds.end });
+    bounds = getFiscalQuarterBounds(addDaysToDateString(bounds.end, 1));
+  }
+  return quarters;
 }
 
 // Most recent date in a sorted-ascending list that's <= target, or the

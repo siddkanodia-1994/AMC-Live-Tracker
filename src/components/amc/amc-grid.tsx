@@ -22,8 +22,19 @@ import { RelativeTime } from "@/components/ui/relative-time";
 import { InfoIcon } from "lucide-react";
 import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
+import { listFiscalQuarters } from "@/lib/aum/report-period";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import type { AumHistoryPoint } from "@/lib/aum/history";
+
+const CUSTOM_QUARTER_VALUE = "custom";
+
+// The end date actually applied when a quarter is picked -- clamped to
+// whatever data actually exists yet, so choosing the current in-progress
+// quarter behaves as "quarter to date" instead of requesting a range that
+// runs past today. Applies uniformly to both quarter dropdowns.
+function clippedQuarterEnd(quarterEnd: string, maxSnapshotDate: string | null | undefined): string {
+  return maxSnapshotDate && quarterEnd > maxSnapshotDate ? maxSnapshotDate : quarterEnd;
+}
 
 const DHAN_UNAVAILABLE_MESSAGE =
   "DHAN pricing is unavailable — every AMC below is showing last reported values. Check the DHAN token in Admin settings.";
@@ -67,6 +78,28 @@ export function AmcGrid({
     currentAvgFrom ?? undefined,
     currentAvgTo ?? undefined
   );
+  // Every fiscal quarter with real data, oldest first -- powers the "Avg
+  // AUM quarter"/"Avg Live AUM quarter" dropdowns. Derived entirely from the
+  // server's own reported data bounds, so it grows on its own each quarter.
+  const minSnapshotDate = adjustments.data?.minSnapshotDate;
+  const maxSnapshotDate = adjustments.data?.maxSnapshotDate;
+  const quarterOptions = useMemo(() => {
+    if (!minSnapshotDate || !maxSnapshotDate) return [];
+    return listFiscalQuarters(minSnapshotDate, maxSnapshotDate);
+  }, [minSnapshotDate, maxSnapshotDate]);
+
+  // Which quarter (if any) the given resolved from/to dates exactly match,
+  // accounting for the same end-date clipping applied when a quarter is
+  // picked -- so picking the current in-progress quarter round-trips back
+  // to showing itself selected, not "Custom range".
+  function matchingQuarterKey(resolvedFrom: string | undefined, resolvedTo: string | undefined): string {
+    if (!resolvedFrom || !resolvedTo) return CUSTOM_QUARTER_VALUE;
+    const match = quarterOptions.find(
+      (q) => q.start === resolvedFrom && clippedQuarterEnd(q.end, maxSnapshotDate) === resolvedTo
+    );
+    return match?.key ?? CUSTOM_QUARTER_VALUE;
+  }
+
   // Purely a display toggle on the trend chart below -- doesn't touch `history`.
   const [chartMode, setChartMode] = useState<"absolute" | "change">("absolute");
   // Shared across all three tabs -- lifted here (rather than each tab owning
@@ -437,6 +470,26 @@ export function AmcGrid({
                 </select>
               </FieldBox>
 
+              <FieldBox label="Avg AUM quarter">
+                <select
+                  value={matchingQuarterKey(avgFrom ?? adjustments.data?.avgFrom, avgTo ?? adjustments.data?.avgTo)}
+                  onChange={(e) => {
+                    const quarter = quarterOptions.find((q) => q.key === e.target.value);
+                    if (!quarter) return;
+                    setAvgFrom(quarter.start);
+                    setAvgTo(clippedQuarterEnd(quarter.end, maxSnapshotDate));
+                  }}
+                  className={dateInputClass}
+                >
+                  <option value={CUSTOM_QUARTER_VALUE}>Custom range</option>
+                  {quarterOptions.map((q) => (
+                    <option key={q.key} value={q.key}>
+                      {q.label}
+                    </option>
+                  ))}
+                </select>
+              </FieldBox>
+
               <FieldBox label="Avg AUM from">
                 <div className="flex items-center gap-1.5">
                   <input
@@ -457,6 +510,29 @@ export function AmcGrid({
                     className={dateInputClass}
                   />
                 </div>
+              </FieldBox>
+
+              <FieldBox label="Avg Live AUM quarter">
+                <select
+                  value={matchingQuarterKey(
+                    currentAvgFrom ?? adjustments.data?.currentAvgFrom,
+                    currentAvgTo ?? adjustments.data?.currentAvgTo
+                  )}
+                  onChange={(e) => {
+                    const quarter = quarterOptions.find((q) => q.key === e.target.value);
+                    if (!quarter) return;
+                    setCurrentAvgFrom(quarter.start);
+                    setCurrentAvgTo(clippedQuarterEnd(quarter.end, maxSnapshotDate));
+                  }}
+                  className={dateInputClass}
+                >
+                  <option value={CUSTOM_QUARTER_VALUE}>Custom range</option>
+                  {quarterOptions.map((q) => (
+                    <option key={q.key} value={q.key}>
+                      {q.label}
+                    </option>
+                  ))}
+                </select>
               </FieldBox>
 
               <FieldBox label="Avg Live AUM from">

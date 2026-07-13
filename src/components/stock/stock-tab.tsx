@@ -42,17 +42,21 @@ function ChangeCell({ shares, valueCr }: { shares: number | null; valueCr: numbe
       </>
     );
   }
-  const colorClass = valueCr >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400";
+  // Independent colors -- shares and value can have opposite signs (more
+  // shares bought, but the price dropped enough that value still fell), so
+  // sharing one color derived from only one of the two was a bug.
+  const sharesColorClass = shares >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400";
+  const valueColorClass = valueCr >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400";
   return (
     <>
       <TableCell className="text-right tabular-nums">
-        <span className={colorClass}>
+        <span className={sharesColorClass}>
           {shares >= 0 ? "+" : ""}
           {formatShares(shares)}
         </span>
       </TableCell>
       <TableCell className="text-right tabular-nums">
-        <span className={colorClass}>{formatDeltaCr(valueCr)}</span>
+        <span className={valueColorClass}>{formatDeltaCr(valueCr)}</span>
       </TableCell>
     </>
   );
@@ -235,8 +239,10 @@ export function StockTab() {
                       <TableCell />
                       <TableCell />
                       <TableCell />
-                      <TableCell />
-                      <TableCell />
+                      <ChangeCell
+                        shares={result.industryTotalChangeSharesLatest}
+                        valueCr={result.industryTotalChangeMarketValueCrLatest}
+                      />
                     </>
                   )}
                 </TableRow>
