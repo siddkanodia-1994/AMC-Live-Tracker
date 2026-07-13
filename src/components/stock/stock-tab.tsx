@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { FieldBox } from "@/components/amc/field-box";
-import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShares } from "@/lib/utils/format";
 import type { StockAmcRow, StockCandidate, StockHoldingResult } from "@/lib/aum/stock-search";
 
@@ -219,6 +219,27 @@ export function StockTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                <TableRow className="border-b bg-muted/50 font-bold">
+                  <TableCell className="font-bold">Industry Total ({result.amcs.length} AMCs)</TableCell>
+                  {result.periods.map((p) => (
+                    <TableCell key={`t-sh-${p}`} className="text-right tabular-nums">
+                      {formatShares(result.industryTotalSharesByPeriod[p] ?? 0)}
+                    </TableCell>
+                  ))}
+                  <TableCell className="text-right tabular-nums">{formatCr(result.industryTotalLatestValueCr)}</TableCell>
+                  {result.periods.map((p) => (
+                    <TableCell key={`t-wt-${p}`} />
+                  ))}
+                  {showExtra && (
+                    <>
+                      <TableCell />
+                      <TableCell />
+                      <TableCell />
+                      <TableCell />
+                      <TableCell />
+                    </>
+                  )}
+                </TableRow>
                 {sortedAmcs.map((amc) => (
                   <TableRow key={amc.amcId}>
                     <TableCell className="font-serif font-medium">
@@ -254,29 +275,6 @@ export function StockTab() {
                   </TableRow>
                 ))}
               </TableBody>
-              <TableFooter>
-                <TableRow>
-                  <TableCell className="font-medium">Industry Total ({result.amcs.length} AMCs)</TableCell>
-                  {result.periods.map((p) => (
-                    <TableCell key={`t-sh-${p}`} />
-                  ))}
-                  <TableCell className="text-right font-medium tabular-nums">
-                    {formatCr(result.industryTotalLatestValueCr)}
-                  </TableCell>
-                  {result.periods.map((p) => (
-                    <TableCell key={`t-wt-${p}`} />
-                  ))}
-                  {showExtra && (
-                    <>
-                      <TableCell />
-                      <TableCell />
-                      <TableCell />
-                      <TableCell />
-                      <TableCell />
-                    </>
-                  )}
-                </TableRow>
-              </TableFooter>
             </Table>
           </div>
         </div>

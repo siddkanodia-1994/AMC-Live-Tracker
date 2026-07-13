@@ -80,6 +80,10 @@ export interface StockHoldingResult {
   amcs: StockAmcRow[];
   // Sum of latestMarketValueCr across every returned AMC.
   industryTotalLatestValueCr: number;
+  // Sum of shares across every returned AMC, per period -- keyed by
+  // reportPeriod, same as StockAmcRow.byPeriod. An AMC absent for a given
+  // period (didn't hold the stock that month) contributes 0.
+  industryTotalSharesByPeriod: Record<string, number>;
 }
 
 /**
@@ -177,11 +181,17 @@ export async function getStockHoldingsAcrossAmcs(isin: string): Promise<StockHol
   const amcRows = [...byAmc.values()].sort((a, b) => (b.latestMarketValueCr ?? -1) - (a.latestMarketValueCr ?? -1));
   const industryTotalLatestValueCr = amcRows.reduce((sum, a) => sum + (a.latestMarketValueCr ?? 0), 0);
 
+  const industryTotalSharesByPeriod: Record<string, number> = {};
+  for (const period of periods) {
+    industryTotalSharesByPeriod[period] = amcRows.reduce((sum, a) => sum + (a.byPeriod[period]?.shares ?? 0), 0);
+  }
+
   return {
     isin,
     companyName: latestNameRow.companyName,
     periods,
     amcs: amcRows,
     industryTotalLatestValueCr,
+    industryTotalSharesByPeriod,
   };
 }
