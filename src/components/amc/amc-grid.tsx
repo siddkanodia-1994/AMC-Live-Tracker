@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useLiveAum } from "@/hooks/use-live-aum";
 import { useOverviewAdjustments } from "@/hooks/use-overview-adjustments";
 import { AmcTable } from "./amc-table";
-import { FieldBox } from "./field-box";
+import { FieldBox, WindowFieldBox } from "./field-box";
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { FreshnessBadge } from "./freshness-badge";
 import { AumGrowthTable } from "./aum-growth-table";
@@ -78,6 +78,11 @@ export function AmcGrid({
   // lose either one's last selection.
   const [reportedAumMode, setReportedAumMode] = useState<"reported" | "hist-live">("hist-live");
   const [histLiveDate, setHistLiveDate] = useState<string | null>(null);
+  // Manual disclosure for each window's custom from/to range -- forced open
+  // whenever the underlying dates don't match any listed quarter (so a
+  // genuinely custom window is never hidden behind a collapsed toggle).
+  const [avgWindowExpanded, setAvgWindowExpanded] = useState(false);
+  const [currentAvgWindowExpanded, setCurrentAvgWindowExpanded] = useState(false);
   const adjustments = useOverviewAdjustments(
     selectedReportPeriod ?? undefined,
     avgFrom ?? undefined,
@@ -272,6 +277,17 @@ export function AmcGrid({
     reportedAumMode !== "hist-live" ||
     histLiveDate !== null;
 
+  // Each window's custom-range disclosure is forced open whenever its dates
+  // don't match a listed quarter, in addition to whatever the user last
+  // manually toggled -- so a genuinely custom window is never hidden.
+  const avgQuarterKey = matchingQuarterKey(avgFrom ?? adjustments.data?.avgFrom, avgTo ?? adjustments.data?.avgTo);
+  const avgWindowIsExpanded = avgWindowExpanded || avgQuarterKey === CUSTOM_QUARTER_VALUE;
+  const currentAvgQuarterKey = matchingQuarterKey(
+    currentAvgFrom ?? adjustments.data?.currentAvgFrom,
+    currentAvgTo ?? adjustments.data?.currentAvgTo
+  );
+  const currentAvgWindowIsExpanded = currentAvgWindowExpanded || currentAvgQuarterKey === CUSTOM_QUARTER_VALUE;
+
   const oneDayChangeIsFlat = Math.abs(industryTotals.oneDayChangeCr) < 0.01;
   const oneDayChangeColorClass =
     industryTotals.oneDayChangePct === null || oneDayChangeIsFlat
@@ -444,203 +460,220 @@ export function AmcGrid({
           </div>
 
           {activeTab === "overview" && (
-            <div className="flex flex-wrap items-stretch gap-2.5 pt-3">
-              <FieldBox label="Live AUM as of">
-                <input
-                  type="date"
-                  value={asOfDate ?? ""}
-                  min={data.minSnapshotDate ?? undefined}
-                  max={data.maxSnapshotDate ?? undefined}
-                  onChange={(e) => setAsOfDate(e.target.value || null)}
-                  className={dateInputClass}
-                />
-              </FieldBox>
-              <div className="flex flex-wrap items-center gap-2 self-center text-sm">
-                {asOfDate && (
-                  <button
-                    type="button"
-                    onClick={() => setAsOfDate(null)}
-                    className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    Back to live
-                  </button>
-                )}
-                {asOfDate && (
-                  <span className="text-xs text-muted-foreground">
-                    Historical view — Avg AUM, Est. Net Flow and holdings counts apply only to live data
-                  </span>
-                )}
-                {!data.asOfDate && (
-                  <FreshnessBadge
-                    computedAt={data.computedAt}
-                    pricesAreLive={data.pricesAreLive}
-                    priceAsOfDate={data.priceAsOfDate}
-                    dhanStatus={data.dhanStatus}
-                    dhanErrorDetail={data.dhanErrorDetail}
-                    distinctLastCloseCount={lastCloseCount}
-                    maxSnapshotDate={data.maxSnapshotDate ?? null}
-                  />
-                )}
+            <div className="flex flex-col gap-3 pt-3">
+              <div>
+                <p className="mb-1.5 text-[10px] font-bold tracking-wider text-[var(--toolbar-accent)] uppercase">
+                  View basis
+                </p>
+                <div className="flex flex-wrap items-stretch gap-2.5">
+                  <FieldBox label="Live AUM as of">
+                    <input
+                      type="date"
+                      value={asOfDate ?? ""}
+                      min={data.minSnapshotDate ?? undefined}
+                      max={data.maxSnapshotDate ?? undefined}
+                      onChange={(e) => setAsOfDate(e.target.value || null)}
+                      className={dateInputClass}
+                    />
+                  </FieldBox>
+                  <div className="flex flex-wrap items-center gap-2 self-center text-sm">
+                    {asOfDate && (
+                      <button
+                        type="button"
+                        onClick={() => setAsOfDate(null)}
+                        className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Back to live
+                      </button>
+                    )}
+                    {asOfDate && (
+                      <span className="text-xs text-muted-foreground">
+                        Historical view — Avg AUM, Est. Net Flow and holdings counts apply only to live data
+                      </span>
+                    )}
+                    {!data.asOfDate && (
+                      <FreshnessBadge
+                        computedAt={data.computedAt}
+                        pricesAreLive={data.pricesAreLive}
+                        priceAsOfDate={data.priceAsOfDate}
+                        dhanStatus={data.dhanStatus}
+                        dhanErrorDetail={data.dhanErrorDetail}
+                        distinctLastCloseCount={lastCloseCount}
+                        maxSnapshotDate={data.maxSnapshotDate ?? null}
+                      />
+                    )}
+                  </div>
+
+                  <FieldBox label="AUM Basis">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setReportedAumMode("reported")}
+                        className={`rounded-md px-2 py-1 text-sm ${
+                          reportedAumMode === "reported"
+                            ? "bg-[var(--toolbar-accent)] text-white"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        Reported AUM
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReportedAumMode("hist-live")}
+                        className={`rounded-md px-2 py-1 text-sm ${
+                          reportedAumMode === "hist-live"
+                            ? "bg-[var(--toolbar-accent)] text-white"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        Hist. Live AUM
+                      </button>
+                    </div>
+                  </FieldBox>
+
+                  <FieldBox label={reportedAumMode === "hist-live" ? "Hist. Live AUM date" : "Reported AUM month"}>
+                    {reportedAumMode === "hist-live" ? (
+                      <input
+                        type="date"
+                        value={histLiveDate ?? adjustments.data?.histLiveDate ?? ""}
+                        min={adjustments.data?.minSnapshotDate ?? undefined}
+                        max={adjustments.data?.maxSnapshotDate ?? undefined}
+                        onChange={(e) => setHistLiveDate(e.target.value || null)}
+                        className={dateInputClass}
+                      />
+                    ) : (
+                      <select
+                        value={adjustments.data?.reportPeriod ?? data.reportPeriod}
+                        onChange={(e) => setSelectedReportPeriod(e.target.value)}
+                        className={dateInputClass}
+                      >
+                        {reportPeriodOptions.map((p) => (
+                          <option key={p} value={p}>
+                            {formatReportPeriodLabel(p)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </FieldBox>
+                </div>
               </div>
 
-              <FieldBox label="AUM Basis">
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setReportedAumMode("reported")}
-                    className={`rounded-md px-2 py-1 text-sm ${
-                      reportedAumMode === "reported"
-                        ? "bg-[var(--toolbar-accent)] text-white"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
+              <div className="border-t pt-3">
+                <p className="mb-1.5 text-[10px] font-bold tracking-wider text-[var(--toolbar-accent)] uppercase">
+                  Averaging windows
+                </p>
+                <div className="flex flex-wrap items-stretch gap-2.5">
+                  <WindowFieldBox
+                    label="Avg AUM window"
+                    expanded={avgWindowIsExpanded}
+                    onToggleExpanded={() => setAvgWindowExpanded((v) => !v)}
                   >
-                    Reported AUM
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setReportedAumMode("hist-live")}
-                    className={`rounded-md px-2 py-1 text-sm ${
-                      reportedAumMode === "hist-live"
-                        ? "bg-[var(--toolbar-accent)] text-white"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
+                    <select
+                      value={avgQuarterKey}
+                      onChange={(e) => {
+                        const quarter = quarterOptions.find((q) => q.key === e.target.value);
+                        if (!quarter) return;
+                        setAvgFrom(quarter.start);
+                        setAvgTo(clippedQuarterEnd(quarter.end, maxSnapshotDate));
+                      }}
+                      className={dateInputClass}
+                    >
+                      <option value={CUSTOM_QUARTER_VALUE}>Custom range</option>
+                      {quarterOptions.map((q) => (
+                        <option key={q.key} value={q.key}>
+                          {q.label}
+                        </option>
+                      ))}
+                    </select>
+                    {avgWindowIsExpanded && (
+                      <div className="flex items-center gap-1.5 pt-1">
+                        <input
+                          type="date"
+                          value={avgFrom ?? adjustments.data?.avgFrom ?? ""}
+                          min={adjustments.data?.minSnapshotDate ?? undefined}
+                          max={adjustments.data?.maxSnapshotDate ?? undefined}
+                          onChange={(e) => setAvgFrom(e.target.value || null)}
+                          className={dateInputClass}
+                        />
+                        <span className="text-xs text-muted-foreground">to</span>
+                        <input
+                          type="date"
+                          value={avgTo ?? adjustments.data?.avgTo ?? ""}
+                          min={avgFrom ?? adjustments.data?.minSnapshotDate ?? undefined}
+                          max={adjustments.data?.maxSnapshotDate ?? undefined}
+                          onChange={(e) => setAvgTo(e.target.value || null)}
+                          className={dateInputClass}
+                        />
+                      </div>
+                    )}
+                  </WindowFieldBox>
+
+                  <WindowFieldBox
+                    label="Avg Live AUM window"
+                    expanded={currentAvgWindowIsExpanded}
+                    onToggleExpanded={() => setCurrentAvgWindowExpanded((v) => !v)}
                   >
-                    Hist. Live AUM
-                  </button>
-                </div>
-              </FieldBox>
+                    <select
+                      value={currentAvgQuarterKey}
+                      onChange={(e) => {
+                        const quarter = quarterOptions.find((q) => q.key === e.target.value);
+                        if (!quarter) return;
+                        setCurrentAvgFrom(quarter.start);
+                        setCurrentAvgTo(clippedQuarterEnd(quarter.end, maxSnapshotDate));
+                      }}
+                      className={dateInputClass}
+                    >
+                      <option value={CUSTOM_QUARTER_VALUE}>Custom range</option>
+                      {quarterOptions.map((q) => (
+                        <option key={q.key} value={q.key}>
+                          {q.label}
+                        </option>
+                      ))}
+                    </select>
+                    {currentAvgWindowIsExpanded && (
+                      <div className="flex items-center gap-1.5 pt-1">
+                        <input
+                          type="date"
+                          value={currentAvgFrom ?? adjustments.data?.currentAvgFrom ?? ""}
+                          min={adjustments.data?.minSnapshotDate ?? undefined}
+                          max={adjustments.data?.maxSnapshotDate ?? undefined}
+                          onChange={(e) => setCurrentAvgFrom(e.target.value || null)}
+                          className={dateInputClass}
+                        />
+                        <span className="text-xs text-muted-foreground">to</span>
+                        <input
+                          type="date"
+                          value={currentAvgTo ?? adjustments.data?.currentAvgTo ?? ""}
+                          min={currentAvgFrom ?? adjustments.data?.minSnapshotDate ?? undefined}
+                          max={adjustments.data?.maxSnapshotDate ?? undefined}
+                          onChange={(e) => setCurrentAvgTo(e.target.value || null)}
+                          className={dateInputClass}
+                        />
+                      </div>
+                    )}
+                  </WindowFieldBox>
 
-              <FieldBox label={reportedAumMode === "hist-live" ? "Hist. Live AUM date" : "Reported AUM month"}>
-                {reportedAumMode === "hist-live" ? (
-                  <input
-                    type="date"
-                    value={histLiveDate ?? adjustments.data?.histLiveDate ?? ""}
-                    min={adjustments.data?.minSnapshotDate ?? undefined}
-                    max={adjustments.data?.maxSnapshotDate ?? undefined}
-                    onChange={(e) => setHistLiveDate(e.target.value || null)}
-                    className={dateInputClass}
-                  />
-                ) : (
-                  <select
-                    value={adjustments.data?.reportPeriod ?? data.reportPeriod}
-                    onChange={(e) => setSelectedReportPeriod(e.target.value)}
-                    className={dateInputClass}
-                  >
-                    {reportPeriodOptions.map((p) => (
-                      <option key={p} value={p}>
-                        {formatReportPeriodLabel(p)}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </FieldBox>
-
-              <FieldBox label="Avg AUM quarter">
-                <select
-                  value={matchingQuarterKey(avgFrom ?? adjustments.data?.avgFrom, avgTo ?? adjustments.data?.avgTo)}
-                  onChange={(e) => {
-                    const quarter = quarterOptions.find((q) => q.key === e.target.value);
-                    if (!quarter) return;
-                    setAvgFrom(quarter.start);
-                    setAvgTo(clippedQuarterEnd(quarter.end, maxSnapshotDate));
-                  }}
-                  className={dateInputClass}
-                >
-                  <option value={CUSTOM_QUARTER_VALUE}>Custom range</option>
-                  {quarterOptions.map((q) => (
-                    <option key={q.key} value={q.key}>
-                      {q.label}
-                    </option>
-                  ))}
-                </select>
-              </FieldBox>
-
-              <FieldBox label="Avg AUM from">
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="date"
-                    value={avgFrom ?? adjustments.data?.avgFrom ?? ""}
-                    min={adjustments.data?.minSnapshotDate ?? undefined}
-                    max={adjustments.data?.maxSnapshotDate ?? undefined}
-                    onChange={(e) => setAvgFrom(e.target.value || null)}
-                    className={dateInputClass}
-                  />
-                  <span className="text-xs text-muted-foreground">to</span>
-                  <input
-                    type="date"
-                    value={avgTo ?? adjustments.data?.avgTo ?? ""}
-                    min={avgFrom ?? adjustments.data?.minSnapshotDate ?? undefined}
-                    max={adjustments.data?.maxSnapshotDate ?? undefined}
-                    onChange={(e) => setAvgTo(e.target.value || null)}
-                    className={dateInputClass}
-                  />
-                </div>
-              </FieldBox>
-
-              <FieldBox label="Avg Live AUM quarter">
-                <select
-                  value={matchingQuarterKey(
-                    currentAvgFrom ?? adjustments.data?.currentAvgFrom,
-                    currentAvgTo ?? adjustments.data?.currentAvgTo
-                  )}
-                  onChange={(e) => {
-                    const quarter = quarterOptions.find((q) => q.key === e.target.value);
-                    if (!quarter) return;
-                    setCurrentAvgFrom(quarter.start);
-                    setCurrentAvgTo(clippedQuarterEnd(quarter.end, maxSnapshotDate));
-                  }}
-                  className={dateInputClass}
-                >
-                  <option value={CUSTOM_QUARTER_VALUE}>Custom range</option>
-                  {quarterOptions.map((q) => (
-                    <option key={q.key} value={q.key}>
-                      {q.label}
-                    </option>
-                  ))}
-                </select>
-              </FieldBox>
-
-              <FieldBox label="Avg Live AUM from">
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="date"
-                    value={currentAvgFrom ?? adjustments.data?.currentAvgFrom ?? ""}
-                    min={adjustments.data?.minSnapshotDate ?? undefined}
-                    max={adjustments.data?.maxSnapshotDate ?? undefined}
-                    onChange={(e) => setCurrentAvgFrom(e.target.value || null)}
-                    className={dateInputClass}
-                  />
-                  <span className="text-xs text-muted-foreground">to</span>
-                  <input
-                    type="date"
-                    value={currentAvgTo ?? adjustments.data?.currentAvgTo ?? ""}
-                    min={currentAvgFrom ?? adjustments.data?.minSnapshotDate ?? undefined}
-                    max={adjustments.data?.maxSnapshotDate ?? undefined}
-                    onChange={(e) => setCurrentAvgTo(e.target.value || null)}
-                    className={dateInputClass}
-                  />
-                </div>
-              </FieldBox>
-
-              <div className="flex items-center gap-1 self-center">
-                {adjustmentsTouched && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedReportPeriod(null);
-                      setAvgFrom(null);
-                      setAvgTo(null);
-                      setCurrentAvgFrom(null);
-                      setCurrentAvgTo(null);
-                      setReportedAumMode("hist-live");
-                      setHistLiveDate(null);
-                    }}
-                    className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    Reset
-                  </button>
-                )}
-                <Tooltip>
+                  <div className="flex items-center gap-1 self-center">
+                    {adjustmentsTouched && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedReportPeriod(null);
+                          setAvgFrom(null);
+                          setAvgTo(null);
+                          setCurrentAvgFrom(null);
+                          setCurrentAvgTo(null);
+                          setReportedAumMode("hist-live");
+                          setHistLiveDate(null);
+                          setAvgWindowExpanded(false);
+                          setCurrentAvgWindowExpanded(false);
+                        }}
+                        className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Reset
+                      </button>
+                    )}
+                    <Tooltip>
                   <TooltipTrigger className="rounded-md p-1.5 text-muted-foreground hover:text-foreground">
                     <InfoIcon className="size-4" />
                     <span className="sr-only">About these AUM windows</span>
@@ -655,6 +688,8 @@ export function AmcGrid({
                     across whichever AMCs are currently shown instead, so it can never exceed the industry figure.
                   </TooltipContent>
                 </Tooltip>
+                  </div>
+                </div>
               </div>
             </div>
           )}
