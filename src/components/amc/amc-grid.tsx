@@ -11,6 +11,7 @@ import { AumGrowthTable } from "./aum-growth-table";
 import { AumTrendChart } from "./aum-trend-chart";
 import { TotalAumGrowthTable } from "./total-aum-growth-table";
 import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-table";
+import { SectoralHoldingsTable } from "./sectoral-holdings-table";
 import { StockTab } from "@/components/stock/stock-tab";
 import { DailyDataTable } from "./daily-data-table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
@@ -440,6 +441,9 @@ export function AmcGrid({
               <TabsTrigger value="total-aum-growth" className="after:bg-[var(--toolbar-accent)]">
                 Total AUM Growth
               </TabsTrigger>
+              <TabsTrigger value="sectoral-holdings" className="after:bg-[var(--toolbar-accent)]">
+                Sectoral Holdings
+              </TabsTrigger>
               <TabsTrigger value="cash-holdings" className="after:bg-[var(--toolbar-accent)]">
                 Cash Holdings
               </TabsTrigger>
@@ -735,6 +739,9 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="total-aum-growth">
           <TotalAumGrowthTable topN={topN} />
+        </TabsContent>
+        <TabsContent value="sectoral-holdings">
+          <SectoralHoldingsTable topN={topN} />
         </TabsContent>
         <TabsContent value="cash-holdings">
           <CashHoldingsTable topN={topN} />
