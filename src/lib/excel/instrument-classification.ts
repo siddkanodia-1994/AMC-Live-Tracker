@@ -58,3 +58,14 @@ export const ISIN_FORMAT = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
 export function isUsListedEquityIsin(isin: string): boolean {
   return ISIN_FORMAT.test(isin) && isin.startsWith("US");
 }
+
+// Any foreign-listed holding, regardless of country — a broader
+// classification than isUsListedEquityIsin above (which is deliberately
+// scoped to "priced via Finnhub"). Used by the Daily Data tab's "Foreign
+// Holdings" column: audited against real data, non-US countries (Ireland,
+// Canada, Netherlands, Taiwan, Japan, Cayman Islands, ...) make up a
+// substantial share of foreign holdings that isUsListedEquityIsin alone
+// would miss.
+export function isForeignIsin(isin: string): boolean {
+  return ISIN_FORMAT.test(isin) && !isin.startsWith("IN");
+}

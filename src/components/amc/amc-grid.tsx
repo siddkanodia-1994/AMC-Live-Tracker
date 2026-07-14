@@ -12,6 +12,7 @@ import { AumTrendChart } from "./aum-trend-chart";
 import { TotalAumGrowthTable } from "./total-aum-growth-table";
 import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-table";
 import { StockTab } from "@/components/stock/stock-tab";
+import { DailyDataTable } from "./daily-data-table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -387,6 +388,17 @@ export function AmcGrid({
           {statusMessage}
         </div>
       )}
+      {data.dailyDataQualityAlert && (
+        <button
+          type="button"
+          onClick={() => setActiveTab("daily-data")}
+          className="w-full rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-left text-sm text-red-700 hover:bg-red-500/15 dark:text-red-400"
+        >
+          {data.dailyDataQualityAlert.count} day{data.dailyDataQualityAlert.count === 1 ? "" : "s"} show DHAN price
+          coverage below 80% (worst: {data.dailyDataQualityAlert.worstPct.toFixed(1)}%,{" "}
+          {formatShortDate(data.dailyDataQualityAlert.worstDate)}) — see Daily Data tab →
+        </button>
+      )}
 
       {history.length > 0 && (
         <Card>
@@ -433,6 +445,9 @@ export function AmcGrid({
               </TabsTrigger>
               <TabsTrigger value="stock" className="after:bg-[var(--toolbar-accent)]">
                 Stock
+              </TabsTrigger>
+              <TabsTrigger value="daily-data" className="after:bg-[var(--toolbar-accent)]">
+                Daily Data
               </TabsTrigger>
             </TabsList>
             <div className="flex items-center gap-3 text-sm">
@@ -726,6 +741,9 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="stock">
           <StockTab />
+        </TabsContent>
+        <TabsContent value="daily-data">
+          <DailyDataTable />
         </TabsContent>
       </Tabs>
     </div>

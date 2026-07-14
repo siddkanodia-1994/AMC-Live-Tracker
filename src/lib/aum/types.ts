@@ -151,6 +151,12 @@ export interface LiveAumSnapshot {
   last90End?: string;
   prev90Start?: string;
   prev90End?: string;
+  // Standing regression guard for the Daily Data tab: set (non-null) if
+  // ANY stored trading day currently has DHAN price coverage below 80% --
+  // not just the latest, so a past gap keeps surfacing until it's actually
+  // fixed. Optional/route-populated, same convention as min/maxSnapshotDate
+  // above; not populated in historical (asOfDate) mode.
+  dailyDataQualityAlert?: { count: number; worstDate: string; worstPct: number } | null;
 }
 
 export interface ComputedLiveAum {

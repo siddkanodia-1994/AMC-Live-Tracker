@@ -50,6 +50,13 @@
       "when": 1783578403272,
       "tag": "0006_fine_magus",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784002462629,
+      "tag": "0007_modern_white_tiger",
+      "breakpoints": true
     }
   ]
 }

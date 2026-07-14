@@ -261,6 +261,32 @@ export const totalAumGrowthOverrideLog = pgTable(
   (t) => [index("total_aum_growth_override_log_amc_period_idx").on(t.amcId, t.reportPeriod)]
 );
 
+// One row per trading day: how much of that day's industry-wide holding
+// universe actually got a live DHAN close, vs. debt/foreign/cash-equivalent
+// lines that never could. The regression guard for the February backfill
+// gap (which sat undetected for months) -- Total/Debt/Foreign/Live counts
+// are industry-wide distinct counts (deduped by ISIN, or by lowercased
+// company name for the no-ISIN debt/repo/cash lines), matching whichever
+// reportPeriod each AMC's liveAumDailySnapshot canonically used that day.
+// Upserted (unique on snapshotDate), not append-only, so a future
+// re-backfill (like today's February fix) can simply recompute and
+// overwrite the affected days rather than leaving stale rows behind.
+export const dailyDataQuality = pgTable(
+  "daily_data_quality",
+  {
+    id: serial("id").primaryKey(),
+    snapshotDate: date("snapshot_date").notNull(),
+    totalHoldings: integer("total_holdings").notNull(),
+    debtInstruments: integer("debt_instruments").notNull(),
+    foreignHoldings: integer("foreign_holdings").notNull(),
+    indianStocksAndCash: integer("indian_stocks_and_cash").notNull(),
+    liveConsidered: integer("live_considered").notNull(),
+    coveragePct: numeric("coverage_pct", { precision: 6, scale: 3 }).notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("daily_data_quality_date_idx").on(t.snapshotDate)]
+);
+
 // Audit trail for imports.
 export const importLog = pgTable("import_log", {
   id: serial("id").primaryKey(),

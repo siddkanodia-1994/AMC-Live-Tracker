@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
+import { upsertDailyDataQuality } from "@/lib/aum/daily-data-quality";
+import { getIstDateString } from "@/lib/utils/date";
 
 export const maxDuration = 30;
 
@@ -24,6 +26,17 @@ export async function GET(request: Request) {
 
   try {
     const snapshot = await computeLiveAum({ forceRefresh: true });
+
+    // Best-effort: today's DHAN price-coverage stats for the Daily Data
+    // tab, computed right after the close capture above. A failure here
+    // shouldn't fail the whole cron response -- the snapshot itself is
+    // the primary job, this is a secondary regression-guard signal.
+    try {
+      await upsertDailyDataQuality(getIstDateString());
+    } catch (err) {
+      console.error("Failed to upsert daily data quality:", err);
+    }
+
     return NextResponse.json({ ok: true, amcsSnapshotted: snapshot.amcs.length });
   } catch (err) {
     if (err instanceof NoDataImportedError) {
