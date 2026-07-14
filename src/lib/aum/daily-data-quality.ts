@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { dailyDataQuality, holdings, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { isBankDebtOrRepo, isForeignIsin } from "../excel/instrument-classification";
@@ -154,7 +154,11 @@ export async function upsertDailyDataQuality(date: string): Promise<DailyDataQua
 }
 
 export async function getDailyDataQualityHistory(): Promise<DailyDataQualityRow[]> {
-  const rows = await db.select().from(dailyDataQuality).orderBy(asc(dailyDataQuality.snapshotDate));
+  // Newest first -- each new trading day the cron adds automatically sorts
+  // to the top, since its date string is lexicographically greater than
+  // every prior one. Table display and Excel export both read this same
+  // array, so both follow this order.
+  const rows = await db.select().from(dailyDataQuality).orderBy(desc(dailyDataQuality.snapshotDate));
   return rows.map((r) => ({
     snapshotDate: r.snapshotDate,
     totalHoldings: r.totalHoldings,

@@ -48,7 +48,7 @@ export function DailyDataTable() {
   return (
     <div className="space-y-2">
       <p className="text-sm text-muted-foreground">
-        One row per trading day since 1 Jan 2026: how much of that day&apos;s industry-wide holding universe actually
+        One row per trading day since 1 Jan 2026, newest first: how much of that day&apos;s industry-wide holding universe actually
         got a live DHAN close, versus debt/foreign/non-ISIN/fund-unit lines that never could. Total Holdings − Debt
         Instruments − Foreign Holdings − Non ISIN Bearing − INF Fund Units = Indian Stocks; Coverage % = Live
         Considered ÷ Indian Stocks. Non ISIN Bearing covers cash-equivalent lines (Net Current Asset, Cash & Cash
