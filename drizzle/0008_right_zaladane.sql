@@ -1,0 +1,2 @@
+ALTER TABLE "daily_data_quality" ADD COLUMN "non_isin_bearing" integer NOT NULL DEFAULT 0;--> statement-breakpoint
+ALTER TABLE "daily_data_quality" ADD COLUMN "inf_fund_units" integer NOT NULL DEFAULT 0;

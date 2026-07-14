@@ -57,6 +57,13 @@
       "when": 1784002462629,
       "tag": "0007_modern_white_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784013515392,
+      "tag": "0008_right_zaladane",
+      "breakpoints": true
     }
   ]
 }

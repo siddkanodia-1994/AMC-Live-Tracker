@@ -23,7 +23,7 @@ async function main() {
     done++;
     if (row) {
       console.log(
-        `  ${date}: total=${row.totalHoldings} debt=${row.debtInstruments} foreign=${row.foreignHoldings} indianStocksAndCash=${row.indianStocksAndCash} live=${row.liveConsidered} coverage=${row.coveragePct.toFixed(1)}%`
+        `  ${date}: total=${row.totalHoldings} debt=${row.debtInstruments} foreign=${row.foreignHoldings} nonIsin=${row.nonIsinBearing} inf=${row.infFundUnits} indianStocks=${row.indianStocks} live=${row.liveConsidered} coverage=${row.coveragePct.toFixed(1)}%`
       );
     } else {
       console.log(`  ${date}: skipped (no canonical rows found)`);

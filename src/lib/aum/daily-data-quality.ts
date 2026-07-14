@@ -8,7 +8,9 @@ export interface DailyDataQualityRow {
   totalHoldings: number;
   debtInstruments: number;
   foreignHoldings: number;
-  indianStocksAndCash: number;
+  nonIsinBearing: number;
+  infFundUnits: number;
+  indianStocks: number;
   liveConsidered: number;
   coveragePct: number;
 }
@@ -17,9 +19,12 @@ export interface DailyDataQualityRow {
  * Computes one trading day's industry-wide DHAN price-coverage stats: how
  * much of that day's holding universe (across every AMC, using whichever
  * reportPeriod each AMC's liveAumDailySnapshot canonically used that day)
- * actually got a live close, versus debt/foreign/cash-equivalent lines that
- * never could. Pure DB reads -- no DHAN calls -- so this is cheap and safe
- * to run for an entire history in one script (see backfill-daily-data-quality.ts).
+ * actually got a live close, versus debt/foreign/non-ISIN/fund-unit lines
+ * that never could. Every category below is mutually exclusive and their
+ * sum exactly equals totalHoldings -- verified against real data before
+ * this was built (audited 2026-07-14: zero overlaps, zero leftovers).
+ * Pure DB reads -- no DHAN calls -- so this is cheap and safe to run for
+ * an entire history in one script (see backfill-daily-data-quality.ts).
  */
 export async function computeDailyDataQualityForDate(date: string): Promise<DailyDataQualityRow | null> {
   const canonicalRows = await db
@@ -39,6 +44,16 @@ export async function computeDailyDataQualityForDate(date: string): Promise<Dail
   const totalKeys = new Set<string>();
   const debtKeys = new Set<string>();
   const foreignIsins = new Set<string>();
+  // No ISIN and not debt/repo -- cash-equivalent lines, no-ISIN
+  // derivative/option positions, defunct/delisted listings. Deliberately
+  // excludes no-ISIN debt/repo lines (TREPS, Call Money, CBLO), which are
+  // already inside debtKeys -- keeps this and debtInstruments from ever
+  // double-counting the same line item.
+  const nonIsinBearingKeys = new Set<string>();
+  // ISIN present but "INF"-prefixed -- one AMC holding another mutual
+  // fund/ETF's units, not an individual stock. Always isPriceable=false
+  // (see parse-amc-sheet.ts), so never overlaps eligibleEquityIsins below.
+  const infFundUnitIsins = new Set<string>();
   const eligibleEquityIsins = new Set<string>();
 
   for (const [reportPeriod, amcIds] of amcIdsByPeriod) {
@@ -58,9 +73,16 @@ export async function computeDailyDataQualityForDate(date: string): Promise<Dail
       totalKeys.add(key);
 
       const isDebt = isBankDebtOrRepo(h.sector, h.companyName);
-      if (isDebt) debtKeys.add(key);
+      if (isDebt) {
+        debtKeys.add(key);
+      } else if (h.isin && isForeignIsin(h.isin)) {
+        foreignIsins.add(h.isin);
+      } else if (h.isin && h.isin.startsWith("INF")) {
+        infFundUnitIsins.add(h.isin);
+      } else if (!h.isin) {
+        nonIsinBearingKeys.add(key);
+      }
 
-      if (h.isin && isForeignIsin(h.isin)) foreignIsins.add(h.isin);
       if (h.isPriceable && h.isin) eligibleEquityIsins.add(h.isin);
     }
   }
@@ -68,7 +90,9 @@ export async function computeDailyDataQualityForDate(date: string): Promise<Dail
   const totalHoldings = totalKeys.size;
   const debtInstruments = debtKeys.size;
   const foreignHoldings = foreignIsins.size;
-  const indianStocksAndCash = totalHoldings - debtInstruments - foreignHoldings;
+  const nonIsinBearing = nonIsinBearingKeys.size;
+  const infFundUnits = infFundUnitIsins.size;
+  const indianStocks = totalHoldings - debtInstruments - foreignHoldings - nonIsinBearing - infFundUnits;
 
   let liveConsidered = 0;
   if (eligibleEquityIsins.size > 0) {
@@ -79,9 +103,19 @@ export async function computeDailyDataQualityForDate(date: string): Promise<Dail
     liveConsidered = priced.length;
   }
 
-  const coveragePct = indianStocksAndCash !== 0 ? (liveConsidered / indianStocksAndCash) * 100 : 0;
+  const coveragePct = indianStocks !== 0 ? (liveConsidered / indianStocks) * 100 : 0;
 
-  return { snapshotDate: date, totalHoldings, debtInstruments, foreignHoldings, indianStocksAndCash, liveConsidered, coveragePct };
+  return {
+    snapshotDate: date,
+    totalHoldings,
+    debtInstruments,
+    foreignHoldings,
+    nonIsinBearing,
+    infFundUnits,
+    indianStocks,
+    liveConsidered,
+    coveragePct,
+  };
 }
 
 export async function upsertDailyDataQuality(date: string): Promise<DailyDataQualityRow | null> {
@@ -95,7 +129,9 @@ export async function upsertDailyDataQuality(date: string): Promise<DailyDataQua
       totalHoldings: row.totalHoldings,
       debtInstruments: row.debtInstruments,
       foreignHoldings: row.foreignHoldings,
-      indianStocksAndCash: row.indianStocksAndCash,
+      nonIsinBearing: row.nonIsinBearing,
+      infFundUnits: row.infFundUnits,
+      indianStocks: row.indianStocks,
       liveConsidered: row.liveConsidered,
       coveragePct: String(row.coveragePct),
     })
@@ -105,7 +141,9 @@ export async function upsertDailyDataQuality(date: string): Promise<DailyDataQua
         totalHoldings: row.totalHoldings,
         debtInstruments: row.debtInstruments,
         foreignHoldings: row.foreignHoldings,
-        indianStocksAndCash: row.indianStocksAndCash,
+        nonIsinBearing: row.nonIsinBearing,
+        infFundUnits: row.infFundUnits,
+        indianStocks: row.indianStocks,
         liveConsidered: row.liveConsidered,
         coveragePct: String(row.coveragePct),
         computedAt: sql`now()`,
@@ -122,7 +160,9 @@ export async function getDailyDataQualityHistory(): Promise<DailyDataQualityRow[
     totalHoldings: r.totalHoldings,
     debtInstruments: r.debtInstruments,
     foreignHoldings: r.foreignHoldings,
-    indianStocksAndCash: r.indianStocksAndCash,
+    nonIsinBearing: r.nonIsinBearing,
+    infFundUnits: r.infFundUnits,
+    indianStocks: r.indianStocks,
     liveConsidered: r.liveConsidered,
     coveragePct: Number(r.coveragePct),
   }));

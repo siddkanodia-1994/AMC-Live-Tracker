@@ -279,7 +279,27 @@ export const dailyDataQuality = pgTable(
     totalHoldings: integer("total_holdings").notNull(),
     debtInstruments: integer("debt_instruments").notNull(),
     foreignHoldings: integer("foreign_holdings").notNull(),
-    indianStocksAndCash: integer("indian_stocks_and_cash").notNull(),
+    // No ISIN and not debt/repo -- cash-equivalent lines ("Net Current
+    // Asset", "Cash & Cash Equivalent"), no-ISIN derivative/option
+    // positions, and defunct/delisted listings. Deliberately excludes the
+    // handful of no-ISIN debt/repo lines (TREPS, Call Money, CBLO), which
+    // stay inside debtInstruments above -- keeps every column mutually
+    // exclusive so totalHoldings - debtInstruments - foreignHoldings -
+    // nonIsinBearing - infFundUnits partitions cleanly with nothing double
+    // counted and nothing left over.
+    nonIsinBearing: integer("non_isin_bearing").notNull(),
+    // Indian ISIN-bearing but "INF"-prefixed -- one AMC holding units of
+    // another mutual fund/ETF, not an individual stock. isPriceable is
+    // already false for these (see parse-amc-sheet.ts), so they were
+    // already excluded from liveConsidered; this column makes that
+    // exclusion visible instead of leaving them silently inside
+    // indianStocks.
+    infFundUnits: integer("inf_fund_units").notNull(),
+    // TS property renamed from indianStocksAndCash now that the two extra
+    // categories above are broken out separately -- physical column name
+    // kept as-is (indian_stocks_and_cash) to avoid an ambiguous rename
+    // migration; only the meaning/value changes, not the column identity.
+    indianStocks: integer("indian_stocks_and_cash").notNull(),
     liveConsidered: integer("live_considered").notNull(),
     coveragePct: numeric("coverage_pct", { precision: 6, scale: 3 }).notNull(),
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
