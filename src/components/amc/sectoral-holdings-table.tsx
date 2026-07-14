@@ -17,19 +17,19 @@ const DEFAULT_SECTOR_TOP_N: TopNOption = 15;
 export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
   const { data, error, isLoading } = useSectoralHoldings();
   const [sectorTopN, setSectorTopN] = useState<TopNOption>(DEFAULT_SECTOR_TOP_N);
-  const [sortAmcId, setSortAmcId] = useState<number | null>(null);
+  const [sortSector, setSortSector] = useState<string | null>(null);
   const [sortDesc, setSortDesc] = useState(false);
 
-  // AMC columns: the shared Top-N toggle, ranked by reported AUM -- same
-  // metric Cash Holdings already ranks by.
+  // AMC rows: the shared Top-N toggle, ranked by reported AUM -- same
+  // metric every other tab's default row order uses.
   const limitedAmcs = useMemo(() => {
     if (!data) return [];
     const ranked = [...data.amcs].sort((a, b) => b.reportedAumCr - a.reportedAumCr);
     return topN === "all" ? ranked : ranked.slice(0, topN);
   }, [data, topN]);
 
-  // Sector rows: own Top-N, already pre-sorted by total industry value
-  // descending from the API -- this is also the "reset to default" order.
+  // Sector columns: own Top-N, already pre-sorted by total industry value
+  // descending from the API.
   const limitedSectors = useMemo(() => {
     if (!data) return [];
     return sectorTopN === "all" ? data.sectors : data.sectors.slice(0, sectorTopN);
@@ -39,26 +39,26 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
   // active -- Top-N selection (which rows appear) and column sort (what
   // order they're shown in) are independent, same two-stage pattern as
   // every other sortable table here.
-  const sortedSectors = useMemo(() => {
-    if (sortAmcId === null || !data) return limitedSectors;
-    const list = [...limitedSectors];
+  const sortedAmcs = useMemo(() => {
+    if (sortSector === null || !data) return limitedAmcs;
+    const list = [...limitedAmcs];
     list.sort((a, b) => {
-      const av = data.matrix[a]?.[sortAmcId] ?? 0;
-      const bv = data.matrix[b]?.[sortAmcId] ?? 0;
+      const av = data.matrix[sortSector]?.[a.amcId] ?? 0;
+      const bv = data.matrix[sortSector]?.[b.amcId] ?? 0;
       const cmp = av - bv;
       return sortDesc ? -cmp : cmp;
     });
     return list;
-  }, [limitedSectors, sortAmcId, sortDesc, data]);
+  }, [limitedAmcs, sortSector, sortDesc, data]);
 
-  function toggleSort(amcId: number) {
-    if (sortAmcId !== amcId) {
-      setSortAmcId(amcId);
+  function toggleSort(sector: string) {
+    if (sortSector !== sector) {
+      setSortSector(sector);
       setSortDesc(true);
     } else if (sortDesc) {
       setSortDesc(false);
     } else {
-      setSortAmcId(null);
+      setSortSector(null);
       setSortDesc(false);
     }
   }
@@ -68,10 +68,10 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
     return {
       fileName: `sectoral-holdings-${data.reportPeriod}`,
       sheetName: "Sectoral Holdings",
-      rows: sortedSectors.map((sector) => {
-        const record: Record<string, string | number | null> = { Sector: sector };
-        for (const amc of limitedAmcs) {
-          record[`${amc.overviewName} (%)`] = (data.matrix[sector]?.[amc.amcId] ?? 0) * 100;
+      rows: sortedAmcs.map((amc) => {
+        const record: Record<string, string | number | null> = { AMC: amc.overviewName };
+        for (const sector of limitedSectors) {
+          record[`${sector} (%)`] = (data.matrix[sector]?.[amc.amcId] ?? 0) * 100;
         }
         return record;
       }),
@@ -92,9 +92,9 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-3xl text-sm text-muted-foreground">
-          Each AMC&apos;s holdings as a % of its own reported AUM, by sector, for {data.reportPeriod}. Click an
-          AMC&apos;s column header to sort sectors by that AMC&apos;s allocation — first click descending, second
-          ascending, third click back to the default (industry-wide total value, descending).
+          Each AMC&apos;s holdings as a % of its own reported AUM, by sector, for {data.reportPeriod}. Click a
+          sector&apos;s column header to sort AMCs by that sector&apos;s allocation — first click descending, second
+          ascending, third click back to the default (AUM, descending).
         </p>
         <div className="flex items-center gap-1 text-sm">
           <span className="text-muted-foreground">Sectors:</span>
@@ -118,29 +118,29 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="sticky left-0 z-10 bg-card">Sector</TableHead>
-              {limitedAmcs.map((amc) => (
-                <TableHead key={amc.amcId} className="text-right">
+              <TableHead className="sticky left-0 z-10 bg-card">AMC</TableHead>
+              {limitedSectors.map((sector) => (
+                <TableHead key={sector} className="text-right">
                   <button
                     type="button"
-                    onClick={() => toggleSort(amc.amcId)}
+                    onClick={() => toggleSort(sector)}
                     className="whitespace-nowrap hover:text-foreground"
                   >
-                    {amc.overviewName}
-                    {sortAmcId === amc.amcId ? (sortDesc ? " ↓" : " ↑") : ""}
+                    {sector}
+                    {sortSector === sector ? (sortDesc ? " ↓" : " ↑") : ""}
                   </button>
                 </TableHead>
               ))}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sortedSectors.map((sector) => (
-              <TableRow key={sector}>
-                <TableCell className="sticky left-0 z-10 bg-card font-medium">{sector}</TableCell>
-                {limitedAmcs.map((amc) => {
+            {sortedAmcs.map((amc) => (
+              <TableRow key={amc.amcId}>
+                <TableCell className="sticky left-0 z-10 bg-card font-medium">{amc.overviewName}</TableCell>
+                {limitedSectors.map((sector) => {
                   const value = data.matrix[sector]?.[amc.amcId] ?? 0;
                   return (
-                    <TableCell key={amc.amcId} className="text-right tabular-nums">
+                    <TableCell key={sector} className="text-right tabular-nums">
                       {value > 0 ? formatPct(value) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                   );
