@@ -124,7 +124,7 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
                   <button
                     type="button"
                     onClick={() => toggleSort(sector)}
-                    className="whitespace-nowrap hover:text-foreground"
+                    className="block w-full whitespace-nowrap text-right hover:text-foreground"
                   >
                     {sector}
                     {sortSector === sector ? (sortDesc ? " ↓" : " ↑") : ""}
@@ -136,7 +136,7 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
           <TableBody>
             {sortedAmcs.map((amc) => (
               <TableRow key={amc.amcId}>
-                <TableCell className="sticky left-0 z-10 bg-card font-medium">{amc.overviewName}</TableCell>
+                <TableCell className="sticky left-0 z-10 bg-card font-serif font-medium">{amc.overviewName}</TableCell>
                 {limitedSectors.map((sector) => {
                   const value = data.matrix[sector]?.[amc.amcId] ?? 0;
                   return (
