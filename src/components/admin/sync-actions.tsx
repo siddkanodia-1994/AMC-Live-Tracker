@@ -18,11 +18,25 @@ interface SyncResult {
   unmatchedIsins: string[];
 }
 
+interface ReclaimResult {
+  reportPeriod: string;
+  fromDate: string;
+  toDate: string;
+  nothingToReclaim: boolean;
+  instrumentSync: SyncResult | null;
+  displacedRowsDeleted: number;
+  backfill: { tradingDatesFound: number; canonicalRowsInserted: number } | null;
+  dailyDataQualityDatesProcessed: number;
+  warnings: string[];
+}
+
 export function SyncActions({ secret }: { secret: string }) {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [uploading, setUploading] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [reclaiming, setReclaiming] = useState(false);
+  const [reclaimResult, setReclaimResult] = useState<ReclaimResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleSync() {
@@ -66,8 +80,31 @@ export function SyncActions({ secret }: { secret: string }) {
     }
   }
 
+  async function handleReclaim() {
+    setReclaiming(true);
+    setReclaimResult(null);
+    try {
+      const res = await adminFetch("/api/admin/reclaim-forward-gap", secret, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Recalculation failed");
+      }
+      const result: ReclaimResult = await res.json();
+      setReclaimResult(result);
+      if (result.nothingToReclaim) {
+        toast.success("Nothing to reclaim — forward gap already up to date.");
+      } else {
+        toast.success(`Recalculated ${result.fromDate} to ${result.toDate} for ${result.reportPeriod}`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Recalculation failed");
+    } finally {
+      setReclaiming(false);
+    }
+  }
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <Card>
         <CardHeader>
           <CardTitle>DHAN instrument master</CardTitle>
@@ -124,6 +161,52 @@ export function SyncActions({ secret }: { secret: string }) {
                   <summary>{importResult.warnings.length} warning(s)</summary>
                   <ul className="mt-1 list-disc pl-4">
                     {importResult.warnings.map((w, i) => (
+                      <li key={i}>{w}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recalculate live AUM through today</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            After uploading a new month, the days already elapsed since the 1st are still priced off
+            the previous month&apos;s holdings until this runs. Syncs instruments, then reclaims those
+            days for the current period. Safe to re-run — a no-op if already up to date.
+          </p>
+          <Button onClick={handleReclaim} disabled={reclaiming}>
+            {reclaiming ? "Recalculating..." : "Recalculate live AUM through today"}
+          </Button>
+          {reclaimResult && (
+            <div className="text-sm">
+              {reclaimResult.nothingToReclaim ? (
+                <p>Nothing to reclaim — {reclaimResult.reportPeriod}&apos;s forward gap hasn&apos;t started yet.</p>
+              ) : (
+                <>
+                  <p>
+                    Reclaimed {reclaimResult.fromDate} to {reclaimResult.toDate} for{" "}
+                    {reclaimResult.reportPeriod}: {reclaimResult.backfill?.canonicalRowsInserted ?? 0} canonical
+                    rows, {reclaimResult.dailyDataQualityDatesProcessed} days of Daily Data recomputed.
+                  </p>
+                  {reclaimResult.instrumentSync && (
+                    <p className="text-muted-foreground">
+                      Instrument sync: {reclaimResult.instrumentSync.upserted} ISINs mapped.
+                    </p>
+                  )}
+                </>
+              )}
+              {reclaimResult.warnings.length > 0 && (
+                <details className="text-amber-600 dark:text-amber-400">
+                  <summary>{reclaimResult.warnings.length} warning(s)</summary>
+                  <ul className="mt-1 list-disc pl-4">
+                    {reclaimResult.warnings.map((w, i) => (
                       <li key={i}>{w}</li>
                     ))}
                   </ul>

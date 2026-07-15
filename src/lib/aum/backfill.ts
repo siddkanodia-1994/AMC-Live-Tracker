@@ -18,7 +18,12 @@ function dayBefore(dateStr: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-function yesterdayIst(): string {
+// Exported for reclaim-forward-gap.ts, which needs "yesterday" as an
+// explicit toDate -- this function's own default-toDate branch below
+// (dayBefore(minDate)) is scoped to "the earliest canonical snapshot
+// across the WHOLE table", which is wrong for extending a just-uploaded
+// period's timeline forward once older canonical history already exists.
+export function yesterdayIst(): string {
   const now = new Date(Date.now() + IST_OFFSET_MS);
   now.setUTCDate(now.getUTCDate() - 1);
   return now.toISOString().slice(0, 10);
