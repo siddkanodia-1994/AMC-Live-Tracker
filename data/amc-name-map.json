@@ -200,7 +200,7 @@
     "slug": "quantum-mutual-fund"
   },
   {
-    "overviewName": "iSIF",
+    "overviewName": "ICICI Pru iSIF",
     "sheetName": "iSIF",
     "slug": "isif"
   },
@@ -230,7 +230,7 @@
     "slug": "capitalmind-mutual-fund"
   },
   {
-    "overviewName": "Diviniti SIF",
+    "overviewName": "ITI Diviniti SIF",
     "sheetName": "Diviniti SIF",
     "slug": "diviniti-sif"
   },
@@ -270,7 +270,7 @@
     "slug": "arthaya-sif"
   },
   {
-    "overviewName": "Arudha SIF",
+    "overviewName": "Bandhan Arudha SIF",
     "sheetName": "Arudha SIF",
     "slug": "arudha-sif"
   },
@@ -278,5 +278,10 @@
     "overviewName": "WSIF",
     "sheetName": "WSIF",
     "slug": "wsif"
+  },
+  {
+    "overviewName": "Edelweiss Altiva SIF",
+    "sheetName": "Altiva SIF",
+    "slug": "edelweiss-altiva-sif"
   }
 ]
