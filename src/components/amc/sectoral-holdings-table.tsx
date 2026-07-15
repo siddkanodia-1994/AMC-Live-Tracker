@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRegisterExport } from "@/components/layout/export-context";
-import { formatPct } from "@/lib/utils/format";
+import { FieldBox } from "./field-box";
+import { formatPct, formatReportPeriodLabel } from "@/lib/utils/format";
 import { TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
 import { useSectoralHoldings } from "@/hooks/use-sectoral-holdings";
 
@@ -14,11 +15,28 @@ import { useSectoralHoldings } from "@/hooks/use-sectoral-holdings";
 // informative starting point.
 const DEFAULT_SECTOR_TOP_N: TopNOption = 15;
 
+const selectClass =
+  "w-full min-w-0 rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
+
+type SortKey = string | "total";
+
 export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
-  const { data, error, isLoading } = useSectoralHoldings();
+  const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null);
+  const { data, error, isLoading } = useSectoralHoldings(selectedPeriod ?? undefined);
   const [sectorTopN, setSectorTopN] = useState<TopNOption>(DEFAULT_SECTOR_TOP_N);
-  const [sortSector, setSortSector] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDesc, setSortDesc] = useState(false);
+
+  const amcHeadRef = useRef<HTMLTableCellElement>(null);
+  const [amcColWidth, setAmcColWidth] = useState(0);
+
+  useEffect(() => {
+    const el = amcHeadRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setAmcColWidth(entry.contentRect.width));
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
 
   // AMC rows: the shared Top-N toggle, ranked by reported AUM -- same
   // metric every other tab's default row order uses.
@@ -35,30 +53,46 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
     return sectorTopN === "all" ? data.sectors : data.sectors.slice(0, sectorTopN);
   }, [data, sectorTopN]);
 
+  // Total column: sums each AMC's % across exactly the sector columns
+  // currently on screen -- tracks the Sectors Top-N toggle dynamically,
+  // not a fixed sector count.
+  const totalByAmcId = useMemo(() => {
+    const map = new Map<number, number>();
+    if (!data) return map;
+    for (const amc of limitedAmcs) {
+      let sum = 0;
+      for (const sector of limitedSectors) {
+        sum += data.matrix[sector]?.[amc.amcId] ?? 0;
+      }
+      map.set(amc.amcId, sum);
+    }
+    return map;
+  }, [data, limitedAmcs, limitedSectors]);
+
   // Only re-orders the already-selected row set when a column sort is
   // active -- Top-N selection (which rows appear) and column sort (what
   // order they're shown in) are independent, same two-stage pattern as
   // every other sortable table here.
   const sortedAmcs = useMemo(() => {
-    if (sortSector === null || !data) return limitedAmcs;
+    if (sortKey === null || !data) return limitedAmcs;
     const list = [...limitedAmcs];
     list.sort((a, b) => {
-      const av = data.matrix[sortSector]?.[a.amcId] ?? 0;
-      const bv = data.matrix[sortSector]?.[b.amcId] ?? 0;
+      const av = sortKey === "total" ? (totalByAmcId.get(a.amcId) ?? 0) : (data.matrix[sortKey]?.[a.amcId] ?? 0);
+      const bv = sortKey === "total" ? (totalByAmcId.get(b.amcId) ?? 0) : (data.matrix[sortKey]?.[b.amcId] ?? 0);
       const cmp = av - bv;
       return sortDesc ? -cmp : cmp;
     });
     return list;
-  }, [limitedAmcs, sortSector, sortDesc, data]);
+  }, [limitedAmcs, sortKey, sortDesc, data, totalByAmcId]);
 
-  function toggleSort(sector: string) {
-    if (sortSector !== sector) {
-      setSortSector(sector);
+  function toggleSort(key: SortKey) {
+    if (sortKey !== key) {
+      setSortKey(key);
       setSortDesc(true);
     } else if (sortDesc) {
       setSortDesc(false);
     } else {
-      setSortSector(null);
+      setSortKey(null);
       setSortDesc(false);
     }
   }
@@ -69,7 +103,10 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
       fileName: `sectoral-holdings-${data.reportPeriod}`,
       sheetName: "Sectoral Holdings",
       rows: sortedAmcs.map((amc) => {
-        const record: Record<string, string | number | null> = { AMC: amc.overviewName };
+        const record: Record<string, string | number | null> = {
+          AMC: amc.overviewName,
+          "Total (%)": (totalByAmcId.get(amc.amcId) ?? 0) * 100,
+        };
         for (const sector of limitedSectors) {
           record[`${sector} (%)`] = (data.matrix[sector]?.[amc.amcId] ?? 0) * 100;
         }
@@ -90,35 +127,65 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-3xl text-sm text-muted-foreground">
-          Each AMC&apos;s holdings as a % of its own reported AUM, by sector, for {data.reportPeriod}. Click a
-          sector&apos;s column header to sort AMCs by that sector&apos;s allocation — first click descending, second
-          ascending, third click back to the default (AUM, descending).
+          Each AMC&apos;s holdings as a % of its own reported AUM, by sector, for {data.reportPeriod}. Total sums the
+          currently shown sector columns. Click a sector&apos;s (or Total&apos;s) column header to sort AMCs by it —
+          first click descending, second ascending, third click back to the default (AUM, descending).
         </p>
-        <div className="flex items-center gap-1 text-sm">
-          <span className="text-muted-foreground">Sectors:</span>
-          {TOP_N_OPTIONS.map((option) => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => setSectorTopN(option)}
-              className={`rounded-md px-2 py-1 ${
-                sectorTopN === option
-                  ? "bg-[var(--toolbar-accent)] text-white"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+        <div className="flex flex-wrap items-end gap-2.5">
+          <FieldBox label="Month">
+            <select
+              value={data.reportPeriod}
+              onChange={(e) => e.target.value && setSelectedPeriod(e.target.value)}
+              className={selectClass}
             >
-              {option === "all" ? "All" : `Top ${option}`}
-            </button>
-          ))}
+              {data.availableReportPeriods.map((p) => (
+                <option key={p} value={p}>
+                  {formatReportPeriodLabel(p)}
+                </option>
+              ))}
+            </select>
+          </FieldBox>
+          <div className="flex items-center gap-1 text-sm">
+            <span className="text-muted-foreground">Sectors:</span>
+            {TOP_N_OPTIONS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setSectorTopN(option)}
+                className={`rounded-md px-2 py-1 ${
+                  sectorTopN === option
+                    ? "bg-[var(--toolbar-accent)] text-white"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {option === "all" ? "All" : `Top ${option}`}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="sticky left-0 z-10 bg-card">AMC</TableHead>
+              <TableHead ref={amcHeadRef} className="sticky left-0 z-10 bg-card">
+                AMC
+              </TableHead>
+              <TableHead
+                className="sticky z-10 bg-card text-right"
+                style={{ left: amcColWidth }}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleSort("total")}
+                  className="block w-full whitespace-nowrap text-right hover:text-foreground"
+                >
+                  Total
+                  {sortKey === "total" ? (sortDesc ? " ↓" : " ↑") : ""}
+                </button>
+              </TableHead>
               {limitedSectors.map((sector) => (
                 <TableHead key={sector} className="text-right">
                   <button
@@ -127,7 +194,7 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
                     className="block w-full whitespace-nowrap text-right hover:text-foreground"
                   >
                     {sector}
-                    {sortSector === sector ? (sortDesc ? " ↓" : " ↑") : ""}
+                    {sortKey === sector ? (sortDesc ? " ↓" : " ↑") : ""}
                   </button>
                 </TableHead>
               ))}
@@ -137,6 +204,12 @@ export function SectoralHoldingsTable({ topN }: { topN: TopNOption }) {
             {sortedAmcs.map((amc) => (
               <TableRow key={amc.amcId}>
                 <TableCell className="sticky left-0 z-10 bg-card font-serif font-medium">{amc.overviewName}</TableCell>
+                <TableCell
+                  className="sticky z-10 bg-card text-right tabular-nums font-medium"
+                  style={{ left: amcColWidth }}
+                >
+                  {formatPct(totalByAmcId.get(amc.amcId) ?? 0)}
+                </TableCell>
                 {limitedSectors.map((sector) => {
                   const value = data.matrix[sector]?.[amc.amcId] ?? 0;
                   return (

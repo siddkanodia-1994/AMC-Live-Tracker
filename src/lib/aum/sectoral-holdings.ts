@@ -1,7 +1,10 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
-import { holdings } from "../db/schema";
-import { computeLiveAum } from "./compute-live-aum";
+import { amcPeriods, amcs, appSettings, holdings } from "../db/schema";
+import { getAvailableReportPeriods } from "./aum-growth";
+import { NoDataImportedError } from "./compute-live-aum";
+
+const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
 
 export interface SectoralHoldingsAmc {
   amcId: number;
@@ -12,7 +15,8 @@ export interface SectoralHoldingsAmc {
 
 export interface SectoralHoldingsResult {
   reportPeriod: string;
-  // Every distinct raw `holdings.sector` label for the current period,
+  availableReportPeriods: string[];
+  // Every distinct raw `holdings.sector` label for the resolved period,
   // unfiltered (includes debt/repo/cash-adjacent labels like "G-Sec",
   // "Others", "Miscellaneous" alongside genuine industry sectors -- a
   // holding's contribution is grouped by whatever sector string it's
@@ -27,25 +31,44 @@ export interface SectoralHoldingsResult {
   matrix: Record<string, Record<number, number>>;
 }
 
-/**
- * Sector x AMC allocation matrix for the current report period: what
- * fraction of each AMC's reported AUM sits in each sector. Current-
- * period-only (matching Cash Holdings' scope), pure DB reads.
- */
-export async function getSectoralHoldings(): Promise<SectoralHoldingsResult> {
-  const snapshot = await computeLiveAum();
-  const holdingRows = await db
-    .select({ amcId: holdings.amcId, sector: holdings.sector, marketValueCr: holdings.marketValueCr })
-    .from(holdings)
-    .where(eq(holdings.reportPeriod, snapshot.reportPeriod));
+async function getCurrentReportPeriod(): Promise<string> {
+  const [row] = await db.select().from(appSettings).where(eq(appSettings.key, CURRENT_REPORT_PERIOD_KEY));
+  if (!row) throw new NoDataImportedError();
+  return row.value;
+}
 
-  const amcs: SectoralHoldingsAmc[] = snapshot.amcs.map((amc) => ({
+/**
+ * Sector x AMC allocation matrix for a given report period (defaults to
+ * current): what fraction of each AMC's reported AUM sits in each sector.
+ * Pure DB reads, no live pricing involved -- reportedAumCr comes straight
+ * from that period's own amcPeriods row, so any past month can be browsed
+ * the same way as the current one (unlike computeLiveAum, which only ever
+ * knows about the current period).
+ */
+export async function getSectoralHoldings(reportPeriod?: string): Promise<SectoralHoldingsResult> {
+  const availableReportPeriods = await getAvailableReportPeriods();
+  const resolvedPeriod =
+    reportPeriod && availableReportPeriods.includes(reportPeriod) ? reportPeriod : await getCurrentReportPeriod();
+
+  const [amcRows, holdingRows] = await Promise.all([
+    db
+      .select({ amcId: amcPeriods.amcId, slug: amcs.slug, overviewName: amcs.overviewName, reportedAumCr: amcPeriods.reportedAumCr })
+      .from(amcPeriods)
+      .innerJoin(amcs, eq(amcPeriods.amcId, amcs.id))
+      .where(eq(amcPeriods.reportPeriod, resolvedPeriod)),
+    db
+      .select({ amcId: holdings.amcId, sector: holdings.sector, marketValueCr: holdings.marketValueCr })
+      .from(holdings)
+      .where(eq(holdings.reportPeriod, resolvedPeriod)),
+  ]);
+
+  const amcList: SectoralHoldingsAmc[] = amcRows.map((amc) => ({
     amcId: amc.amcId,
     slug: amc.slug,
     overviewName: amc.overviewName,
-    reportedAumCr: amc.reportedAumCr,
+    reportedAumCr: Number(amc.reportedAumCr),
   }));
-  const reportedAumByAmcId = new Map(amcs.map((a) => [a.amcId, a.reportedAumCr]));
+  const reportedAumByAmcId = new Map(amcList.map((a) => [a.amcId, a.reportedAumCr]));
 
   // sector -> amcId -> sum(marketValueCr)
   const valueBySectorAndAmc = new Map<string, Map<number, number>>();
@@ -75,5 +98,5 @@ export async function getSectoralHoldings(): Promise<SectoralHoldingsResult> {
     matrix[sector] = row;
   }
 
-  return { reportPeriod: snapshot.reportPeriod, sectors, amcs, matrix };
+  return { reportPeriod: resolvedPeriod, availableReportPeriods, sectors, amcs: amcList, matrix };
 }

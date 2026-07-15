@@ -11,9 +11,11 @@ async function fetcher(url: string): Promise<SectoralHoldingsResult> {
 }
 
 // No refreshInterval: holdings only change on an explicit admin upload,
-// not intraday -- same pattern as use-cash-holdings.ts.
-export function useSectoralHoldings() {
-  return useSWR<SectoralHoldingsResult>("/api/sectoral-holdings", fetcher, {
+// not intraday -- same pattern as use-cash-holdings.ts. `period` is part
+// of the SWR key so switching months never reuses another month's cache.
+export function useSectoralHoldings(period?: string) {
+  const url = period ? `/api/sectoral-holdings?period=${encodeURIComponent(period)}` : "/api/sectoral-holdings";
+  return useSWR<SectoralHoldingsResult>(url, fetcher, {
     revalidateOnFocus: false,
   });
 }
