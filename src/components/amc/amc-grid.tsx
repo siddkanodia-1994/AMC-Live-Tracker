@@ -24,7 +24,8 @@ import { RelativeTime } from "@/components/ui/relative-time";
 import { InfoIcon } from "lucide-react";
 import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
-import { listFiscalQuarters } from "@/lib/aum/report-period";
+import { closestDateAtOrBefore, lastDayOfPreviousCalendarMonth, listFiscalQuarters } from "@/lib/aum/report-period";
+import { getIstDateString } from "@/lib/utils/date";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
@@ -171,10 +172,39 @@ export function AmcGrid({
     return q ? adjustedAmcs.filter((a) => a.overviewName.toLowerCase().includes(q)) : adjustedAmcs;
   }, [adjustedAmcs, query]);
 
+  // Card 1's comparison basis: industry-wide Live AUM as of the last day of
+  // the previous calendar month (e.g. 30 Jun while viewing July), not
+  // Reported AUM -- a month-to-date live-growth signal instead of a
+  // live-vs-last-disclosed-figure divergence signal. Anchored off whichever
+  // date is actually being viewed (data.asOfDate in historical mode, else
+  // today) so it stays self-consistent when browsing a past day. `history`
+  // already covers the full industry timeline (same data the trend chart
+  // below uses) -- no extra fetch needed. The calendar-exact last day of the
+  // month is often not a trading day (confirmed: 31 May 2026 is a Sunday),
+  // so this snaps to the closest available date at-or-before it via
+  // closestDateAtOrBefore, same "nearest available on or before" leniency
+  // already used for the Total AUM Growth date picker.
+  const lastMonthEndTargetDate = useMemo(
+    () => lastDayOfPreviousCalendarMonth(data?.asOfDate ?? getIstDateString()),
+    [data?.asOfDate]
+  );
+  const lastMonthEndDate = useMemo(() => {
+    const closest = closestDateAtOrBefore(history.map((h) => h.date).sort(), lastMonthEndTargetDate);
+    // closestDateAtOrBefore falls back to the EARLIEST available date when
+    // none qualify (e.g. history doesn't reach back that far yet) -- that
+    // fallback can land AFTER the target, which would mislabel the caption.
+    // Only accept a real at-or-before match.
+    return closest !== null && closest <= lastMonthEndTargetDate ? closest : null;
+  }, [history, lastMonthEndTargetDate]);
+  const lastMonthEndLiveAumCr = useMemo(
+    () => (lastMonthEndDate !== null ? (history.find((h) => h.date === lastMonthEndDate)?.liveAumCr ?? null) : null),
+    [history, lastMonthEndDate]
+  );
+
   const industryTotals = useMemo(() => {
     if (!data) return null;
     const totalAvgAumCr = data.amcs.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
-    const liveDeltaCr = data.totalLiveAumCr - data.totalReportedAumCr;
+    const liveDeltaCr = lastMonthEndLiveAumCr !== null ? data.totalLiveAumCr - lastMonthEndLiveAumCr : null;
     const avgDeltaCr = totalAvgAumCr - data.totalReportedAumCr;
     // Falls back to today's own liveAumCr (not skipping the AMC) for any AMC
     // with no prior-day figure yet -- that AMC contributes zero change to the
@@ -195,7 +225,10 @@ export function AmcGrid({
     return {
       totalAvgAumCr,
       liveDeltaCr,
-      liveDeltaPct: data.totalReportedAumCr !== 0 ? liveDeltaCr / data.totalReportedAumCr : 0,
+      liveDeltaPct:
+        liveDeltaCr !== null && lastMonthEndLiveAumCr !== 0 && lastMonthEndLiveAumCr !== null
+          ? liveDeltaCr / lastMonthEndLiveAumCr
+          : null,
       avgDeltaCr,
       avgDeltaPct: data.totalReportedAumCr !== 0 ? avgDeltaCr / data.totalReportedAumCr : 0,
       total90dAvgAumCr,
@@ -206,7 +239,7 @@ export function AmcGrid({
       oneDayChangeCr,
       oneDayChangePct: totalPreviousDayLiveAumCr !== 0 ? oneDayChangeCr / totalPreviousDayLiveAumCr : null,
     };
-  }, [data]);
+  }, [data, lastMonthEndLiveAumCr]);
 
   if (error && !data) {
     return (
@@ -313,10 +346,16 @@ export function AmcGrid({
           <CardContent className="space-y-1">
             <div className="flex items-center gap-2">
               <div className="text-3xl font-bold tabular-nums">{formatCr(data.totalLiveAumCr)}</div>
-              <AumDeltaBadge deltaCr={industryTotals.liveDeltaCr} deltaPct={industryTotals.liveDeltaPct} />
+              {industryTotals.liveDeltaCr !== null && industryTotals.liveDeltaPct !== null && (
+                <AumDeltaBadge deltaCr={industryTotals.liveDeltaCr} deltaPct={industryTotals.liveDeltaPct} />
+              )}
             </div>
             <div className="text-xs text-muted-foreground">
-              Reported: {formatCr(data.totalReportedAumCr)} ·{" "}
+              {lastMonthEndDate !== null && lastMonthEndLiveAumCr !== null && (
+                <>
+                  vs {formatShortDate(lastMonthEndDate)}: {formatCr(lastMonthEndLiveAumCr)} ·{" "}
+                </>
+              )}
               {data.pricesAreLive ? (
                 <>
                   Updated <RelativeTime iso={data.computedAt} />
