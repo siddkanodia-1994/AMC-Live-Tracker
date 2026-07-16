@@ -123,6 +123,9 @@ export interface LiveAumSnapshot {
   // pricesAreLive (on non-trading days everything falls back to last close
   // by design).
   distinctLastCloseCount: number;
+  // The actual stocks behind distinctLastCloseCount, sorted by name -- lets
+  // the Overview banner name them instead of just showing a count.
+  lastCloseStocks: { isin: string; companyName: string }[];
   // The calendar date (IST) the shown prices actually reflect. Equals
   // today's date when pricesAreLive; otherwise the last real trading day's
   // date (see lastTradingDayIstString) — lets the UI show "Prices as of

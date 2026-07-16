@@ -252,8 +252,13 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   // prior price (priceSource "last_close") -- i.e. they WERE being priced
   // successfully before but aren't now. This is the live-coverage-regression
   // signal the freshness badge warns on; deterministic per ISIN for the same
-  // reason as distinctIsinInfo above.
+  // reason as distinctIsinInfo above. Company name is carried alongside so
+  // the Overview banner can name the actual stocks instead of just a count
+  // -- first-write-wins per ISIN, same tolerance as distinctIsinInfo (an
+  // ISIN's company name is consistent across the AMCs holding it in
+  // practice, so which AMC's row "wins" doesn't matter here).
   const distinctLastCloseIsins = new Set<string>();
+  const lastCloseCompanyNameByIsin = new Map<string, string>();
   // Today's live price per ISIN, deduplicated the same way — written once to
   // isin_daily_price after the loop, seeding tomorrow's "1 Day Change" column.
   const todayPriceByIsin = new Map<string, number>();
@@ -354,7 +359,10 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
         const isLive = priceSource === "live" || priceSource === "foreign_live" || priceSource === "last_close";
         amcHoldingIsins.add(h.isin);
         if (isLive) amcLivePricedIsins.add(h.isin);
-        if (priceSource === "last_close") distinctLastCloseIsins.add(h.isin);
+        if (priceSource === "last_close") {
+          distinctLastCloseIsins.add(h.isin);
+          if (!lastCloseCompanyNameByIsin.has(h.isin)) lastCloseCompanyNameByIsin.set(h.isin, h.companyName);
+        }
         const existing = distinctIsinInfo.get(h.isin);
         distinctIsinInfo.set(h.isin, {
           isLive: (existing?.isLive ?? false) || isLive,
@@ -457,6 +465,9 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   for (const info of distinctIsinInfo.values()) {
     if (info.isLive) distinctLivePricedCount++;
   }
+  const lastCloseStocks = [...lastCloseCompanyNameByIsin.entries()]
+    .map(([isin, companyName]) => ({ isin, companyName }))
+    .sort((a, b) => a.companyName.localeCompare(b.companyName));
 
   const snapshot: LiveAumSnapshot = {
     amcs: amcResults,
@@ -470,6 +481,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
     distinctDebtInstrumentCount,
     distinctLivePricedCount,
     distinctLastCloseCount: distinctLastCloseIsins.size,
+    lastCloseStocks,
     priceAsOfDate: tradingDay && haveTodayData ? getIstDateString() : lastTradingDayIstString(),
     // Deliberately isMarketOpen(), not shouldFetchLive/tradingDay: this
     // drives the frontend's "live ticking price" framing (FreshnessBadge).

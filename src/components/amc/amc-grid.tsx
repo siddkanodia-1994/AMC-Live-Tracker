@@ -267,11 +267,12 @@ export function AmcGrid({
   // "degraded" status alone stays silent — it fires perpetually for illiquid
   // holdings DHAN simply never quotes, which is benign.
   const lastCloseCount = data.distinctLastCloseCount ?? 0;
+  const isLastCloseWarning = !data.dhanErrorDetail && data.dhanStatus !== "unavailable" && data.pricesAreLive && lastCloseCount > 0;
   const statusMessage = data.dhanErrorDetail
     ? `DHAN pricing issue: ${data.dhanErrorDetail}`
     : data.dhanStatus === "unavailable"
       ? DHAN_UNAVAILABLE_MESSAGE
-      : data.pricesAreLive && lastCloseCount > 0
+      : isLastCloseWarning
         ? `${lastCloseCount} stock${lastCloseCount === 1 ? "" : "s"} that previously had live prices ${lastCloseCount === 1 ? "is" : "are"} no longer being priced live — showing their last close instead.`
         : null;
 
@@ -425,6 +426,16 @@ export function AmcGrid({
       {statusMessage && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
           {statusMessage}
+          {isLastCloseWarning && data.lastCloseStocks.length > 0 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer">Show stock{data.lastCloseStocks.length === 1 ? "" : "s"}</summary>
+              <ul className="mt-1 list-disc pl-4">
+                {data.lastCloseStocks.map((s) => (
+                  <li key={s.isin}>{s.companyName}</li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       )}
       {data.dailyDataQualityAlert && (
