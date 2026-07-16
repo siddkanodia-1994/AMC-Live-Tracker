@@ -24,8 +24,7 @@ import { RelativeTime } from "@/components/ui/relative-time";
 import { InfoIcon } from "lucide-react";
 import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
-import { closestDateAtOrBefore, lastDayOfPreviousCalendarMonth, listFiscalQuarters } from "@/lib/aum/report-period";
-import { getIstDateString } from "@/lib/utils/date";
+import { listFiscalQuarters } from "@/lib/aum/report-period";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
@@ -175,31 +174,31 @@ export function AmcGrid({
   // Card 1's comparison basis: industry-wide Live AUM as of the last day of
   // the previous calendar month (e.g. 30 Jun while viewing July), not
   // Reported AUM -- a month-to-date live-growth signal instead of a
-  // live-vs-last-disclosed-figure divergence signal. Anchored off whichever
-  // date is actually being viewed (data.asOfDate in historical mode, else
-  // today) so it stays self-consistent when browsing a past day. `history`
-  // already covers the full industry timeline (same data the trend chart
-  // below uses) -- no extra fetch needed. The calendar-exact last day of the
-  // month is often not a trading day (confirmed: 31 May 2026 is a Sunday),
-  // so this snaps to the closest available date at-or-before it via
-  // closestDateAtOrBefore, same "nearest available on or before" leniency
-  // already used for the Total AUM Growth date picker.
-  const lastMonthEndTargetDate = useMemo(
-    () => lastDayOfPreviousCalendarMonth(data?.asOfDate ?? getIstDateString()),
-    [data?.asOfDate]
-  );
-  const lastMonthEndDate = useMemo(() => {
-    const closest = closestDateAtOrBefore(history.map((h) => h.date).sort(), lastMonthEndTargetDate);
-    // closestDateAtOrBefore falls back to the EARLIEST available date when
-    // none qualify (e.g. history doesn't reach back that far yet) -- that
-    // fallback can land AFTER the target, which would mislabel the caption.
-    // Only accept a real at-or-before match.
-    return closest !== null && closest <= lastMonthEndTargetDate ? closest : null;
-  }, [history, lastMonthEndTargetDate]);
-  const lastMonthEndLiveAumCr = useMemo(
-    () => (lastMonthEndDate !== null ? (history.find((h) => h.date === lastMonthEndDate)?.liveAumCr ?? null) : null),
-    [history, lastMonthEndDate]
-  );
+  // live-vs-last-disclosed-figure divergence signal. Reuses
+  // adjustments.data.histLiveAumByAmcId -- the EXACT same per-AMC data the
+  // "Hist. Live AUM" column/toggle below already computes (defaults to
+  // lastDayOfPreviousCalendarMonth server-side, see overview-adjustments.ts)
+  // -- rather than a separate history-based lookup. That's not just fewer
+  // moving parts: getIndustryAumHistory() sums ALL AMCs ever canonically
+  // tracked on that date, including ones no longer in the current AMC
+  // roster (confirmed: 5 SIFs merged/renamed away between May and June),
+  // while histLiveAumByAmcId is scoped to TODAY's current AMC list with a
+  // same-as-today fallback for any brand-new AMC with no history yet --
+  // exactly matching the Overview table's own "Industry Total" row, which
+  // is where this comparison figure needs to agree with what's already on
+  // screen a few rows below it.
+  // histLiveDate always defaults relative to REAL today, independent of
+  // whatever asOfDate the Overview might be browsing (same as the "Hist.
+  // Live AUM" column itself) -- in historical mode that could put the
+  // comparison basis AFTER the day being viewed, which reads backwards. So
+  // this badge just doesn't render in that mode, same treatment card 2
+  // already gives its own "not available for historical dates" case.
+  const lastMonthEndDate = data?.asOfDate ? null : (adjustments.data?.histLiveDate ?? null);
+  const lastMonthEndLiveAumCr = useMemo(() => {
+    if (!data || data.asOfDate || !adjustments.data) return null;
+    const map = adjustments.data.histLiveAumByAmcId;
+    return data.amcs.reduce((sum, amc) => sum + (map[amc.amcId] ?? amc.liveAumCr), 0);
+  }, [data, adjustments.data]);
 
   const industryTotals = useMemo(() => {
     if (!data) return null;
