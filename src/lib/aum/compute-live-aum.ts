@@ -1,6 +1,6 @@
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcPeriods, amcs, appSettings, holdings, instrumentMap, liveAumDailySnapshot } from "../db/schema";
+import { amcPeriods, amcs, appSettings, holdings, instrumentMap, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { fetchLtps, segmentKey } from "../dhan/client";
 import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
 import { isBankDebtOrRepo, isCashEquivalent, isUsListedEquityIsin } from "../excel/instrument-classification";
@@ -69,6 +69,47 @@ async function getCurrentReportPeriod(): Promise<string> {
     .where(eq(appSettings.key, CURRENT_REPORT_PERIOD_KEY));
   if (!row) throw new NoDataImportedError();
   return row.value;
+}
+
+// No per-ISIN price-history table exists to answer "was this stock live-
+// priced on date Y" directly. Cheap proxy: isin_daily_price stores one row
+// per (isin, date) regardless of source, and a genuinely live-traded stock's
+// close moves at least slightly most days -- so counting consecutive
+// identical stored prices walking back from the most recent date is a
+// strong "stuck / suspended" signal. null = no price history at all yet
+// (e.g. a brand-new listing).
+async function computeDaysUnchanged(isins: string[]): Promise<Map<string, number | null>> {
+  const result = new Map<string, number | null>();
+  if (isins.length === 0) return result;
+
+  const rows = await db
+    .select({ isin: isinDailyPrice.isin, snapshotDate: isinDailyPrice.snapshotDate, priceInr: isinDailyPrice.priceInr })
+    .from(isinDailyPrice)
+    .where(inArray(isinDailyPrice.isin, isins))
+    .orderBy(isinDailyPrice.isin, desc(isinDailyPrice.snapshotDate));
+
+  const rowsByIsin = new Map<string, { priceInr: string }[]>();
+  for (const r of rows) {
+    const list = rowsByIsin.get(r.isin);
+    if (list) list.push(r);
+    else rowsByIsin.set(r.isin, [r]);
+  }
+
+  for (const isin of isins) {
+    const history = rowsByIsin.get(isin);
+    if (!history || history.length === 0) {
+      result.set(isin, null);
+      continue;
+    }
+    let streak = 0;
+    const latestPrice = history[0].priceInr;
+    for (const row of history) {
+      if (row.priceInr !== latestPrice) break;
+      streak++;
+    }
+    result.set(isin, streak);
+  }
+  return result;
 }
 
 async function writeDailySnapshot(snapshot: LiveAumSnapshot): Promise<void> {
@@ -465,8 +506,9 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   for (const info of distinctIsinInfo.values()) {
     if (info.isLive) distinctLivePricedCount++;
   }
+  const daysUnchangedByIsin = await computeDaysUnchanged([...lastCloseCompanyNameByIsin.keys()]);
   const lastCloseStocks = [...lastCloseCompanyNameByIsin.entries()]
-    .map(([isin, companyName]) => ({ isin, companyName }))
+    .map(([isin, companyName]) => ({ isin, companyName, daysUnchanged: daysUnchangedByIsin.get(isin) ?? null }))
     .sort((a, b) => a.companyName.localeCompare(b.companyName));
 
   const snapshot: LiveAumSnapshot = {

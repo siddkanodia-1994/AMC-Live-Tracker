@@ -59,7 +59,20 @@ export function AmcGrid({
   // panel below the tab bar can conditionally show the Overview-only field
   // boxes without duplicating tab-switch logic.
   const [activeTab, setActiveTab] = useState("overview");
-  const { data, error, isLoading } = useLiveAum(initialData, asOfDate ?? undefined);
+  const { data, error, isLoading, mutate } = useLiveAum(initialData, asOfDate ?? undefined);
+  const [isCheckingNow, setIsCheckingNow] = useState(false);
+  async function checkNow() {
+    setIsCheckingNow(true);
+    try {
+      const res = await fetch("/api/live-aum?refresh=1");
+      if (res.ok) {
+        const fresh = await res.json();
+        await mutate(fresh, { revalidate: false });
+      }
+    } finally {
+      setIsCheckingNow(false);
+    }
+  }
   const [query, setQuery] = useState("");
   // The Overview table's own two adjustable views -- independent of asOfDate
   // above (that's "reprice the whole page to a historical day"; these are
@@ -425,13 +438,31 @@ export function AmcGrid({
       </div>
       {statusMessage && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-          {statusMessage}
+          <div className="flex flex-wrap items-center gap-2">
+            <span>{statusMessage}</span>
+            {isLastCloseWarning && (
+              <button
+                type="button"
+                onClick={checkNow}
+                disabled={isCheckingNow}
+                className="rounded-md border border-amber-500/50 px-2 py-0.5 text-xs font-medium hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isCheckingNow ? "Checking…" : "Check now"}
+              </button>
+            )}
+          </div>
           {isLastCloseWarning && data.lastCloseStocks.length > 0 && (
             <details className="mt-1">
               <summary className="cursor-pointer">Show stock{data.lastCloseStocks.length === 1 ? "" : "s"}</summary>
               <ul className="mt-1 list-disc pl-4">
                 {data.lastCloseStocks.map((s) => (
-                  <li key={s.isin}>{s.companyName}</li>
+                  <li key={s.isin}>
+                    {s.companyName}
+                    {" — "}
+                    {s.daysUnchanged === null
+                      ? "no price history yet"
+                      : `unchanged ${s.daysUnchanged} day${s.daysUnchanged === 1 ? "" : "s"}`}
+                  </li>
                 ))}
               </ul>
             </details>
