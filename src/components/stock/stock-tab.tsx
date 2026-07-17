@@ -10,25 +10,77 @@ import type { StockAmcRow, StockCandidate, StockHoldingResult } from "@/lib/aum/
 const inputClass =
   "w-full min-w-0 rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
-type SortKey = "overviewName" | "latestMarketValueCr";
+// Plain string keys, not a union -- per-period Shares/Weight % columns need
+// one sort key per period (e.g. "shares:2026-06"), which a fixed union
+// can't express without enumerating every possible period up front.
+type SortKey = string;
+
+function getSortValue(amc: StockAmcRow, key: SortKey): string | number | null {
+  if (key === "overviewName") return amc.overviewName;
+  if (key === "latestMarketValueCr") return amc.latestMarketValueCr;
+  if (key === "sector") return amc.sector;
+  if (key === "mcapClassification") return amc.mcapClassification;
+  if (key === "rankInPortfolio") return amc.rankInPortfolio;
+  if (key === "changeSharesLatest") return amc.changeSharesLatest;
+  if (key === "changeMarketValueCrLatest") return amc.changeMarketValueCrLatest;
+  if (key.startsWith("shares:")) return amc.byPeriod[key.slice("shares:".length)]?.shares ?? null;
+  if (key.startsWith("weight:")) return amc.byPeriod[key.slice("weight:".length)]?.weightPct ?? null;
+  return null;
+}
 
 function TwoTierHead({
   label,
   sublabel,
   sublabelAccent = true,
+  sortKeyValue,
+  activeSortKey,
+  sortDesc,
+  onToggle,
 }: {
   label: string;
   sublabel?: string;
   sublabelAccent?: boolean;
+  sortKeyValue: SortKey;
+  activeSortKey: SortKey | null;
+  sortDesc: boolean;
+  onToggle: (key: SortKey) => void;
 }) {
+  const active = activeSortKey === sortKeyValue;
   return (
     <TableHead className={`text-right first:text-left align-bottom ${sublabel ? "whitespace-normal" : ""}`}>
-      {label}
-      {sublabel && (
-        <span className={`block font-bold ${sublabelAccent ? "text-[var(--toolbar-accent)]" : "text-foreground"}`}>
-          {sublabel}
-        </span>
-      )}
+      <button type="button" onClick={() => onToggle(sortKeyValue)} className="hover:text-foreground">
+        {label}
+        {active ? (sortDesc ? " ↓" : " ↑") : ""}
+        {sublabel && (
+          <span className={`block font-bold ${sublabelAccent ? "text-[var(--toolbar-accent)]" : "text-foreground"}`}>
+            {sublabel}
+          </span>
+        )}
+      </button>
+    </TableHead>
+  );
+}
+
+function SortableHead({
+  label,
+  sortKeyValue,
+  activeSortKey,
+  sortDesc,
+  onToggle,
+}: {
+  label: string;
+  sortKeyValue: SortKey;
+  activeSortKey: SortKey | null;
+  sortDesc: boolean;
+  onToggle: (key: SortKey) => void;
+}) {
+  const active = activeSortKey === sortKeyValue;
+  return (
+    <TableHead className="align-bottom text-right">
+      <button type="button" onClick={() => onToggle(sortKeyValue)} className="hover:text-foreground">
+        {label}
+        {active ? (sortDesc ? " ↓" : " ↑") : ""}
+      </button>
     </TableHead>
   );
 }
@@ -69,13 +121,21 @@ export function StockTab() {
   const [candidates, setCandidates] = useState<StockCandidate[] | null>(null);
   const [result, setResult] = useState<StockHoldingResult | null>(null);
   const [showExtra, setShowExtra] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("latestMarketValueCr");
-  const [sortDesc, setSortDesc] = useState(true);
+  // null = the API's own default order (latestMarketValueCr descending,
+  // AMCs that exited before the latest period sorting last) -- also the
+  // reset target on a sort column's 3rd click.
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDesc, setSortDesc] = useState(false);
 
   async function runSearch(q: string, isin?: string) {
     setLoading(true);
     setError(null);
     setCandidates(null);
+    // A period-specific sort key (e.g. "shares:2026-03") from the previous
+    // stock's own reported periods may not exist for the new one -- reset
+    // to the default order rather than silently sorting by nothing.
+    setSortKey(null);
+    setSortDesc(false);
     try {
       const params = new URLSearchParams();
       if (isin) params.set("isin", isin);
@@ -105,25 +165,48 @@ export function StockTab() {
     if (query.trim()) runSearch(query.trim());
   }
 
+  const EXTRA_COLUMN_SORT_KEYS = ["sector", "mcapClassification", "rankInPortfolio", "changeSharesLatest", "changeMarketValueCrLatest"];
+
+  function toggleExtraColumns() {
+    setShowExtra((shown) => {
+      const next = !shown;
+      // Never leave the table sorted by a column that's about to be
+      // hidden -- same reasoning as the Overview table's own
+      // toggleNetFlowColumns.
+      if (!next && sortKey !== null && EXTRA_COLUMN_SORT_KEYS.includes(sortKey)) {
+        setSortKey(null);
+        setSortDesc(false);
+      }
+      return next;
+    });
+  }
+
+  // Same 3-click cycle every other sortable table in this app uses: new
+  // column -> descending, click again -> ascending, click a 3rd time ->
+  // back to the API's own default order.
   function toggleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDesc((d) => !d);
-    } else {
+    if (key !== sortKey) {
       setSortKey(key);
       setSortDesc(true);
+    } else if (sortDesc) {
+      setSortDesc(false);
+    } else {
+      setSortKey(null);
+      setSortDesc(false);
     }
   }
 
   const sortedAmcs: StockAmcRow[] = result
-    ? [...result.amcs].sort((a, b) => {
-        let cmp: number;
-        if (sortKey === "overviewName") {
-          cmp = a.overviewName.localeCompare(b.overviewName);
-        } else {
-          cmp = (a.latestMarketValueCr ?? -1) - (b.latestMarketValueCr ?? -1);
-        }
-        return sortDesc ? -cmp : cmp;
-      })
+    ? sortKey === null
+      ? result.amcs
+      : [...result.amcs].sort((a, b) => {
+          const av = getSortValue(a, sortKey);
+          const bv = getSortValue(b, sortKey);
+          if (av === null || av === undefined) return 1;
+          if (bv === null || bv === undefined) return -1;
+          const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
+          return sortDesc ? -cmp : cmp;
+        })
     : [];
 
   return (
@@ -180,7 +263,7 @@ export function StockTab() {
           <div className="flex justify-end">
             <button
               type="button"
-              onClick={() => setShowExtra((v) => !v)}
+              onClick={toggleExtraColumns}
               className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
             >
               {showExtra ? "Hide additional columns" : "+ Show additional columns"}
@@ -197,27 +280,75 @@ export function StockTab() {
                     </button>
                   </TableHead>
                   {result.periods.map((p) => (
-                    <TwoTierHead key={`sh-${p}`} label="Shares" sublabel={formatReportPeriodLabel(p)} />
+                    <TwoTierHead
+                      key={`sh-${p}`}
+                      label="Shares"
+                      sublabel={formatReportPeriodLabel(p)}
+                      sortKeyValue={`shares:${p}`}
+                      activeSortKey={sortKey}
+                      sortDesc={sortDesc}
+                      onToggle={toggleSort}
+                    />
                   ))}
-                  <TableHead className="align-bottom text-right">
-                    <button
-                      type="button"
-                      onClick={() => toggleSort("latestMarketValueCr")}
-                      className="hover:text-foreground"
-                    >
-                      Latest Value{sortKey === "latestMarketValueCr" ? (sortDesc ? " ↓" : " ↑") : ""}
-                    </button>
-                  </TableHead>
+                  <SortableHead
+                    label="Latest Value"
+                    sortKeyValue="latestMarketValueCr"
+                    activeSortKey={sortKey}
+                    sortDesc={sortDesc}
+                    onToggle={toggleSort}
+                  />
                   {result.periods.map((p) => (
-                    <TwoTierHead key={`wt-${p}`} label="Weight %" sublabel={formatReportPeriodLabel(p)} />
+                    <TwoTierHead
+                      key={`wt-${p}`}
+                      label="Weight %"
+                      sublabel={formatReportPeriodLabel(p)}
+                      sortKeyValue={`weight:${p}`}
+                      activeSortKey={sortKey}
+                      sortDesc={sortDesc}
+                      onToggle={toggleSort}
+                    />
                   ))}
                   {showExtra && (
                     <>
-                      <TableHead className="align-bottom text-right">Sector</TableHead>
-                      <TableHead className="align-bottom text-right">Mkt Cap</TableHead>
-                      <TableHead className="align-bottom text-right">Rank in Portfolio</TableHead>
-                      <TwoTierHead label="MoM Change" sublabel="Shares" sublabelAccent={false} />
-                      <TwoTierHead label="MoM Change" sublabel="Value" sublabelAccent={false} />
+                      <SortableHead
+                        label="Sector"
+                        sortKeyValue="sector"
+                        activeSortKey={sortKey}
+                        sortDesc={sortDesc}
+                        onToggle={toggleSort}
+                      />
+                      <SortableHead
+                        label="Mkt Cap"
+                        sortKeyValue="mcapClassification"
+                        activeSortKey={sortKey}
+                        sortDesc={sortDesc}
+                        onToggle={toggleSort}
+                      />
+                      <SortableHead
+                        label="Rank in Portfolio"
+                        sortKeyValue="rankInPortfolio"
+                        activeSortKey={sortKey}
+                        sortDesc={sortDesc}
+                        onToggle={toggleSort}
+                      />
+                      <TwoTierHead
+                        label="MoM Change"
+                        sublabel="Shares"
+                        sublabelAccent={false}
+                        sortKeyValue="changeSharesLatest"
+                        activeSortKey={sortKey}
+                        sortDesc={sortDesc}
+                        onToggle={toggleSort}
+                      />
+                      <TwoTierHead
+                        label="MoM Change"
+                        sublabel="Value"
+                        sublabelAccent={false}
+                        sortKeyValue="changeMarketValueCrLatest"
+                        activeSortKey={sortKey}
+                        sortDesc={sortDesc}
+                        onToggle={toggleSort}
+                      />
                     </>
                   )}
                 </TableRow>
