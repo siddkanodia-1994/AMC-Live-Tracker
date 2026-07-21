@@ -143,6 +143,7 @@ export async function computeOverviewAsOf(
     distinctLivePricedCount: 0,
     distinctLastCloseCount: 0,
     lastCloseStocks: [],
+    lastCloseDismissedToday: false,
     priceAsOfDate: asOfDate,
     pricesAreLive: false,
     asOfDate,

@@ -192,6 +192,36 @@ export const isinDailyPrice = pgTable(
   (t) => [uniqueIndex("isin_daily_price_isin_date_idx").on(t.isin, t.snapshotDate)]
 );
 
+// One row per (ISIN, trading date) where that ISIN was classified
+// priceSource === "last_close" that day -- written once daily by the 4:05pm
+// IST close-capture cron (not on every 45s poll), so a transient intraday
+// blip doesn't count as a full missed day. Append-only historical record,
+// used to compute "N consecutive trading days without a live price" for the
+// Overview banner's auto-mute feature -- see getMutedIsins in
+// src/lib/aum/last-close-mute.ts.
+export const isinLastCloseLog = pgTable(
+  "isin_last_close_log",
+  {
+    id: serial("id").primaryKey(),
+    isin: text("isin").notNull(),
+    snapshotDate: date("snapshot_date").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("isin_last_close_log_isin_date_idx").on(t.isin, t.snapshotDate)]
+);
+
+// Active manual mutes -- one row per ISIN currently muted via the Overview
+// banner's "Accept" flow (a known, human-confirmed reason like a merger or
+// delisting), distinct from isinLastCloseLog's append-only history. Cleared
+// by the daily cron the moment that ISIN gets a real live price again,
+// mirroring the auto-mute timer's own "streak resets to 0 on recovery"
+// behavior.
+export const isinManualMute = pgTable("isin_manual_mute", {
+  isin: text("isin").primaryKey(),
+  reason: text("reason").notNull(),
+  mutedAt: timestamp("muted_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // One row per AMC per month, parsed once from the source workbook's "Cash
 // Holdings" sheet (column K block -- confirmed a genuine one-row-per-AMC
 // table of blended Cash & Cash Equivalent % of AUM, not scheme-specific).

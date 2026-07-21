@@ -64,6 +64,13 @@
       "when": 1784013515392,
       "tag": "0008_right_zaladane",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784631841570,
+      "tag": "0009_closed_kinsey_walden",
+      "breakpoints": true
     }
   ]
 }

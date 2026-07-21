@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
 import { upsertDailyDataQuality } from "@/lib/aum/daily-data-quality";
+import { clearRecoveredManualMutes, recordLastCloseLog } from "@/lib/aum/last-close-mute";
 import { getIstDateString } from "@/lib/utils/date";
 
 export const maxDuration = 30;
@@ -35,6 +36,18 @@ export async function GET(request: Request) {
       await upsertDailyDataQuality(getIstDateString());
     } catch (err) {
       console.error("Failed to upsert daily data quality:", err);
+    }
+
+    // Best-effort, same isolation as above: today's per-ISIN last-close log
+    // (feeds the Overview banner's 5-day auto-mute) and clearing any manual
+    // mutes for ISINs that have recovered to a real live price. Neither
+    // should fail the whole cron response if something goes wrong here.
+    try {
+      const lastCloseIsins = snapshot.lastCloseStocks.map((s) => s.isin);
+      await recordLastCloseLog(getIstDateString(), lastCloseIsins);
+      await clearRecoveredManualMutes(lastCloseIsins);
+    } catch (err) {
+      console.error("Failed to update last-close mute bookkeeping:", err);
     }
 
     return NextResponse.json({ ok: true, amcsSnapshotted: snapshot.amcs.length });

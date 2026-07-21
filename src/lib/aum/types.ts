@@ -129,7 +129,23 @@ export interface LiveAumSnapshot {
   // ISIN's stored close price hasn't moved at all -- a cheap, no-new-schema
   // proxy for "stuck / likely suspended" vs. "brand new, no history yet"
   // (null) vs. "just a one-off gap" (small number). See computeDaysUnchanged.
-  lastCloseStocks: { isin: string; companyName: string; daysUnchanged: number | null }[];
+  // autoMuted: true once this ISIN should stop showing in the active
+  // warning -- either N consecutive trading days of last_close (see
+  // getMutedIsins, last-close-mute.ts) or a manual "Accept" with a reason.
+  // muteReason: the manually-typed reason behind an Accept-triggered mute;
+  // null for a timer-based mute (or when not muted at all).
+  lastCloseStocks: {
+    isin: string;
+    companyName: string;
+    daysUnchanged: number | null;
+    autoMuted: boolean;
+    muteReason: string | null;
+  }[];
+  // Whether every currently-*active* (non-muted) last-close stock has been
+  // dismissed for today via "Ignore for today" -- see
+  // last-close-dismissal.ts. Muted stocks are excluded from this check
+  // entirely, since they're already suppressed by a separate mechanism.
+  lastCloseDismissedToday: boolean;
   // The calendar date (IST) the shown prices actually reflect. Equals
   // today's date when pricesAreLive; otherwise the last real trading day's
   // date (see lastTradingDayIstString) — lets the UI show "Prices as of

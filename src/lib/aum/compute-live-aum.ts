@@ -6,6 +6,8 @@ import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
 import { isBankDebtOrRepo, isCashEquivalent, isUsListedEquityIsin } from "../excel/instrument-classification";
 import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { writeIsinDailyPriceRows } from "./isin-price-store";
+import { getDismissedIsinsForToday } from "./last-close-dismissal";
+import { getMutedIsins } from "./last-close-mute";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS, OFF_HOURS_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
 import { isMarketOpen, isTradingDay, lastTradingDayIstString, msUntilNextMarketOpen } from "../utils/market-hours";
@@ -506,10 +508,24 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   for (const info of distinctIsinInfo.values()) {
     if (info.isLive) distinctLivePricedCount++;
   }
-  const daysUnchangedByIsin = await computeDaysUnchanged([...lastCloseCompanyNameByIsin.keys()]);
+  const lastCloseIsins = [...lastCloseCompanyNameByIsin.keys()];
+  const [daysUnchangedByIsin, mutedIsins] = await Promise.all([
+    computeDaysUnchanged(lastCloseIsins),
+    getMutedIsins(lastCloseIsins),
+  ]);
   const lastCloseStocks = [...lastCloseCompanyNameByIsin.entries()]
-    .map(([isin, companyName]) => ({ isin, companyName, daysUnchanged: daysUnchangedByIsin.get(isin) ?? null }))
+    .map(([isin, companyName]) => ({
+      isin,
+      companyName,
+      daysUnchanged: daysUnchangedByIsin.get(isin) ?? null,
+      autoMuted: mutedIsins.has(isin),
+      muteReason: mutedIsins.get(isin) ?? null,
+    }))
     .sort((a, b) => a.companyName.localeCompare(b.companyName));
+  const activeLastCloseIsins = lastCloseStocks.filter((s) => !s.autoMuted).map((s) => s.isin);
+  const dismissedIsins = activeLastCloseIsins.length > 0 ? await getDismissedIsinsForToday() : new Set<string>();
+  const lastCloseDismissedToday =
+    activeLastCloseIsins.length > 0 && activeLastCloseIsins.every((isin) => dismissedIsins.has(isin));
 
   const snapshot: LiveAumSnapshot = {
     amcs: amcResults,
@@ -524,6 +540,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
     distinctLivePricedCount,
     distinctLastCloseCount: distinctLastCloseIsins.size,
     lastCloseStocks,
+    lastCloseDismissedToday,
     priceAsOfDate: tradingDay && haveTodayData ? getIstDateString() : lastTradingDayIstString(),
     // Deliberately isMarketOpen(), not shouldFetchLive/tradingDay: this
     // drives the frontend's "live ticking price" framing (FreshnessBadge).

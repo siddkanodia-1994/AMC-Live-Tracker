@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useLiveAum } from "@/hooks/use-live-aum";
 import { useOverviewAdjustments } from "@/hooks/use-overview-adjustments";
+import { useCooldownRemainingMs } from "@/hooks/use-cooldown-remaining";
 import { AmcTable } from "./amc-table";
 import { FieldBox, WindowFieldBox } from "./field-box";
 import { AumDeltaBadge } from "./aum-delta-badge";
@@ -24,6 +25,7 @@ import { RelativeTime } from "@/components/ui/relative-time";
 import { InfoIcon } from "lucide-react";
 import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
+import { LIVE_AUM_CACHE_TTL_MS } from "@/lib/utils/constants";
 import { listFiscalQuarters } from "@/lib/aum/report-period";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import type { AumHistoryPoint } from "@/lib/aum/history";
@@ -60,17 +62,65 @@ export function AmcGrid({
   // boxes without duplicating tab-switch logic.
   const [activeTab, setActiveTab] = useState("overview");
   const { data, error, isLoading, mutate } = useLiveAum(initialData, asOfDate ?? undefined);
-  const [isCheckingNow, setIsCheckingNow] = useState(false);
-  async function checkNow() {
-    setIsCheckingNow(true);
+  // Shared by every refresh affordance on the page (the persistent button
+  // outside the banner box, in whichever of its three states) -- no
+  // `?refresh=1` bypass, so a click within LIVE_AUM_CACHE_TTL_MS of the last
+  // real computation (anyone's poll or click) just re-shows the same
+  // already-fresh prices instead of forcing a new DHAN call. See the plan's
+  // "Key finding" for why this needs no new server-side cooldown state.
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  async function refreshLivePrices() {
+    setIsRefreshing(true);
     try {
-      const res = await fetch("/api/live-aum?refresh=1");
+      const res = await fetch("/api/live-aum");
       if (res.ok) {
         const fresh = await res.json();
         await mutate(fresh, { revalidate: false });
       }
     } finally {
-      setIsCheckingNow(false);
+      setIsRefreshing(false);
+    }
+  }
+  const cooldownMs = useCooldownRemainingMs(data?.computedAt ?? new Date(0).toISOString(), LIVE_AUM_CACHE_TTL_MS);
+  const isRefreshOnCooldown = cooldownMs > 0;
+
+  const [isDismissing, setIsDismissing] = useState(false);
+  async function dismissForToday() {
+    setIsDismissing(true);
+    try {
+      const res = await fetch("/api/live-aum/dismiss-last-close", { method: "POST" });
+      if (res.ok) {
+        const fresh = await res.json();
+        await mutate(fresh, { revalidate: false });
+      }
+    } finally {
+      setIsDismissing(false);
+    }
+  }
+
+  // Which stock's inline "Accept" reason form is currently open -- only one
+  // at a time, matching the app's other single-active-editor UI patterns.
+  const [acceptingIsin, setAcceptingIsin] = useState<string | null>(null);
+  const [acceptReason, setAcceptReason] = useState("");
+  const [isAccepting, setIsAccepting] = useState(false);
+  async function acceptReasonFor(isin: string) {
+    const reason = acceptReason.trim();
+    if (!reason) return;
+    setIsAccepting(true);
+    try {
+      const res = await fetch("/api/live-aum/mute-stock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isin, reason }),
+      });
+      if (res.ok) {
+        const fresh = await res.json();
+        await mutate(fresh, { revalidate: false });
+        setAcceptingIsin(null);
+        setAcceptReason("");
+      }
+    } finally {
+      setIsAccepting(false);
     }
   }
   const [query, setQuery] = useState("");
@@ -279,7 +329,10 @@ export function AmcGrid({
   // were being priced live before but stopped (last-close regression). A
   // "degraded" status alone stays silent — it fires perpetually for illiquid
   // holdings DHAN simply never quotes, which is benign.
-  const lastCloseCount = data.distinctLastCloseCount ?? 0;
+  const lastCloseStocks = data.lastCloseStocks ?? [];
+  const activeLastCloseStocks = lastCloseStocks.filter((s) => !s.autoMuted);
+  const mutedLastCloseStocks = lastCloseStocks.filter((s) => s.autoMuted);
+  const lastCloseCount = activeLastCloseStocks.length;
   const isLastCloseWarning = !data.dhanErrorDetail && data.dhanStatus !== "unavailable" && data.pricesAreLive && lastCloseCount > 0;
   const statusMessage = data.dhanErrorDetail
     ? `DHAN pricing issue: ${data.dhanErrorDetail}`
@@ -288,6 +341,18 @@ export function AmcGrid({
       : isLastCloseWarning
         ? `${lastCloseCount} stock${lastCloseCount === 1 ? "" : "s"} that previously had live prices ${lastCloseCount === 1 ? "is" : "are"} no longer being priced live — showing their last close instead.`
         : null;
+  const showMutedTrace = data.pricesAreLive && !data.dhanErrorDetail && data.dhanStatus !== "unavailable" && mutedLastCloseStocks.length > 0;
+  // The persistent refresh control's label: "Check now" only while the
+  // active amber warning is showing, "Refresh" in every other case
+  // (dismissed, muted-only, or nothing flagged at all) -- one physical
+  // button/cooldown, label depends on context (see plan's "Button count").
+  const refreshLabel = isRefreshing
+    ? "Checking…"
+    : isRefreshOnCooldown
+      ? `Refresh in ${Math.ceil(cooldownMs / 1000)}s`
+      : isLastCloseWarning && !data.lastCloseDismissedToday
+        ? "Check now"
+        : "Refresh";
 
   // First day of the month after the report period — when the Avg AUM window opened.
   const [periodYear, periodMonth] = data.reportPeriod.split("-").map(Number);
@@ -436,37 +501,131 @@ export function AmcGrid({
           </CardContent>
         </Card>
       </div>
-      {statusMessage && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-          <div className="flex flex-wrap items-center gap-2">
-            <span>{statusMessage}</span>
-            {isLastCloseWarning && (
-              <button
-                type="button"
-                onClick={checkNow}
-                disabled={isCheckingNow}
-                className="rounded-md border border-amber-500/50 px-2 py-0.5 text-xs font-medium hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isCheckingNow ? "Checking…" : "Check now"}
-              </button>
+      {!data.asOfDate && (
+        <div className="flex flex-wrap items-start gap-2">
+          <div className="min-w-0 flex-1 space-y-1">
+            {isLastCloseWarning && !data.lastCloseDismissedToday ? (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>{statusMessage}</span>
+                  <button
+                    type="button"
+                    onClick={dismissForToday}
+                    disabled={isDismissing}
+                    className="rounded-md border border-amber-500/50 px-2 py-0.5 text-xs font-medium hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isDismissing ? "Ignoring…" : "Ignore for today"}
+                  </button>
+                </div>
+                <details className="mt-1">
+                  <summary className="cursor-pointer">
+                    Show stock{activeLastCloseStocks.length === 1 ? "" : "s"}
+                  </summary>
+                  <ul className="mt-1 list-disc space-y-1 pl-4">
+                    {activeLastCloseStocks.map((s) => (
+                      <li key={s.isin}>
+                        {s.companyName}
+                        {" — "}
+                        {s.daysUnchanged === null
+                          ? "no price history yet"
+                          : `unchanged ${s.daysUnchanged} day${s.daysUnchanged === 1 ? "" : "s"}`}
+                        {" · "}
+                        {acceptingIsin === s.isin ? (
+                          <span className="inline-flex flex-wrap items-center gap-1 align-middle">
+                            <input
+                              type="text"
+                              value={acceptReason}
+                              onChange={(e) => setAcceptReason(e.target.value)}
+                              placeholder="Known reason (e.g. amalgamated into X)"
+                              className="rounded border border-amber-500/40 bg-background px-1.5 py-0.5 text-xs text-foreground"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => acceptReasonFor(s.isin)}
+                              disabled={isAccepting || !acceptReason.trim()}
+                              className="rounded border border-amber-500/50 px-1.5 py-0.5 text-xs font-medium hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isAccepting ? "Saving…" : "Confirm"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAcceptingIsin(null);
+                                setAcceptReason("");
+                              }}
+                              className="text-xs underline"
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAcceptingIsin(s.isin);
+                              setAcceptReason("");
+                            }}
+                            className="text-xs underline"
+                          >
+                            Accept
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </div>
+            ) : isLastCloseWarning && data.lastCloseDismissedToday ? (
+              <div className="text-sm text-muted-foreground">
+                <span>
+                  {lastCloseCount} stock{lastCloseCount === 1 ? "" : "s"} not live · Updated{" "}
+                  <RelativeTime iso={data.computedAt} /> ago
+                </span>
+                <details className="mt-1">
+                  <summary className="cursor-pointer">
+                    Show stock{activeLastCloseStocks.length === 1 ? "" : "s"}
+                  </summary>
+                  <ul className="mt-1 list-disc pl-4">
+                    {activeLastCloseStocks.map((s) => (
+                      <li key={s.isin}>
+                        {s.companyName}
+                        {" — "}
+                        {s.daysUnchanged === null
+                          ? "no price history yet"
+                          : `unchanged ${s.daysUnchanged} day${s.daysUnchanged === 1 ? "" : "s"}`}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </div>
+            ) : statusMessage ? (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+                {statusMessage}
+              </div>
+            ) : null}
+            {showMutedTrace && (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer">
+                  {mutedLastCloseStocks.length} stock{mutedLastCloseStocks.length === 1 ? "" : "s"} auto-muted
+                </summary>
+                <ul className="mt-1 list-disc pl-4">
+                  {mutedLastCloseStocks.map((s) => (
+                    <li key={s.isin}>
+                      {s.companyName} — muted{s.muteReason ? `: ${s.muteReason}` : " (5+ day streak)"}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             )}
           </div>
-          {isLastCloseWarning && data.lastCloseStocks.length > 0 && (
-            <details className="mt-1">
-              <summary className="cursor-pointer">Show stock{data.lastCloseStocks.length === 1 ? "" : "s"}</summary>
-              <ul className="mt-1 list-disc pl-4">
-                {data.lastCloseStocks.map((s) => (
-                  <li key={s.isin}>
-                    {s.companyName}
-                    {" — "}
-                    {s.daysUnchanged === null
-                      ? "no price history yet"
-                      : `unchanged ${s.daysUnchanged} day${s.daysUnchanged === 1 ? "" : "s"}`}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
+          <button
+            type="button"
+            onClick={refreshLivePrices}
+            disabled={isRefreshing || isRefreshOnCooldown}
+            className="shrink-0 rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {refreshLabel}
+          </button>
         </div>
       )}
       {data.dailyDataQualityAlert && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,6 +38,44 @@ export function SyncActions({ secret }: { secret: string }) {
   const [reclaiming, setReclaiming] = useState(false);
   const [reclaimResult, setReclaimResult] = useState<ReclaimResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [muteThresholdInput, setMuteThresholdInput] = useState("");
+  const [savingMuteThreshold, setSavingMuteThreshold] = useState(false);
+
+  useEffect(() => {
+    adminFetch("/api/admin/last-close-mute-threshold", secret)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { thresholdDays: number } | null) => {
+        if (body) setMuteThresholdInput(String(body.thresholdDays));
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleSaveMuteThreshold() {
+    const thresholdDays = Number(muteThresholdInput);
+    if (!Number.isInteger(thresholdDays) || thresholdDays < 1) {
+      toast.error("Enter a whole number of 1 or more");
+      return;
+    }
+    setSavingMuteThreshold(true);
+    try {
+      const res = await adminFetch("/api/admin/last-close-mute-threshold", secret, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thresholdDays }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Save failed");
+      }
+      toast.success(`Auto-mute threshold set to ${thresholdDays} trading day${thresholdDays === 1 ? "" : "s"}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSavingMuteThreshold(false);
+    }
+  }
 
   async function handleSync() {
     setSyncing(true);
@@ -214,6 +252,32 @@ export function SyncActions({ secret }: { secret: string }) {
               )}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Auto-mute threshold</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            A stock that goes this many consecutive trading days without a live price stops showing
+            the Overview banner&apos;s warning automatically. Default 5.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={muteThresholdInput}
+              onChange={(e) => setMuteThresholdInput(e.target.value)}
+              className="w-20 rounded-md border bg-background px-2 py-1 text-sm"
+            />
+            <span className="text-sm text-muted-foreground">trading days</span>
+            <Button onClick={handleSaveMuteThreshold} disabled={savingMuteThreshold}>
+              {savingMuteThreshold ? "Saving..." : "Save"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
