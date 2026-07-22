@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
+import { invalidateLiveAumCache } from "@/lib/aum/cache";
 import { dismissLastCloseStocksForToday } from "@/lib/aum/last-close-dismissal";
 
 // No auth gate -- same public, low-blast-radius precedent as Check now
@@ -15,8 +16,15 @@ export async function POST() {
     }
 
     await dismissLastCloseStocksForToday(activeIsins);
-    const fresh = await computeLiveAum({ forceRefresh: true });
-    return NextResponse.json(fresh);
+    // Dismissing is a pure DB write -- it needs zero fresh DHAN prices to be
+    // reflected, only the already-known resulting flag. Patch the snapshot
+    // already fetched above instead of forcing a second full DHAN re-fetch
+    // (forceRefresh: true bypasses the 45s cache/cooldown unconditionally,
+    // and doing that on every Ignore/Accept click was enough to trip DHAN's
+    // own rate limit -- see the plan's audit). invalidateLiveAumCache lets
+    // *other* visitors' next natural poll pick up the change instead.
+    invalidateLiveAumCache();
+    return NextResponse.json({ ...current, lastCloseDismissedToday: true });
   } catch (err) {
     if (err instanceof NoDataImportedError) {
       return NextResponse.json({ error: err.message, code: "NO_DATA" }, { status: 404 });

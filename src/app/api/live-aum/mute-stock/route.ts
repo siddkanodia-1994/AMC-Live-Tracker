@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
+import { invalidateLiveAumCache } from "@/lib/aum/cache";
 import { acceptLastCloseReason } from "@/lib/aum/last-close-mute";
 
 const MAX_REASON_LENGTH = 500;
@@ -27,8 +28,17 @@ export async function POST(request: Request) {
     }
 
     await acceptLastCloseReason(isin, reason);
-    const fresh = await computeLiveAum({ forceRefresh: true });
-    return NextResponse.json(fresh);
+    // Same reasoning as dismiss-last-close: accepting is a pure DB write,
+    // no fresh DHAN prices needed -- patch the already-known result into
+    // the snapshot already fetched above instead of forcing a second full
+    // DHAN re-fetch (which was tripping DHAN's rate limit on real click
+    // sequences). invalidateLiveAumCache lets other visitors' next natural
+    // poll pick up the change.
+    invalidateLiveAumCache();
+    const lastCloseStocks = current.lastCloseStocks.map((s) =>
+      s.isin === isin ? { ...s, autoMuted: true, muteReason: reason } : s
+    );
+    return NextResponse.json({ ...current, lastCloseStocks });
   } catch (err) {
     if (err instanceof NoDataImportedError) {
       return NextResponse.json({ error: err.message, code: "NO_DATA" }, { status: 404 });
