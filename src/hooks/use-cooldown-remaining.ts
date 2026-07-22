@@ -18,7 +18,17 @@ function subscribe(callback: () => void) {
 export function useCooldownRemainingMs(sinceIso: string, ttlMs: number): number {
   return useSyncExternalStore(
     subscribe,
-    () => Math.max(0, new Date(sinceIso).getTime() + ttlMs - Date.now()),
+    // Rounded to whole seconds -- same reason formatRelativeTime rounds
+    // (format.ts) before RelativeTime returns it: useSyncExternalStore
+    // requires getSnapshot to return a STABLE value between calls unless
+    // the store actually changed. Raw milliseconds change on essentially
+    // every call (real time keeps advancing between React's render call
+    // and its immediate re-check), so React perpetually sees "a change",
+    // reschedules, and re-renders forever -- "Maximum update depth
+    // exceeded" (React error #185). Rounding to seconds -- the same
+    // granularity subscribe's 1s tick already uses -- makes repeated calls
+    // within the same second return the identical number.
+    () => Math.max(0, Math.ceil((new Date(sinceIso).getTime() + ttlMs - Date.now()) / 1000)) * 1000,
     () => ttlMs
   );
 }
