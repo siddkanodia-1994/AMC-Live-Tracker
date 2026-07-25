@@ -177,7 +177,7 @@ export function AmcDetailView({
               above stay at the normal reading width. */}
           <div className="relative left-1/2 right-1/2 -mx-[50vw] w-screen">
             <div className="mx-auto max-w-[1800px] px-4 sm:px-6">
-              <HoldingsTable holdings={holdings} />
+              <HoldingsTable holdings={holdings} reportPeriod={amc.reportPeriod} />
             </div>
           </div>
         </TabsContent>

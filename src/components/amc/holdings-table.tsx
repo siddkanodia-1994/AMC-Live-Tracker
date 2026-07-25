@@ -10,7 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PriceSourceBadge } from "./price-source-badge";
-import { formatCr, formatDeltaCr, formatPct, formatPriceInr, formatShares } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShares } from "@/lib/utils/format";
 import type { HoldingLiveView } from "@/lib/aum/types";
 
 interface AugmentedHolding extends HoldingLiveView {
@@ -60,7 +60,7 @@ function CrCell({ value }: { value: number | null }) {
   );
 }
 
-export function HoldingsTable({ holdings }: { holdings: HoldingLiveView[] }) {
+export function HoldingsTable({ holdings, reportPeriod }: { holdings: HoldingLiveView[]; reportPeriod: string }) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDesc, setSortDesc] = useState(true);
 
@@ -139,7 +139,7 @@ export function HoldingsTable({ holdings }: { holdings: HoldingLiveView[] }) {
             <SortableHead label="Company" sk="companyName" {...headProps} />
             <TableHead>Sector</TableHead>
             <TableHead>Cap</TableHead>
-            <SortableHead label="Shares (May)" sk="shares" {...headProps} align="right" />
+            <SortableHead label={`Shares (${formatReportPeriodLabel(reportPeriod)})`} sk="shares" {...headProps} align="right" />
             <SortableHead label="Reported Value" sk="reportedMarketValueCr" {...headProps} align="right" />
             <SortableHead label="Live Price" sk="livePriceInr" {...headProps} align="right" />
             <SortableHead label="Live Value" sk="liveMarketValueCr" {...headProps} align="right" />

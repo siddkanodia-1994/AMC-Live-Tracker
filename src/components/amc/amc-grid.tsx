@@ -156,10 +156,32 @@ export function AmcGrid({
     try {
       const res = await fetch(`/api/aum-history-range?from=${rangeFrom}&to=${rangeTo}`);
       if (!res.ok) return;
-      const { rows } = await res.json();
+      const { rows } = (await res.json()) as {
+        rows: { date: string; amcName: string; liveAumCr: number; reportedAumCr: number }[];
+      };
+
+      const dates = [...new Set(rows.map((r) => r.date))].sort();
+      const amcNames = [...new Set(rows.map((r) => r.amcName).filter((n) => n !== "Industry Total"))].sort((a, b) =>
+        a.localeCompare(b)
+      );
+      const liveAumByKey = new Map(rows.map((r) => [`${r.amcName}|${r.date}`, r.liveAumCr]));
+
+      // Industry Total pinned as the first row, separate from the
+      // alphabetical AMC list below it -- not just another row Excel could
+      // accidentally re-sum into a Grand Total (see plan file's audit of
+      // the double-counting this caused when pivoted by hand).
+      const pivotRows = ["Industry Total", ...amcNames].map((amcName) => {
+        const row: Record<string, string | number | null> = { AMC: amcName };
+        for (const date of dates) {
+          row[date] = liveAumByKey.get(`${amcName}|${date}`) ?? null;
+        }
+        return row;
+      });
+
       const { utils, writeFileXLSX } = await import("xlsx");
-      const worksheet = utils.json_to_sheet(
-        rows.map((r: { date: string; amcName: string; liveAumCr: number; reportedAumCr: number }) => ({
+      const pivotSheet = utils.json_to_sheet(pivotRows);
+      const longSheet = utils.json_to_sheet(
+        rows.map((r) => ({
           Date: r.date,
           AMC: r.amcName,
           "Live AUM (Cr)": r.liveAumCr,
@@ -167,7 +189,8 @@ export function AmcGrid({
         }))
       );
       const workbook = utils.book_new();
-      utils.book_append_sheet(workbook, worksheet, "AUM History");
+      utils.book_append_sheet(workbook, pivotSheet, "AUM by AMC");
+      utils.book_append_sheet(workbook, longSheet, "AUM History");
       writeFileXLSX(workbook, `aum-history-${rangeFrom}-to-${rangeTo}.xlsx`);
     } finally {
       setIsDownloadingRange(false);
