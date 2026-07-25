@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useLiveAumDetail, type AmcDetailResponse } from "@/hooks/use-live-aum-detail";
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { AumTrendChart } from "./aum-trend-chart";
@@ -14,6 +14,9 @@ import { RelativeTime } from "@/components/ui/relative-time";
 import { formatCr, formatDeltaCr, formatPct, formatShortDate } from "@/lib/utils/format";
 import type { AumHistoryPoint } from "@/lib/aum/history";
 
+const dateInputClass =
+  "w-full min-w-0 rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
+
 export function AmcDetailView({
   slug,
   initialData,
@@ -23,7 +26,14 @@ export function AmcDetailView({
   initialData?: AmcDetailResponse;
   history: AumHistoryPoint[];
 }) {
-  const { data, error, isLoading } = useLiveAumDetail(slug, initialData);
+  // null = live mode; a date = the whole page (cards + Holdings table, and
+  // Sector Allocation for free since it derives from the same holdings
+  // array) reprices to that historical day's holdings/closes -- same
+  // asOfDate pattern the Overview page already uses. Period Comparison is a
+  // report-period concept, not a daily one, and fetches its own data
+  // independently, so it's naturally unaffected either way.
+  const [asOfDate, setAsOfDate] = useState<string | null>(null);
+  const { data, error, isLoading } = useLiveAumDetail(slug, initialData, asOfDate ?? undefined);
 
   if (error && !data) {
     return (
@@ -60,8 +70,38 @@ export function AmcDetailView({
             · Report period {amc.reportPeriod}
           </p>
         </div>
-        <AumDeltaBadge deltaCr={amc.deltaCr} deltaPct={amc.deltaPct} />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label htmlFor="amc-as-of-date" className="text-xs text-muted-foreground">
+              View as of
+            </label>
+            <input
+              id="amc-as-of-date"
+              type="date"
+              value={asOfDate ?? ""}
+              min={data.minSnapshotDate ?? undefined}
+              max={data.maxSnapshotDate ?? undefined}
+              onChange={(e) => setAsOfDate(e.target.value || null)}
+              className={dateInputClass}
+            />
+            {asOfDate && (
+              <button
+                type="button"
+                onClick={() => setAsOfDate(null)}
+                className="text-xs text-muted-foreground underline hover:text-foreground"
+              >
+                Back to live
+              </button>
+            )}
+          </div>
+          <AumDeltaBadge deltaCr={amc.deltaCr} deltaPct={amc.deltaPct} />
+        </div>
       </div>
+      {asOfDate && (
+        <p className="text-xs text-muted-foreground">
+          Historical view — Avg AUM and Est. Net Flow apply only to live data
+        </p>
+      )}
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
         <Stat

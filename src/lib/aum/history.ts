@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcPeriods, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
+import { amcPeriods, amcs, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { addDaysToDateString, getIstDateString } from "../utils/date";
 import { firstDayOfNextMonth, lastDayOfReportMonth } from "./report-period";
 
@@ -389,6 +389,75 @@ export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<num
   }
 
   return map;
+}
+
+export interface AumHistoryRangeRow {
+  date: string;
+  amcName: string; // "Industry Total" for the aggregate row
+  liveAumCr: number;
+  reportedAumCr: number;
+}
+
+/**
+ * Every AMC's daily canonical Live/Reported AUM across an arbitrary
+ * [fromDate, toDate] range, plus one synthetic "Industry Total" row per day
+ * -- powers the Overview toolbar's date-range Excel export. Reuses the same
+ * canonical liveAumDailySnapshot rows getIndustryAumHistory/
+ * getAllAmcsLiveAumAsOf already read (no new schema), just bounded by a
+ * date range instead of unbounded/single-date.
+ */
+export async function getAumHistoryRangeAllAmcs(fromDate: string, toDate: string): Promise<AumHistoryRangeRow[]> {
+  const [perAmcRows, totalRows] = await Promise.all([
+    db
+      .select({
+        date: liveAumDailySnapshot.snapshotDate,
+        amcName: amcs.overviewName,
+        liveAumCr: sql<number>`${liveAumDailySnapshot.liveAumCr}::float`,
+        reportedAumCr: sql<number>`${liveAumDailySnapshot.reportedAumCr}::float`,
+      })
+      .from(liveAumDailySnapshot)
+      .innerJoin(amcs, eq(liveAumDailySnapshot.amcId, amcs.id))
+      .where(
+        and(
+          eq(liveAumDailySnapshot.isCanonical, true),
+          gte(liveAumDailySnapshot.snapshotDate, fromDate),
+          lte(liveAumDailySnapshot.snapshotDate, toDate)
+        )
+      )
+      .orderBy(asc(liveAumDailySnapshot.snapshotDate), asc(amcs.overviewName)),
+    db
+      .select({
+        date: liveAumDailySnapshot.snapshotDate,
+        liveAumCr: sql<number>`sum(${liveAumDailySnapshot.liveAumCr})::float`,
+        reportedAumCr: sql<number>`sum(${liveAumDailySnapshot.reportedAumCr})::float`,
+      })
+      .from(liveAumDailySnapshot)
+      .where(
+        and(
+          eq(liveAumDailySnapshot.isCanonical, true),
+          gte(liveAumDailySnapshot.snapshotDate, fromDate),
+          lte(liveAumDailySnapshot.snapshotDate, toDate)
+        )
+      )
+      .groupBy(liveAumDailySnapshot.snapshotDate)
+      .orderBy(asc(liveAumDailySnapshot.snapshotDate)),
+  ]);
+
+  const rows: AumHistoryRangeRow[] = totalRows.map((r) => ({
+    date: r.date,
+    amcName: "Industry Total",
+    liveAumCr: r.liveAumCr,
+    reportedAumCr: r.reportedAumCr,
+  }));
+  for (const r of perAmcRows) rows.push(r);
+
+  rows.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    if (a.amcName === "Industry Total") return -1;
+    if (b.amcName === "Industry Total") return 1;
+    return a.amcName.localeCompare(b.amcName);
+  });
+  return rows;
 }
 
 export async function getIndustryAumHistory(): Promise<AumHistoryPoint[]> {

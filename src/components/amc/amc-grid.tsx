@@ -143,6 +143,36 @@ export function AmcGrid({
   // lose either one's last selection.
   const [reportedAumMode, setReportedAumMode] = useState<"reported" | "hist-live">("hist-live");
   const [histLiveDate, setHistLiveDate] = useState<string | null>(null);
+  // Date-range Excel export (Total + AMC-wise AUM across multiple days) --
+  // a disconnected, purpose-built query, not a reflection of an on-screen
+  // table, so it gets its own fetch + xlsx build rather than going through
+  // useRegisterExport/the header's Download Excel button.
+  const [rangeFrom, setRangeFrom] = useState<string | null>(null);
+  const [rangeTo, setRangeTo] = useState<string | null>(null);
+  const [isDownloadingRange, setIsDownloadingRange] = useState(false);
+  async function downloadRangeExcel() {
+    if (!rangeFrom || !rangeTo || isDownloadingRange) return;
+    setIsDownloadingRange(true);
+    try {
+      const res = await fetch(`/api/aum-history-range?from=${rangeFrom}&to=${rangeTo}`);
+      if (!res.ok) return;
+      const { rows } = await res.json();
+      const { utils, writeFileXLSX } = await import("xlsx");
+      const worksheet = utils.json_to_sheet(
+        rows.map((r: { date: string; amcName: string; liveAumCr: number; reportedAumCr: number }) => ({
+          Date: r.date,
+          AMC: r.amcName,
+          "Live AUM (Cr)": r.liveAumCr,
+          "Reported AUM (Cr)": r.reportedAumCr,
+        }))
+      );
+      const workbook = utils.book_new();
+      utils.book_append_sheet(workbook, worksheet, "AUM History");
+      writeFileXLSX(workbook, `aum-history-${rangeFrom}-to-${rangeTo}.xlsx`);
+    } finally {
+      setIsDownloadingRange(false);
+    }
+  }
   // Manual disclosure for each window's custom from/to range -- forced open
   // whenever the underlying dates don't match any listed quarter (so a
   // genuinely custom window is never hidden behind a collapsed toggle).
@@ -813,6 +843,42 @@ export function AmcGrid({
                       </select>
                     )}
                   </FieldBox>
+                </div>
+              </div>
+
+              <div className="border-t pt-3">
+                <p className="mb-1.5 text-[10px] font-bold tracking-wider text-[var(--toolbar-accent)] uppercase">
+                  Export AUM history
+                </p>
+                <div className="flex flex-wrap items-stretch gap-2.5">
+                  <FieldBox label="From">
+                    <input
+                      type="date"
+                      value={rangeFrom ?? ""}
+                      min={data.minSnapshotDate ?? undefined}
+                      max={rangeTo ?? data.maxSnapshotDate ?? undefined}
+                      onChange={(e) => setRangeFrom(e.target.value || null)}
+                      className={dateInputClass}
+                    />
+                  </FieldBox>
+                  <FieldBox label="To">
+                    <input
+                      type="date"
+                      value={rangeTo ?? ""}
+                      min={rangeFrom ?? data.minSnapshotDate ?? undefined}
+                      max={data.maxSnapshotDate ?? undefined}
+                      onChange={(e) => setRangeTo(e.target.value || null)}
+                      className={dateInputClass}
+                    />
+                  </FieldBox>
+                  <button
+                    type="button"
+                    onClick={downloadRangeExcel}
+                    disabled={!rangeFrom || !rangeTo || isDownloadingRange}
+                    className="self-center rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isDownloadingRange ? "Preparing…" : "Download AUM history (range)"}
+                  </button>
                 </div>
               </div>
 

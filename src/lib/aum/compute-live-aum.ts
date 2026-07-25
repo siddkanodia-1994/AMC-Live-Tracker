@@ -418,6 +418,15 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
         livePriceInr !== null && previousClosePriceInr !== null && previousClosePriceInr !== 0
           ? (livePriceInr - previousClosePriceInr) / previousClosePriceInr
           : null;
+      // Rupee-crore version of the same movement -- computed directly from
+      // the price delta rather than back-derived from oneDayChangePct, so
+      // it doesn't inherit that computation's floating-point round-trip or
+      // need a "-1" edge-case guard. Powers the Holdings table's "1D MTM"
+      // column.
+      const oneDayChangeCr =
+        livePriceInr !== null && previousClosePriceInr !== null
+          ? ((livePriceInr - previousClosePriceInr) * Number(h.shares)) / CRORE
+          : null;
 
       liveHoldingsSumCr += liveMarketValueCr;
       holdingViews.push({
@@ -430,6 +439,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
         weightPct: Number(h.weightPct ?? 0),
         previousClosePriceInr,
         oneDayChangePct,
+        oneDayChangeCr,
         reportedMarketValueCr,
         livePriceInr,
         liveMarketValueCr,

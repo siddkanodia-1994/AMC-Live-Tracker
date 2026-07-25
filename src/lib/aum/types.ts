@@ -22,6 +22,10 @@ export interface HoldingLiveView {
   // equals price % change since shares are constant between report periods.
   previousClosePriceInr: number | null;
   oneDayChangePct: number | null;
+  // Same movement expressed as an absolute Rupee-crore value change
+  // ((livePriceInr - previousClosePriceInr) * shares), not just a
+  // percentage -- powers the Holdings table's "1D MTM" column.
+  oneDayChangeCr: number | null;
 }
 
 export interface AmcLiveAum {

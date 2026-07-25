@@ -10,7 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PriceSourceBadge } from "./price-source-badge";
-import { formatCr, formatPct, formatPriceInr, formatShares } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatPct, formatPriceInr, formatShares } from "@/lib/utils/format";
 import type { HoldingLiveView } from "@/lib/aum/types";
 
 interface AugmentedHolding extends HoldingLiveView {
@@ -24,6 +24,7 @@ type SortKey =
   | "livePriceInr"
   | "liveMarketValueCr"
   | "liveVsReportedPct"
+  | "oneDayChangeCr"
   | "oneDayChangePct"
   | "weightPct";
 
@@ -39,6 +40,21 @@ function PctCell({ value }: { value: number | null }) {
     <TableCell className="text-right tabular-nums">
       <span className={value >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
         {formatPct(value, { alwaysSign: true })}
+      </span>
+    </TableCell>
+  );
+}
+
+// "1D MTM" -- the absolute Rupee-crore version of the same movement PctCell
+// shows as a percentage. Same green-gain/red-drop convention.
+function CrCell({ value }: { value: number | null }) {
+  if (value === null) {
+    return <TableCell className="text-right tabular-nums">—</TableCell>;
+  }
+  return (
+    <TableCell className="text-right tabular-nums">
+      <span className={value >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
+        {formatDeltaCr(value)}
       </span>
     </TableCell>
   );
@@ -77,7 +93,13 @@ export function HoldingsTable({ holdings }: { holdings: HoldingLiveView[] }) {
     const oneDayChangePct =
       totalPreviousDayLiveValueCr !== 0 ? totalLiveValueCrWithPrevDay / totalPreviousDayLiveValueCr - 1 : null;
 
-    return { totalReportedValueCr, totalLiveValueCr, liveVsReportedPct, oneDayChangePct };
+    // Direct sum -- simpler than the percentage back-derivation above, since
+    // oneDayChangeCr is already an absolute value with no divide-by-(1+pct)
+    // edge case to guard against.
+    const withMtm = augmented.filter((h) => h.oneDayChangeCr !== null);
+    const oneDayChangeCr = withMtm.length > 0 ? withMtm.reduce((sum, h) => sum + (h.oneDayChangeCr as number), 0) : null;
+
+    return { totalReportedValueCr, totalLiveValueCr, liveVsReportedPct, oneDayChangePct, oneDayChangeCr };
   }, [augmented]);
 
   const sorted = useMemo(() => {
@@ -122,6 +144,7 @@ export function HoldingsTable({ holdings }: { holdings: HoldingLiveView[] }) {
             <SortableHead label="Live Price" sk="livePriceInr" {...headProps} align="right" />
             <SortableHead label="Live Value" sk="liveMarketValueCr" {...headProps} align="right" />
             <SortableHead label="Live vs Reported" sk="liveVsReportedPct" {...headProps} align="right" />
+            <SortableHead label="1D MTM" sk="oneDayChangeCr" {...headProps} align="right" />
             <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} align="right" />
             <SortableHead label="Weight" sk="weightPct" {...headProps} align="right" />
             <TableHead>Status</TableHead>
@@ -137,6 +160,7 @@ export function HoldingsTable({ holdings }: { holdings: HoldingLiveView[] }) {
             <TableCell />
             <TableCell className="text-right tabular-nums">{formatCr(totals.totalLiveValueCr)}</TableCell>
             <PctCell value={totals.liveVsReportedPct} />
+            <CrCell value={totals.oneDayChangeCr} />
             <PctCell value={totals.oneDayChangePct} />
             <TableCell />
             <TableCell />
@@ -153,6 +177,7 @@ export function HoldingsTable({ holdings }: { holdings: HoldingLiveView[] }) {
               </TableCell>
               <TableCell className="text-right tabular-nums">{formatCr(h.liveMarketValueCr)}</TableCell>
               <PctCell value={h.liveVsReportedPct} />
+              <CrCell value={h.oneDayChangeCr} />
               <PctCell value={h.oneDayChangePct} />
               <TableCell className="text-right tabular-nums">{formatPct(h.weightPct)}</TableCell>
               <TableCell>
