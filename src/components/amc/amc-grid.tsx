@@ -469,7 +469,7 @@ export function AmcGrid({
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -533,6 +533,23 @@ export function AmcGrid({
                 </div>
               </>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-normal text-muted-foreground">Industry Cash &amp; Liquid Debt</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            <div className="flex items-center gap-2">
+              <div className="text-3xl font-bold tabular-nums">
+                {data.totalLiveAumCr !== 0 ? formatPct(data.industryCashDebtCr / data.totalLiveAumCr) : "—"}
+              </div>
+              <span className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                {formatCr(data.industryCashDebtCr)}
+              </span>
+            </div>
+            <div className="text-xs text-muted-foreground">of Total Industry Equity Live AUM</div>
           </CardContent>
         </Card>
 

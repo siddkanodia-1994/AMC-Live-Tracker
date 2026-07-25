@@ -63,6 +63,11 @@ function CrCell({ value }: { value: number | null }) {
 export function HoldingsTable({ holdings, reportPeriod }: { holdings: HoldingLiveView[]; reportPeriod: string }) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDesc, setSortDesc] = useState(true);
+  // null = show everything. Both apply together (AND) -- two independent
+  // filters, each with its own "show everything" default, matching the
+  // dropdowns' own "Cap"/"Sector" placeholder option.
+  const [capFilter, setCapFilter] = useState<string | null>(null);
+  const [sectorFilter, setSectorFilter] = useState<string | null>(null);
 
   const augmented: AugmentedHolding[] = useMemo(
     () =>
@@ -73,9 +78,27 @@ export function HoldingsTable({ holdings, reportPeriod }: { holdings: HoldingLiv
     [holdings]
   );
 
+  // Options derived from what's actually present in this AMC's holdings --
+  // never shows a Cap/Sector with zero matching rows. Computed from the
+  // full unfiltered list so picking one filter doesn't shrink the other's
+  // own option list.
+  const capOptions = useMemo(
+    () => [...new Set(augmented.map((h) => h.mcapClassification).filter((v): v is string => v !== null))].sort(),
+    [augmented]
+  );
+  const sectorOptions = useMemo(() => [...new Set(augmented.map((h) => h.sector))].sort(), [augmented]);
+
+  const filtered = useMemo(
+    () =>
+      augmented.filter(
+        (h) => (capFilter === null || h.mcapClassification === capFilter) && (sectorFilter === null || h.sector === sectorFilter)
+      ),
+    [augmented, capFilter, sectorFilter]
+  );
+
   const totals = useMemo(() => {
-    const totalReportedValueCr = augmented.reduce((sum, h) => sum + h.reportedMarketValueCr, 0);
-    const totalLiveValueCr = augmented.reduce((sum, h) => sum + h.liveMarketValueCr, 0);
+    const totalReportedValueCr = filtered.reduce((sum, h) => sum + h.reportedMarketValueCr, 0);
+    const totalLiveValueCr = filtered.reduce((sum, h) => sum + h.liveMarketValueCr, 0);
     const liveVsReportedPct = totalReportedValueCr !== 0 ? totalLiveValueCr / totalReportedValueCr - 1 : null;
 
     // Same "filter to holdings with known prior-day data, then sum both
@@ -84,7 +107,7 @@ export function HoldingsTable({ holdings, reportPeriod }: { holdings: HoldingLiv
     // doesn't skew the total. Previous-day value per holding is
     // back-derived from today's live value and its own price % change,
     // since shares are constant day-to-day.
-    const withPrevDay = augmented.filter((h) => h.oneDayChangePct !== null && h.oneDayChangePct !== -1);
+    const withPrevDay = filtered.filter((h) => h.oneDayChangePct !== null && h.oneDayChangePct !== -1);
     const totalLiveValueCrWithPrevDay = withPrevDay.reduce((sum, h) => sum + h.liveMarketValueCr, 0);
     const totalPreviousDayLiveValueCr = withPrevDay.reduce(
       (sum, h) => sum + h.liveMarketValueCr / (1 + (h.oneDayChangePct as number)),
@@ -96,16 +119,16 @@ export function HoldingsTable({ holdings, reportPeriod }: { holdings: HoldingLiv
     // Direct sum -- simpler than the percentage back-derivation above, since
     // oneDayChangeCr is already an absolute value with no divide-by-(1+pct)
     // edge case to guard against.
-    const withMtm = augmented.filter((h) => h.oneDayChangeCr !== null);
+    const withMtm = filtered.filter((h) => h.oneDayChangeCr !== null);
     const oneDayChangeCr = withMtm.length > 0 ? withMtm.reduce((sum, h) => sum + (h.oneDayChangeCr as number), 0) : null;
 
     return { totalReportedValueCr, totalLiveValueCr, liveVsReportedPct, oneDayChangePct, oneDayChangeCr };
-  }, [augmented]);
+  }, [filtered]);
 
   const sorted = useMemo(() => {
     const key = sortKey ?? DEFAULT_SORT_KEY;
     const desc = sortKey === null ? true : sortDesc;
-    const list = [...augmented];
+    const list = [...filtered];
     list.sort((a, b) => {
       const av = a[key];
       const bv = b[key];
@@ -115,7 +138,7 @@ export function HoldingsTable({ holdings, reportPeriod }: { holdings: HoldingLiv
       return desc ? -cmp : cmp;
     });
     return list;
-  }, [augmented, sortKey, sortDesc]);
+  }, [filtered, sortKey, sortDesc]);
 
   function toggleSort(key: SortKey) {
     if (sortKey !== key) {
@@ -137,8 +160,12 @@ export function HoldingsTable({ holdings, reportPeriod }: { holdings: HoldingLiv
         <TableHeader>
           <TableRow>
             <SortableHead label="Company" sk="companyName" {...headProps} />
-            <TableHead>Sector</TableHead>
-            <TableHead>Cap</TableHead>
+            <TableHead>
+              <FilterSelect label="Sector" value={sectorFilter} options={sectorOptions} onChange={setSectorFilter} />
+            </TableHead>
+            <TableHead>
+              <FilterSelect label="Cap" value={capFilter} options={capOptions} onChange={setCapFilter} />
+            </TableHead>
             <SortableHead label={`Shares (${formatReportPeriodLabel(reportPeriod)})`} sk="shares" {...headProps} align="right" />
             <SortableHead label="Reported Value" sk="reportedMarketValueCr" {...headProps} align="right" />
             <SortableHead label="Live Price" sk="livePriceInr" {...headProps} align="right" />
@@ -188,6 +215,38 @@ export function HoldingsTable({ holdings, reportPeriod }: { holdings: HoldingLiv
         </TableBody>
       </Table>
     </div>
+  );
+}
+
+// Replaces a plain column label with a filter dropdown -- the placeholder
+// option (value="") is "show everything" for that one filter, matching the
+// column's own static label (e.g. "Cap") when nothing is selected.
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string | null;
+  options: string[];
+  onChange: (value: string | null) => void;
+}) {
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value || null)}
+      className={`rounded border bg-transparent px-1 py-0.5 text-sm font-medium hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40 ${
+        value ? "border-[var(--toolbar-accent)] text-[var(--toolbar-accent)]" : "border-transparent"
+      }`}
+    >
+      <option value="">{label}</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
   );
 }
 

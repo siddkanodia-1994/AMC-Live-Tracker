@@ -1,8 +1,51 @@
-import { and, desc, eq, lte, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcs, liveAumDailySnapshot } from "../db/schema";
+import { amcs, holdings, liveAumDailySnapshot } from "../db/schema";
+import { isBankDebtOrRepo, isCashEquivalent } from "../excel/instrument-classification";
 import { getCanonicalSnapshotDateBounds } from "./history";
 import type { AmcLiveAum, LiveAumSnapshot } from "./types";
+
+/**
+ * Industry-wide cash + liquid debt as of a historical date, reusing each
+ * AMC's already-resolved reportPeriod (computeOverviewAsOf's own byAmcId
+ * map) rather than a new per-AMC lookup. Grouped by distinct reportPeriod
+ * (almost always 1, occasionally 2, never 52) so this is one or two batched
+ * `holdings` queries, not a loop per AMC. No price/isin_daily_price join
+ * needed -- cash/debt line items are never DHAN-priceable, so their live
+ * value already equals their reported marketValueCr in practice (same
+ * reasoning AmcLiveAum.cashEquivalentCr/bankDebtRepoCr's own doc comment
+ * already relies on for the live path).
+ */
+async function getIndustryCashDebtAsOf(amcReportPeriods: Map<number, string>): Promise<number> {
+  const amcIdsByPeriod = new Map<string, number[]>();
+  for (const [amcId, reportPeriod] of amcReportPeriods) {
+    const list = amcIdsByPeriod.get(reportPeriod);
+    if (list) list.push(amcId);
+    else amcIdsByPeriod.set(reportPeriod, [amcId]);
+  }
+
+  const rowsPerPeriod = await Promise.all(
+    [...amcIdsByPeriod.entries()].map(([reportPeriod, amcIds]) =>
+      db
+        .select({ sector: holdings.sector, companyName: holdings.companyName, marketValueCr: holdings.marketValueCr })
+        .from(holdings)
+        .where(and(inArray(holdings.amcId, amcIds), eq(holdings.reportPeriod, reportPeriod)))
+    )
+  );
+
+  // Two independent checks summed separately (not a combined OR) to mirror
+  // compute-live-aum.ts's own two-separate-`if`-statements shape exactly --
+  // a holding matching both classifications counts in both there too.
+  let total = 0;
+  for (const rows of rowsPerPeriod) {
+    for (const h of rows) {
+      const marketValueCr = Number(h.marketValueCr);
+      if (isBankDebtOrRepo(h.sector, h.companyName)) total += marketValueCr;
+      if (isCashEquivalent(h.companyName)) total += marketValueCr;
+    }
+  }
+  return total;
+}
 
 /**
  * The Overview repriced to an arbitrary historical date, sourced entirely
@@ -123,6 +166,9 @@ export async function computeOverviewAsOf(
   }
   rows.sort((a, b) => b.liveAumCr - a.liveAumCr);
 
+  const amcReportPeriods = new Map([...byAmcId].map(([amcId, s]) => [amcId, s.reportPeriod]));
+  const industryCashDebtCr = await getIndustryCashDebtAsOf(amcReportPeriods);
+
   const totalLiveAumCr = rows.reduce((sum, r) => sum + r.liveAumCr, 0);
   const totalReportedAumCr = rows.reduce((sum, r) => sum + r.reportedAumCr, 0);
   // The label period: whichever report period the as-of snapshots were most
@@ -134,6 +180,7 @@ export async function computeOverviewAsOf(
     amcs: rows,
     totalLiveAumCr,
     totalReportedAumCr,
+    industryCashDebtCr,
     reportPeriod,
     computedAt: new Date().toISOString(),
     dhanStatus: "ok",

@@ -104,6 +104,14 @@ export interface LiveAumSnapshot {
   amcs: AmcLiveAum[];
   totalLiveAumCr: number;
   totalReportedAumCr: number;
+  // Sum of every AMC's cashEquivalentCr + bankDebtRepoCr -- industry-wide
+  // cash and liquid debt (repo/CDs/CPs/G-Secs), for the Overview "Industry
+  // Cash & Liquid Debt" card. Always populated in both live and historical
+  // (asOfDate) modes -- see overview-as-of.ts for how the historical path
+  // reconstructs this without a price/isin_daily_price join (cash/debt line
+  // items are never DHAN-priceable, so live value already equals reported
+  // value for them).
+  industryCashDebtCr: number;
   reportPeriod: string;
   computedAt: string;
   dhanStatus: DhanStatus;

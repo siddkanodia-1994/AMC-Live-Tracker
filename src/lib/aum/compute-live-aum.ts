@@ -541,6 +541,10 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
     amcs: amcResults,
     totalLiveAumCr: amcResults.reduce((sum, a) => sum + a.liveAumCr, 0),
     totalReportedAumCr: amcResults.reduce((sum, a) => sum + a.reportedAumCr, 0),
+    // Cash + liquid debt (repo/CDs/CPs/G-Secs) across every AMC -- both
+    // already computed per-AMC above, this is just their industry-wide sum,
+    // no new query. Powers the Overview "Industry Cash & Liquid Debt" card.
+    industryCashDebtCr: amcResults.reduce((sum, a) => sum + a.cashEquivalentCr + a.bankDebtRepoCr, 0),
     reportPeriod,
     computedAt: new Date().toISOString(),
     dhanStatus,
