@@ -150,6 +150,11 @@ export function AmcGrid({
   const [rangeFrom, setRangeFrom] = useState<string | null>(null);
   const [rangeTo, setRangeTo] = useState<string | null>(null);
   const [isDownloadingRange, setIsDownloadingRange] = useState(false);
+  // Collapsed by default to keep the toolbar clean -- stays expanded once
+  // opened (doesn't auto-collapse after a download), same as every other
+  // disclosure in this toolbar (e.g. the Averaging Windows "Custom" toggle).
+  // Deliberately not persisted, matching asOfDate/avgFrom/avgTo etc.
+  const [exportSectionExpanded, setExportSectionExpanded] = useState(false);
   async function downloadRangeExcel() {
     if (!rangeFrom || !rangeTo || isDownloadingRange) return;
     setIsDownloadingRange(true);
@@ -870,39 +875,49 @@ export function AmcGrid({
               </div>
 
               <div className="border-t pt-3">
-                <p className="mb-1.5 text-[10px] font-bold tracking-wider text-[var(--toolbar-accent)] uppercase">
+                <button
+                  type="button"
+                  onClick={() => setExportSectionExpanded((v) => !v)}
+                  aria-expanded={exportSectionExpanded}
+                  className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-[var(--toolbar-accent)] uppercase hover:opacity-80"
+                >
+                  <span className={`inline-block transition-transform ${exportSectionExpanded ? "rotate-90" : ""}`}>
+                    ▸
+                  </span>
                   Export AUM history
-                </p>
-                <div className="flex flex-wrap items-stretch gap-2.5">
-                  <FieldBox label="From">
-                    <input
-                      type="date"
-                      value={rangeFrom ?? ""}
-                      min={data.minSnapshotDate ?? undefined}
-                      max={rangeTo ?? data.maxSnapshotDate ?? undefined}
-                      onChange={(e) => setRangeFrom(e.target.value || null)}
-                      className={dateInputClass}
-                    />
-                  </FieldBox>
-                  <FieldBox label="To">
-                    <input
-                      type="date"
-                      value={rangeTo ?? ""}
-                      min={rangeFrom ?? data.minSnapshotDate ?? undefined}
-                      max={data.maxSnapshotDate ?? undefined}
-                      onChange={(e) => setRangeTo(e.target.value || null)}
-                      className={dateInputClass}
-                    />
-                  </FieldBox>
-                  <button
-                    type="button"
-                    onClick={downloadRangeExcel}
-                    disabled={!rangeFrom || !rangeTo || isDownloadingRange}
-                    className="self-center rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {isDownloadingRange ? "Preparing…" : "Download AUM history (range)"}
-                  </button>
-                </div>
+                </button>
+                {exportSectionExpanded && (
+                  <div className="mt-1.5 flex flex-wrap items-stretch gap-2.5">
+                    <FieldBox label="From">
+                      <input
+                        type="date"
+                        value={rangeFrom ?? ""}
+                        min={data.minSnapshotDate ?? undefined}
+                        max={rangeTo ?? data.maxSnapshotDate ?? undefined}
+                        onChange={(e) => setRangeFrom(e.target.value || null)}
+                        className={dateInputClass}
+                      />
+                    </FieldBox>
+                    <FieldBox label="To">
+                      <input
+                        type="date"
+                        value={rangeTo ?? ""}
+                        min={rangeFrom ?? data.minSnapshotDate ?? undefined}
+                        max={data.maxSnapshotDate ?? undefined}
+                        onChange={(e) => setRangeTo(e.target.value || null)}
+                        className={dateInputClass}
+                      />
+                    </FieldBox>
+                    <button
+                      type="button"
+                      onClick={downloadRangeExcel}
+                      disabled={!rangeFrom || !rangeTo || isDownloadingRange}
+                      className="self-center rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isDownloadingRange ? "Preparing…" : "Download AUM history (range)"}
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="border-t pt-3">

@@ -24,15 +24,21 @@ type SortKey =
   | "netFlowCr"
   | "netFlowPct";
 
+// Structural separator between the "Exit AUM Growth" and "Avg AUM Growth"
+// column groups -- applied at every row type (group-header, column-header,
+// body, both footer rows) so it reads as one continuous divider running the
+// full table height, not just a header decoration.
+const GROUP_DIVIDER_CLASS = "border-r-2 border-blue-900/30 dark:border-blue-300/30";
+
 const NET_FLOW_TITLE =
   "Reported AUM minus what AUM would be if the prior period's holdings had simply been repriced through this month-end (no trading), divided by the prior period's reported AUM. Conflates investor subscriptions/redemptions with the manager's own buying/selling — an approximation, not a pure flows figure. Blank until a prior period + its daily-snapshot backfill exist. Same denominator as the AUM Growth tab's Net Flow %, so both show the same percentage for the same underlying flow amount.";
 
-function PctCell({ value }: { value: number | null | undefined }) {
+function PctCell({ value, className = "" }: { value: number | null | undefined; className?: string }) {
   if (value === null || value === undefined) {
-    return <TableCell className="text-right tabular-nums">—</TableCell>;
+    return <TableCell className={`text-right tabular-nums ${className}`}>—</TableCell>;
   }
   return (
-    <TableCell className="text-right tabular-nums">
+    <TableCell className={`text-right tabular-nums ${className}`}>
       <span className={value >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
         {formatPct(value, { alwaysSign: true })}
       </span>
@@ -62,6 +68,7 @@ function SortableHead({
   sortDesc,
   onToggle,
   title,
+  className = "",
 }: {
   label: string;
   sublabel?: string;
@@ -74,11 +81,12 @@ function SortableHead({
   sortDesc: boolean;
   onToggle: (key: SortKey) => void;
   title?: string;
+  className?: string;
 }) {
   const active = sk === sortKey;
   return (
     <TableHead
-      className={`text-right first:text-left align-bottom ${sublabel ? "whitespace-normal" : ""}`}
+      className={`text-right first:text-left align-bottom ${sublabel ? "whitespace-normal" : ""} ${className}`}
       title={title}
     >
       <button type="button" onClick={() => onToggle(sk)} className="hover:text-foreground">
@@ -175,7 +183,7 @@ function TotalsRow({
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalLiveAumCr)}</TableCell>
       <PctCell value={totals.totalOneDayChangePct} />
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalReportedAumCr)}</TableCell>
-      <PctCell value={totals.totalLiveVsReportedPct} />
+      <PctCell value={totals.totalLiveVsReportedPct} className={GROUP_DIVIDER_CLASS} />
       <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalCurrentQuarterAvgAumCr)}</TableCell>
       <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalAvgAumCr)}</TableCell>
       <PctCell value={historical ? null : totals.totalAvgAumQoQChangePct} />
@@ -345,6 +353,19 @@ export function AmcTable({
         <Table className={showNetFlow ? "text-sm" : "text-base"}>
           <TableHeader>
             <TableRow>
+              <TableHead />
+              <TableHead
+                colSpan={4}
+                className={`text-center text-xs font-bold tracking-wide text-blue-900 uppercase dark:text-blue-300 ${GROUP_DIVIDER_CLASS}`}
+              >
+                Exit AUM Growth
+              </TableHead>
+              <TableHead colSpan={3} className="text-center text-xs font-bold tracking-wide text-blue-900 uppercase dark:text-blue-300">
+                Avg AUM Growth
+              </TableHead>
+              <TableHead colSpan={showNetFlow ? 5 : 3} />
+            </TableRow>
+            <TableRow>
               <TableHead className="align-bottom">
                 <div className="flex items-center gap-2">
                   <button
@@ -366,7 +387,7 @@ export function AmcTable({
               />
               <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
               <SortableHead label={reportedColumnLabel} sublabel={reportedColumnSublabel} sk="reportedAumCr" {...headProps} />
-              <SortableHead label={liveVsColumnLabel} sk="deltaPct" {...headProps} />
+              <SortableHead label={liveVsColumnLabel} sk="deltaPct" {...headProps} className={GROUP_DIVIDER_CLASS} />
               <SortableHead
                 label="Avg Live AUM"
                 sublabel={currentAvgWindowLabel}
@@ -417,7 +438,7 @@ export function AmcTable({
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {formatCr(amc.reportedAumCr)}
                 </TableCell>
-                <PctCell value={amc.deltaPct} />
+                <PctCell value={amc.deltaPct} className={GROUP_DIVIDER_CLASS} />
                 <TableCell className="text-right tabular-nums">
                   {amc.currentQuarterAvgLiveAumCr != null ? formatCr(amc.currentQuarterAvgLiveAumCr) : "—"}
                 </TableCell>
@@ -453,7 +474,7 @@ export function AmcTable({
                 <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalLiveAumCr)}</TableCell>
                 <PctCell value={industryTotals.totalOneDayChangePct} />
                 <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalReportedAumCr)}</TableCell>
-                <PctCell value={industryTotals.totalLiveVsReportedPct} />
+                <PctCell value={industryTotals.totalLiveVsReportedPct} className={GROUP_DIVIDER_CLASS} />
                 <TableCell className="text-right tabular-nums">
                   {historical ? "—" : formatCr(industryTotals.totalCurrentQuarterAvgAumCr)}
                 </TableCell>
