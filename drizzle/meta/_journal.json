@@ -71,6 +71,13 @@
       "when": 1784631841570,
       "tag": "0009_closed_kinsey_walden",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785077969256,
+      "tag": "0010_slow_the_executioner",
+      "breakpoints": true
     }
   ]
 }

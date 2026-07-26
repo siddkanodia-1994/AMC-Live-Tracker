@@ -279,6 +279,47 @@ export async function getTodayIsinPrices(): Promise<Map<string, number>> {
   return map;
 }
 
+/**
+ * Date-parameterized sibling of getTodayIsinPrices, for split-detection.ts --
+ * that module needs to compare an arbitrary date's close (not just "today"),
+ * both for the daily cron's real-time run and for the retroactive admin
+ * route that backfills an already-happened split.
+ */
+export async function getIsinPricesForDate(date: string): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ isin: isinDailyPrice.isin, priceInr: isinDailyPrice.priceInr })
+    .from(isinDailyPrice)
+    .where(eq(isinDailyPrice.snapshotDate, date));
+
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    map.set(r.isin, Number(r.priceInr));
+  }
+  return map;
+}
+
+/**
+ * Date-parameterized sibling of getPreviousDayIsinPrices -- each priced
+ * ISIN's most recent stored price strictly before an arbitrary date, not
+ * just "before today". Same DISTINCT ON pattern/semantics.
+ */
+export async function getIsinPricesBeforeDate(beforeDate: string): Promise<Map<string, number>> {
+  const rows = await db
+    .selectDistinctOn([isinDailyPrice.isin], {
+      isin: isinDailyPrice.isin,
+      priceInr: isinDailyPrice.priceInr,
+    })
+    .from(isinDailyPrice)
+    .where(lt(isinDailyPrice.snapshotDate, beforeDate))
+    .orderBy(isinDailyPrice.isin, desc(isinDailyPrice.snapshotDate));
+
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    map.set(r.isin, Number(r.priceInr));
+  }
+  return map;
+}
+
 export interface NetFlowEstimate {
   netFlowCr: number;
   netFlowPct: number | null;

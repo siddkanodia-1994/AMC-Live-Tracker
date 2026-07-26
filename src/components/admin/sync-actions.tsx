@@ -30,6 +30,20 @@ interface ReclaimResult {
   warnings: string[];
 }
 
+interface ShareAdjustment {
+  isin: string;
+  reportPeriod: string;
+  companyName: string;
+  effectiveMultiplier: number;
+  firstDetectedOn: string;
+  lastPriceBeforeInr: number;
+  lastPriceAfterInr: number;
+}
+
+function formatSplitRatio(multiplier: number): string {
+  return multiplier >= 1 ? `×${multiplier.toFixed(1)}` : `÷${(1 / multiplier).toFixed(1)}`;
+}
+
 export function SyncActions({ secret }: { secret: string }) {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
@@ -42,6 +56,22 @@ export function SyncActions({ secret }: { secret: string }) {
   const [muteThresholdInput, setMuteThresholdInput] = useState("");
   const [savingMuteThreshold, setSavingMuteThreshold] = useState(false);
 
+  const [detectDateInput, setDetectDateInput] = useState("");
+  const [detecting, setDetecting] = useState(false);
+  const [shareAdjustments, setShareAdjustments] = useState<ShareAdjustment[]>([]);
+  const [dismissingIsin, setDismissingIsin] = useState<string | null>(null);
+  const [dismissReason, setDismissReason] = useState("");
+  const [isDismissingAdjustment, setIsDismissingAdjustment] = useState(false);
+
+  function refreshShareAdjustments() {
+    adminFetch("/api/admin/share-adjustments", secret)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { adjustments: ShareAdjustment[] } | null) => {
+        if (body) setShareAdjustments(body.adjustments);
+      })
+      .catch(() => {});
+  }
+
   useEffect(() => {
     adminFetch("/api/admin/last-close-mute-threshold", secret)
       .then((res) => (res.ok ? res.json() : null))
@@ -49,8 +79,60 @@ export function SyncActions({ secret }: { secret: string }) {
         if (body) setMuteThresholdInput(String(body.thresholdDays));
       })
       .catch(() => {});
+    refreshShareAdjustments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function handleDetectShareAdjustments() {
+    setDetecting(true);
+    try {
+      const res = await adminFetch("/api/admin/detect-share-adjustments", secret, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(detectDateInput ? { date: detectDateInput } : {}),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Detection failed");
+      }
+      const result: { date: string; detectedCount: number } = await res.json();
+      toast.success(
+        result.detectedCount > 0
+          ? `Detected ${result.detectedCount} split/bonus event${result.detectedCount === 1 ? "" : "s"} for ${result.date}`
+          : `No new split/bonus events found for ${result.date}`
+      );
+      refreshShareAdjustments();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Detection failed");
+    } finally {
+      setDetecting(false);
+    }
+  }
+
+  async function handleDismissShareAdjustment(isin: string, reportPeriod: string) {
+    const reason = dismissReason.trim();
+    if (!reason) return;
+    setIsDismissingAdjustment(true);
+    try {
+      const res = await adminFetch("/api/admin/dismiss-share-adjustment", secret, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isin, reportPeriod, reason }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Reverse failed");
+      }
+      toast.success("Adjustment reversed");
+      setDismissingIsin(null);
+      setDismissReason("");
+      refreshShareAdjustments();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Reverse failed");
+    } finally {
+      setIsDismissingAdjustment(false);
+    }
+  }
 
   async function handleSaveMuteThreshold() {
     const thresholdDays = Number(muteThresholdInput);
@@ -278,6 +360,86 @@ export function SyncActions({ secret }: { secret: string }) {
               {savingMuteThreshold ? "Saving..." : "Save"}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Stock split/bonus detection</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            The daily cron detects splits/bonuses automatically going forward (today vs. yesterday&apos;s
+            close). Use this to retroactively detect one that already happened, or re-check a specific
+            date the cron may have missed.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={detectDateInput}
+              onChange={(e) => setDetectDateInput(e.target.value)}
+              className="rounded-md border bg-background px-2 py-1 text-sm"
+            />
+            <Button onClick={handleDetectShareAdjustments} disabled={detecting}>
+              {detecting ? "Detecting..." : `Detect for ${detectDateInput || "today"}`}
+            </Button>
+          </div>
+          {shareAdjustments.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No active split/bonus adjustments.</p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {shareAdjustments.map((adj) => (
+                <li key={adj.isin} className="rounded-md border px-3 py-2">
+                  <div>
+                    <span className="font-medium">{adj.companyName}</span>{" "}
+                    <span className="text-muted-foreground">
+                      {formatSplitRatio(adj.effectiveMultiplier)} — detected {adj.firstDetectedOn}:{" "}
+                      {adj.lastPriceBeforeInr.toFixed(2)} → {adj.lastPriceAfterInr.toFixed(2)}
+                    </span>
+                  </div>
+                  {dismissingIsin === adj.isin ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                      <input
+                        type="text"
+                        value={dismissReason}
+                        onChange={(e) => setDismissReason(e.target.value)}
+                        placeholder="Why this isn't a real split"
+                        className="rounded border bg-background px-1.5 py-0.5 text-xs"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => handleDismissShareAdjustment(adj.isin, adj.reportPeriod)}
+                        disabled={isDismissingAdjustment || !dismissReason.trim()}
+                      >
+                        {isDismissingAdjustment ? "Saving..." : "Confirm"}
+                      </Button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDismissingIsin(null);
+                          setDismissReason("");
+                        }}
+                        className="text-xs underline"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDismissingIsin(adj.isin);
+                        setDismissReason("");
+                      }}
+                      className="mt-1 text-xs underline"
+                    >
+                      Not a real split — reverse
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </CardContent>
       </Card>
     </div>

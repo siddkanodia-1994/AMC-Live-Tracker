@@ -8,6 +8,7 @@ import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
 import { writeIsinDailyPriceRows } from "./isin-price-store";
 import { getDismissedIsinsForToday } from "./last-close-dismissal";
 import { getMutedIsins } from "./last-close-mute";
+import { getActiveShareMultipliers, type ShareAdjustment } from "./share-adjustments";
 import { CRORE, LIVE_AUM_CACHE_TTL_MS, OFF_HOURS_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
 import { isMarketOpen, isTradingDay, lastTradingDayIstString, msUntilNextMarketOpen } from "../utils/market-hours";
@@ -258,12 +259,14 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   const ltpResult = shouldFetchLive
     ? await fetchLtps(requests)
     : { pricesBySecurityId: new Map<string, number>(), failedSecurityIds: new Set<string>() };
-  const [foreignPrices, usdInrRate, previousIsinPrices, todayIsinPrices] = await Promise.all([
+  const [foreignPrices, usdInrRate, previousIsinPrices, todayIsinPrices, shareAdjustmentsByIsin] = await Promise.all([
     getAllForeignPrices().catch(() => new Map<string, number>()),
     getCachedUsdInrRate().catch(() => null),
     getPreviousDayIsinPrices().catch(() => new Map<string, number>()),
     getTodayIsinPrices().catch(() => new Map<string, number>()),
+    getActiveShareMultipliers(reportPeriod).catch(() => new Map<string, ShareAdjustment>()),
   ]);
+  const todayDateStr = getIstDateString();
 
   // Whether today's session has genuinely produced any data yet -- true
   // once we're either actively fetching live (market hours, or the 4:05 PM
@@ -313,6 +316,15 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   // AMC's own repo position is deduped by its (generic, shared) company name
   // instead, not folded into the ISIN-keyed "distinct holdings" count.
   const distinctDebtRepoKeys = new Set<string>();
+  // Distinct ISINs with an active auto-detected split/bonus adjustment this
+  // run — dedup by ISIN industry-wide, same first-write-wins tolerance as
+  // the other maps above (the adjustment is a security-level fact, identical
+  // regardless of which AMC's row populates it first). Feeds the Overview
+  // page's visible/reversible disclosure trace.
+  const distinctShareAdjustmentByIsin = new Map<
+    string,
+    { companyName: string } & ShareAdjustment
+  >();
 
   for (const period of periodRows) {
     const amcHoldingRows = holdingRows.filter((h) => h.amcId === period.amcId);
@@ -337,6 +349,14 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       let liveMarketValueCr: number;
       let livePriceInr: number | null = null;
 
+      // Auto-detected split/bonus correction (see split-detection.ts) --
+      // holdings.shares itself is never mutated (stays the raw, auditable
+      // reported figure); this is a read-time multiplier applied only to the
+      // live computation below, so a stale pre-split share count doesn't get
+      // multiplied against a post-split price.
+      const shareAdjustment = h.isin ? shareAdjustmentsByIsin.get(h.isin) : undefined;
+      const effectiveShares = shareAdjustment ? Number(h.shares) * shareAdjustment.multiplier : Number(h.shares);
+
       const isDebtOrRepo = isBankDebtOrRepo(h.sector, h.companyName);
       if (isDebtOrRepo) {
         debtInstrumentCount++;
@@ -352,7 +372,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
         if (price !== undefined) {
           priceSource = "live";
           livePriceInr = price;
-          liveMarketValueCr = (price * Number(h.shares)) / CRORE;
+          liveMarketValueCr = (price * effectiveShares) / CRORE;
           livePricedCount++;
         } else {
           // DHAN didn't give us a live price for this one -- whether because
@@ -367,7 +387,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
           if (lastKnownPrice !== undefined) {
             priceSource = "last_close";
             livePriceInr = lastKnownPrice;
-            liveMarketValueCr = (lastKnownPrice * Number(h.shares)) / CRORE;
+            liveMarketValueCr = (lastKnownPrice * effectiveShares) / CRORE;
             livePricedCount++;
           } else {
             priceSource = "stale_fallback";
@@ -383,7 +403,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
           const priceInr = priceUsd * usdInrRate;
           priceSource = "foreign_live";
           livePriceInr = priceInr;
-          liveMarketValueCr = (priceInr * Number(h.shares)) / CRORE;
+          liveMarketValueCr = (priceInr * effectiveShares) / CRORE;
           livePricedCount++;
         } else {
           priceSource = "stale_fallback";
@@ -411,11 +431,21 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
           isLive: (existing?.isLive ?? false) || isLive,
         });
         if (livePriceInr !== null) todayPriceByIsin.set(h.isin, livePriceInr);
+        if (shareAdjustment && !distinctShareAdjustmentByIsin.has(h.isin)) {
+          distinctShareAdjustmentByIsin.set(h.isin, { companyName: h.companyName, ...shareAdjustment });
+        }
       }
 
       const previousClosePriceInr = h.isin ? (previousIsinPrices.get(h.isin) ?? null) : null;
+      // On the exact day a split is first detected, previousClosePriceInr is
+      // still pre-split while livePriceInr is already post-split -- comparing
+      // them (even after correcting effectiveShares) would reproduce the same
+      // bug on "1D Change"/"1D MTM" instead of fixing it. Null both out for
+      // just that one day; every day after, previousClosePriceInr is already
+      // post-split too and the comparison is meaningful again.
+      const isSplitBoundaryDay = shareAdjustment?.firstDetectedOn === todayDateStr;
       const oneDayChangePct =
-        livePriceInr !== null && previousClosePriceInr !== null && previousClosePriceInr !== 0
+        !isSplitBoundaryDay && livePriceInr !== null && previousClosePriceInr !== null && previousClosePriceInr !== 0
           ? (livePriceInr - previousClosePriceInr) / previousClosePriceInr
           : null;
       // Rupee-crore version of the same movement -- computed directly from
@@ -424,8 +454,8 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       // need a "-1" edge-case guard. Powers the Holdings table's "1D MTM"
       // column.
       const oneDayChangeCr =
-        livePriceInr !== null && previousClosePriceInr !== null
-          ? ((livePriceInr - previousClosePriceInr) * Number(h.shares)) / CRORE
+        !isSplitBoundaryDay && livePriceInr !== null && previousClosePriceInr !== null
+          ? ((livePriceInr - previousClosePriceInr) * effectiveShares) / CRORE
           : null;
 
       liveHoldingsSumCr += liveMarketValueCr;
@@ -444,6 +474,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
         livePriceInr,
         liveMarketValueCr,
         priceSource,
+        shareAdjustment: shareAdjustment ?? null,
       });
     }
 
@@ -513,6 +544,18 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
     dhanStatus = "ok";
   }
 
+  const shareAdjustments = [...distinctShareAdjustmentByIsin.entries()]
+    .map(([isin, adj]) => ({
+      isin,
+      companyName: adj.companyName,
+      reportPeriod,
+      multiplier: adj.multiplier,
+      firstDetectedOn: adj.firstDetectedOn,
+      priceBeforeInr: adj.lastPriceBeforeInr,
+      priceAfterInr: adj.lastPriceAfterInr,
+    }))
+    .sort((a, b) => a.companyName.localeCompare(b.companyName));
+
   const distinctDebtInstrumentCount = distinctDebtRepoKeys.size;
   let distinctLivePricedCount = 0;
   for (const info of distinctIsinInfo.values()) {
@@ -555,6 +598,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
     distinctLastCloseCount: distinctLastCloseIsins.size,
     lastCloseStocks,
     lastCloseDismissedToday,
+    shareAdjustments,
     priceAsOfDate: tradingDay && haveTodayData ? getIstDateString() : lastTradingDayIstString(),
     // Deliberately isMarketOpen(), not shouldFetchLive/tradingDay: this
     // drives the frontend's "live ticking price" framing (FreshnessBadge).

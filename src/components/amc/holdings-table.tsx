@@ -9,9 +9,26 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PriceSourceBadge } from "./price-source-badge";
-import { formatCr, formatDeltaCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShares } from "@/lib/utils/format";
+import {
+  formatCr,
+  formatDeltaCr,
+  formatPct,
+  formatPriceInr,
+  formatReportPeriodLabel,
+  formatShares,
+  formatShortDate,
+} from "@/lib/utils/format";
 import type { HoldingLiveView } from "@/lib/aum/types";
+
+// Split/bonus multipliers read oddly as raw decimals (e.g. 0.2 for a 1:5
+// reverse consolidation) -- show as "×5.0" (forward) or "÷5.0" (reverse),
+// matching how the ratio is actually described in corporate-action language.
+function formatSplitRatio(multiplier: number): string {
+  return multiplier >= 1 ? `×${multiplier.toFixed(1)}` : `÷${(1 / multiplier).toFixed(1)}`;
+}
 
 interface AugmentedHolding extends HoldingLiveView {
   liveVsReportedPct: number | null;
@@ -194,7 +211,24 @@ export function HoldingsTable({ holdings, reportPeriod }: { holdings: HoldingLiv
           </TableRow>
           {sorted.map((h) => (
             <TableRow key={h.id}>
-              <TableCell className="font-medium">{h.companyName}</TableCell>
+              <TableCell className="font-medium">
+                {h.companyName}
+                {h.shareAdjustment && (
+                  <Tooltip>
+                    <TooltipTrigger className="ml-1.5 align-middle">
+                      <Badge variant="outline" className="border-indigo-500/40 text-indigo-600 dark:text-indigo-400">
+                        Split {formatSplitRatio(h.shareAdjustment.multiplier)}
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Auto-detected {formatSplitRatio(h.shareAdjustment.multiplier)} split/bonus, detected{" "}
+                      {formatShortDate(h.shareAdjustment.firstDetectedOn)}: {formatPriceInr(h.shareAdjustment.lastPriceBeforeInr)} →{" "}
+                      {formatPriceInr(h.shareAdjustment.lastPriceAfterInr)}. Share count adjusted accordingly until next
+                      month&apos;s import reports the corrected figure.
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </TableCell>
               <TableCell className="text-muted-foreground">{h.sector}</TableCell>
               <TableCell className="text-muted-foreground">{h.mcapClassification ?? "—"}</TableCell>
               <TableCell className="text-right tabular-nums">{formatShares(h.shares)}</TableCell>

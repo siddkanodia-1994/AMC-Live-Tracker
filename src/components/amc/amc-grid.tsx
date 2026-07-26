@@ -23,7 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { InfoIcon } from "lucide-react";
-import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
 import { LIVE_AUM_CACHE_TTL_MS } from "@/lib/utils/constants";
 import { listFiscalQuarters } from "@/lib/aum/report-period";
@@ -687,6 +687,23 @@ export function AmcGrid({
                   {mutedLastCloseStocks.map((s) => (
                     <li key={s.isin}>
                       {s.companyName} — muted{s.muteReason ? `: ${s.muteReason}` : " (5+ day streak)"}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {data.shareAdjustments && data.shareAdjustments.length > 0 && (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer">
+                  {data.shareAdjustments.length} stock{data.shareAdjustments.length === 1 ? "" : "s"} auto-adjusted
+                  for a split/bonus
+                </summary>
+                <ul className="mt-1 list-disc pl-4">
+                  {data.shareAdjustments.map((s) => (
+                    <li key={s.isin}>
+                      {s.companyName} — {s.multiplier >= 1 ? `×${s.multiplier.toFixed(1)}` : `÷${(1 / s.multiplier).toFixed(1)}`}{" "}
+                      split detected {formatShortDate(s.firstDetectedOn)} ({formatPriceInr(s.priceBeforeInr)} →{" "}
+                      {formatPriceInr(s.priceAfterInr)}). Manage in Admin if this was detected incorrectly.
                     </li>
                   ))}
                 </ul>

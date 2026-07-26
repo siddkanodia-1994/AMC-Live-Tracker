@@ -26,6 +26,18 @@ export interface HoldingLiveView {
   // ((livePriceInr - previousClosePriceInr) * shares), not just a
   // percentage -- powers the Holdings table's "1D MTM" column.
   oneDayChangeCr: number | null;
+  // Auto-detected split/bonus correction applied to `shares` at live-compute
+  // read time (see split-detection.ts/share-adjustments.ts) -- null/absent
+  // when no adjustment is active. Optional: only compute-live-aum.ts
+  // currently populates it (amc-as-of.ts/backfill.ts's point-in-time
+  // reconstructions don't yet -- a deliberately deferred scope decision, see
+  // the stock-split-detection plan).
+  shareAdjustment?: {
+    multiplier: number;
+    firstDetectedOn: string;
+    lastPriceBeforeInr: number;
+    lastPriceAfterInr: number;
+  } | null;
 }
 
 export interface AmcLiveAum {
@@ -158,6 +170,21 @@ export interface LiveAumSnapshot {
   // last-close-dismissal.ts. Muted stocks are excluded from this check
   // entirely, since they're already suppressed by a separate mechanism.
   lastCloseDismissedToday: boolean;
+  // Industry-wide, deduped-by-ISIN list of currently-active auto-detected
+  // split/bonus adjustments (see split-detection.ts) -- same shape/spirit as
+  // lastCloseStocks above: always visible and reversible, never a silent
+  // background correction. Optional: only compute-live-aum.ts populates it
+  // for now (historical/asOfDate mode doesn't reconstruct this -- a
+  // deliberately deferred scope decision).
+  shareAdjustments?: {
+    isin: string;
+    companyName: string;
+    reportPeriod: string;
+    multiplier: number;
+    firstDetectedOn: string;
+    priceBeforeInr: number;
+    priceAfterInr: number;
+  }[];
   // The calendar date (IST) the shown prices actually reflect. Equals
   // today's date when pricesAreLive; otherwise the last real trading day's
   // date (see lastTradingDayIstString) — lets the UI show "Prices as of

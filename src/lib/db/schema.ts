@@ -337,6 +337,56 @@ export const dailyDataQuality = pgTable(
   (t) => [uniqueIndex("daily_data_quality_date_idx").on(t.snapshotDate)]
 );
 
+// Current active per-(isin, reportPeriod) share-count correction, applied at
+// live-compute read time on top of holdings.shares (never mutated) when a
+// stock split/bonus is auto-detected (see split-detection.ts): the imported
+// share count predates the split, so liveMarketValueCr = price * shares
+// understates/overstates by the split ratio until the next import reports
+// the corrected count. dismissedAt/dismissedReason let an admin reverse a
+// wrong auto-detection (e.g. a coincidental price-ratio match that wasn't
+// really a split) -- once dismissed, detection still logs new events for
+// that (isin, reportPeriod) but stops re-activating this row automatically.
+export const isinShareAdjustment = pgTable(
+  "isin_share_adjustment",
+  {
+    id: serial("id").primaryKey(),
+    isin: text("isin").notNull(),
+    reportPeriod: text("report_period").notNull(),
+    effectiveMultiplier: numeric("effective_multiplier", { precision: 14, scale: 6 }).notNull(),
+    firstDetectedOn: date("first_detected_on").notNull(),
+    lastDetectedOn: date("last_detected_on").notNull(),
+    detectionCount: integer("detection_count").notNull().default(1),
+    lastPriceBeforeInr: numeric("last_price_before_inr", { precision: 18, scale: 4 }).notNull(),
+    lastPriceAfterInr: numeric("last_price_after_inr", { precision: 18, scale: 4 }).notNull(),
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    dismissedReason: text("dismissed_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("isin_share_adjustment_isin_period_idx").on(t.isin, t.reportPeriod)]
+);
+
+// Append-only audit trail, one row per detected split/bonus event -- survives
+// even after isinShareAdjustment is dismissed or its multiplier compounds
+// further, and gives the daily cron idempotency for free (same
+// onConflictDoNothing pattern as isinLastCloseLog).
+export const isinShareAdjustmentLog = pgTable(
+  "isin_share_adjustment_log",
+  {
+    id: serial("id").primaryKey(),
+    isin: text("isin").notNull(),
+    reportPeriod: text("report_period").notNull(),
+    detectedOn: date("detected_on").notNull(),
+    priceBeforeInr: numeric("price_before_inr", { precision: 18, scale: 4 }).notNull(),
+    priceAfterInr: numeric("price_after_inr", { precision: 18, scale: 4 }).notNull(),
+    rawRatio: numeric("raw_ratio", { precision: 14, scale: 6 }).notNull(),
+    matchedRatio: numeric("matched_ratio", { precision: 14, scale: 6 }).notNull(),
+    deviationPct: numeric("deviation_pct", { precision: 8, scale: 5 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("isin_share_adjustment_log_isin_period_date_idx").on(t.isin, t.reportPeriod, t.detectedOn)]
+);
+
 // Audit trail for imports.
 export const importLog = pgTable("import_log", {
   id: serial("id").primaryKey(),

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
 import { upsertDailyDataQuality } from "@/lib/aum/daily-data-quality";
 import { clearRecoveredManualMutes, recordLastCloseLog } from "@/lib/aum/last-close-mute";
+import { detectShareAdjustments } from "@/lib/aum/split-detection";
 import { getIstDateString } from "@/lib/utils/date";
 
 export const maxDuration = 30;
@@ -48,6 +49,17 @@ export async function GET(request: Request) {
       await clearRecoveredManualMutes(lastCloseIsins);
     } catch (err) {
       console.error("Failed to update last-close mute bookkeeping:", err);
+    }
+
+    // Best-effort, same isolation as above: detect any stock split/bonus
+    // that happened today (a clean-ratio overnight price jump) so live AUM
+    // stops using a stale pre-split share count against a post-split price.
+    // A close-to-close comparison is the only reliable signal for this, so
+    // it belongs here (once daily) rather than the 45s organic poll.
+    try {
+      await detectShareAdjustments(getIstDateString());
+    } catch (err) {
+      console.error("Failed to detect share adjustments:", err);
     }
 
     return NextResponse.json({ ok: true, amcsSnapshotted: snapshot.amcs.length });
