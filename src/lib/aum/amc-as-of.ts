@@ -4,6 +4,7 @@ import { amcs, holdings, isinDailyPrice, liveAumDailySnapshot } from "../db/sche
 import { isBankDebtOrRepo, isCashEquivalent } from "../excel/instrument-classification";
 import { CRORE } from "../utils/constants";
 import { getCanonicalSnapshotDateBounds } from "./history";
+import { getActiveShareMultipliers, type ShareAdjustment } from "./share-adjustments";
 import type { AmcLiveAum, HoldingLiveView } from "./types";
 
 /**
@@ -87,6 +88,16 @@ export async function computeAmcAsOf(
     }
   }
 
+  // Auto-detected split/bonus corrections active for this reportPeriod (see
+  // split-detection.ts) -- a dismissed "not a real split" is already
+  // excluded here (getActiveShareMultipliers filters dismissedAt IS NULL),
+  // so it correctly never applies, historical or live. Unlike the live path
+  // (always "today", always after any detected split), whether this applies
+  // to a given holding here further depends on which date is being viewed --
+  // resolved per-holding below by comparing the actual priced dates against
+  // adj.firstDetectedOn, not by pre-filtering this query on asOfDate.
+  const shareAdjustmentsByIsin = await getActiveShareMultipliers(reportPeriod).catch(() => new Map<string, ShareAdjustment>());
+
   const holdingViews: HoldingLiveView[] = [];
   let cashEquivalentCr = 0;
   let bankDebtRepoCr = 0;
@@ -110,27 +121,56 @@ export async function computeAmcAsOf(
     let livePriceInr: number | null = null;
     let previousClosePriceInr: number | null = null;
     let liveMarketValueCr = reportedMarketValueCr;
+    let oneDayChangePct: number | null = null;
+    let oneDayChangeCr: number | null = null;
+    // Populated only when the split had already happened as of the priced
+    // date shown (latestIsPostSplit below) -- so the badge (which keys off
+    // this being non-null) only appears for dates it actually applies to.
+    let shareAdjustment: HoldingLiveView["shareAdjustment"] = null;
+
+    const adj = h.isin ? shareAdjustmentsByIsin.get(h.isin) : undefined;
 
     if (h.isin && h.isPriceable) {
       const prices = priceRowsByIsin.get(h.isin) ?? [];
       const [latest, prior] = prices; // newest-first
+      // Whether the split had already happened as of each priced date --
+      // derived from the actual price rows' own dates (more robust than the
+      // outer asOfDate against any data gaps), not whether an adjustment
+      // merely exists. Browsing to a date before the split shows the
+      // original, genuinely-true-then shares; on/after shows the adjusted
+      // figure.
+      const latestIsPostSplit = !!(adj && latest && latest.snapshotDate >= adj.firstDetectedOn);
+      const priorIsPostSplit = !!(adj && prior && prior.snapshotDate >= adj.firstDetectedOn);
+      const effectiveShares = latestIsPostSplit ? Number(h.shares) * adj!.multiplier : Number(h.shares);
+
       if (latest) {
         livePriceInr = latest.priceInr;
-        liveMarketValueCr = (latest.priceInr * Number(h.shares)) / CRORE;
+        liveMarketValueCr = (latest.priceInr * effectiveShares) / CRORE;
         livePricedCount++;
         distinctLivePricedIsins.add(h.isin);
+        if (latestIsPostSplit) {
+          shareAdjustment = {
+            multiplier: adj!.multiplier,
+            firstDetectedOn: adj!.firstDetectedOn,
+            lastPriceBeforeInr: adj!.lastPriceBeforeInr,
+            lastPriceAfterInr: adj!.lastPriceAfterInr,
+          };
+        }
       } else {
         stalePricedCount++;
       }
       if (prior) previousClosePriceInr = prior.priceInr;
-    }
 
-    const oneDayChangePct =
-      livePriceInr !== null && previousClosePriceInr !== null && previousClosePriceInr !== 0
-        ? (livePriceInr - previousClosePriceInr) / previousClosePriceInr
-        : null;
-    const oneDayChangeCr =
-      livePriceInr !== null && previousClosePriceInr !== null ? ((livePriceInr - previousClosePriceInr) * Number(h.shares)) / CRORE : null;
+      // The two compared prices straddle the split (one pre-, one post-) --
+      // can't meaningfully compare, same "null for incomparable" treatment
+      // as the live path's own boundary-day fix. Only when both sides agree
+      // (both pre- or both post-split) is a 1-day comparison computed,
+      // using effectiveShares consistently on both sides.
+      if (latestIsPostSplit === priorIsPostSplit && livePriceInr !== null && previousClosePriceInr !== null) {
+        oneDayChangePct = previousClosePriceInr !== 0 ? (livePriceInr - previousClosePriceInr) / previousClosePriceInr : null;
+        oneDayChangeCr = ((livePriceInr - previousClosePriceInr) * effectiveShares) / CRORE;
+      }
+    }
 
     if (isDebtOrRepo) bankDebtRepoCr += liveMarketValueCr;
     if (isCashEquivalent(h.companyName)) cashEquivalentCr += liveMarketValueCr;
@@ -158,6 +198,7 @@ export async function computeAmcAsOf(
       // live/foreign/stale distinction -- labeled uniformly, matching how
       // computeOverviewAsOf simplifies its own AMC-level equivalent.
       priceSource: livePriceInr !== null ? "last_close" : "stale_fallback",
+      shareAdjustment,
     });
   }
 
