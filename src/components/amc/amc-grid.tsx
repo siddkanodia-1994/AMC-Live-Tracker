@@ -27,8 +27,9 @@ import { formatCr, formatDeltaCr, formatPct, formatPriceInr, formatReportPeriodL
 import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
 import { LIVE_AUM_CACHE_TTL_MS } from "@/lib/utils/constants";
 import { listFiscalQuarters } from "@/lib/aum/report-period";
-import type { LiveAumSnapshot } from "@/lib/aum/types";
+import type { LiveAumSnapshot, IndexBenchmarkRow } from "@/lib/aum/types";
 import type { AumHistoryPoint } from "@/lib/aum/history";
+import { INDEX_KEYS, INDEX_DISPLAY_NAMES } from "@/lib/dhan/indices";
 
 const CUSTOM_QUARTER_VALUE = "custom";
 
@@ -287,6 +288,42 @@ export function AmcGrid({
     });
   }, [data, adjustments.data, reportedAumMode]);
 
+  // Nifty 50 / Nifty 500 benchmark rows -- same blend-live-with-adjustments
+  // shape as adjustedAmcs above, just against indexLiveLevels/index*ByKey
+  // instead of an AMC's own fields. Kept entirely separate from
+  // adjustedAmcs/computeTotals since these aren't AMCs and must never be
+  // summed into industry totals.
+  const indexBenchmarkRows = useMemo<IndexBenchmarkRow[]>(() => {
+    // Not shown while browsing a past date (data.asOfDate set) -- that mode
+    // has no live index level to pair with the avg/hist-live figures below,
+    // same "feature unavailable in historical browsing" convention already
+    // applied to Holdings/Debt/Live Priced/Net Flow in the Excel export.
+    if (!data || data.asOfDate || !adjustments.data) return [];
+    const adj = adjustments.data;
+    return INDEX_KEYS.map((key) => {
+      const live = data.indexLiveLevels?.[key];
+      const avgAumCr = adj.indexAvgLevelByKey[key];
+      const avgLiveAumCr = adj.indexCurrentAvgLevelByKey[key];
+      const avgAumQoQChangePct =
+        avgLiveAumCr !== null && avgAumCr !== null && avgAumCr !== 0 ? avgLiveAumCr / avgAumCr - 1 : null;
+      const liveAumCr = live?.liveLevelValue ?? null;
+      const reportedAumCr = reportedAumMode === "hist-live" ? adj.indexHistLiveLevelByKey[key] : null;
+      const deltaPct =
+        reportedAumCr !== null && reportedAumCr !== 0 && liveAumCr !== null ? liveAumCr / reportedAumCr - 1 : null;
+      return {
+        indexKey: key,
+        displayName: INDEX_DISPLAY_NAMES[key],
+        avgLiveAumCr,
+        avgAumCr,
+        avgAumQoQChangePct,
+        liveAumCr,
+        oneDayChangePct: live?.oneDayChangePct ?? null,
+        reportedAumCr,
+        deltaPct,
+      };
+    });
+  }, [data, adjustments.data, reportedAumMode]);
+
   const filteredAmcs = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q ? adjustedAmcs.filter((a) => a.overviewName.toLowerCase().includes(q)) : adjustedAmcs;
@@ -442,7 +479,6 @@ export function AmcGrid({
     reportedAumMode === "hist-live"
       ? formatShortDate(adjustments.data?.histLiveDate ?? histLiveDate ?? "")
       : reportedAumPeriodLabel;
-  const liveVsColumnLabel = reportedAumMode === "hist-live" ? "Live vs Historical" : "Live vs Reported";
   const adjustmentsTouched =
     selectedReportPeriod !== null ||
     avgFrom !== null ||
@@ -1098,12 +1134,12 @@ export function AmcGrid({
           <AmcTable
             amcs={filteredAmcs}
             allAmcs={adjustedAmcs}
+            indexBenchmarkRows={indexBenchmarkRows}
             isSearchActive={query.trim() !== ""}
             topN={topN}
             reportPeriod={data.reportPeriod}
             reportedColumnLabel={reportedColumnLabel}
             reportedColumnSublabel={reportedColumnSublabel}
-            liveVsColumnLabel={liveVsColumnLabel}
             avgWindowLabel={avgWindowLabel}
             currentAvgWindowLabel={currentAvgWindowLabel}
             asOfDate={data.asOfDate ?? null}

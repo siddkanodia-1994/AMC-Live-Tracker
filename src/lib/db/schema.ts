@@ -192,6 +192,24 @@ export const isinDailyPrice = pgTable(
   (t) => [uniqueIndex("isin_daily_price_isin_date_idx").on(t.isin, t.snapshotDate)]
 );
 
+// Overview-page benchmark rows (Nifty 50 / Nifty 500), kept entirely
+// separate from the amcs/liveAumDailySnapshot tables so they never get
+// summed into industry-wide AMC totals/counts. One row per index per
+// calendar day, overwritten intraday the same way isinDailyPrice is --
+// today's row is the "live" level; once no more polls arrive for that
+// date it stands as the permanent historical close.
+export const indexDailyLevel = pgTable(
+  "index_daily_level",
+  {
+    id: serial("id").primaryKey(),
+    indexKey: text("index_key").notNull(), // 'NIFTY_50' | 'NIFTY_500'
+    snapshotDate: date("snapshot_date").notNull(),
+    levelValue: numeric("level_value", { precision: 18, scale: 4 }).notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("index_daily_level_key_date_idx").on(t.indexKey, t.snapshotDate)]
+);
+
 // One row per (ISIN, trading date) where that ISIN was classified
 // priceSource === "last_close" that day -- written once daily by the 4:05pm
 // IST close-capture cron (not on every 45s poll), so a transient intraday

@@ -5,9 +5,9 @@ import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { useRegisterExport } from "@/components/layout/export-context";
-import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatIndexLevel, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import type { TopNOption } from "@/lib/utils/top-n";
-import type { AmcLiveAum } from "@/lib/aum/types";
+import type { AmcLiveAum, IndexBenchmarkRow } from "@/lib/aum/types";
 
 type SortKey =
   | "overviewName"
@@ -212,12 +212,12 @@ function TotalsRow({
 export function AmcTable({
   amcs,
   allAmcs,
+  indexBenchmarkRows,
   isSearchActive,
   topN,
   reportPeriod,
   reportedColumnLabel,
   reportedColumnSublabel,
-  liveVsColumnLabel,
   avgWindowLabel,
   currentAvgWindowLabel,
   asOfDate,
@@ -227,21 +227,25 @@ export function AmcTable({
 }: {
   amcs: AmcLiveAum[];
   allAmcs: AmcLiveAum[];
+  // Nifty 50 / Nifty 500 rows, rendered below Industry Total -- empty
+  // while browsing a past date (Overview-level historical mode has no
+  // live index level to show). Never folded into allAmcs/computeTotals.
+  indexBenchmarkRows: IndexBenchmarkRow[];
   isSearchActive: boolean;
   topN: TopNOption;
   // Drives "Est. Net Flow" headers/export only -- always the CURRENT report
   // period, unaffected by the Reported AUM month picker (Net Flow is a
   // separate metric that isn't part of that adjustment).
   reportPeriod: string;
-  // "Reported AUM"/"Hist. Live AUM" column's label + sublabel, and the
-  // adjacent "Live vs Reported"/"Live vs Historical" column's label --
-  // all three swap together with the Overview toolbar's AUM Basis toggle.
-  // The underlying amc.reportedAumCr/deltaPct values are already resolved
-  // to the right source upstream (amc-grid.tsx) -- these three props are
-  // display-only.
+  // "Reported AUM"/"Hist. Live AUM" column's label + sublabel -- swaps
+  // with the Overview toolbar's AUM Basis toggle. The underlying
+  // amc.reportedAumCr/deltaPct values are already resolved to the right
+  // source upstream (amc-grid.tsx) -- these props are display-only.
+  // The adjacent "Exit AUM QoQ Change" column's label stays fixed
+  // regardless of AUM Basis (it's always a QoQ comparison against
+  // whichever value reportedColumnLabel currently points at).
   reportedColumnLabel: string;
   reportedColumnSublabel: string;
-  liveVsColumnLabel: string;
   // "Avg AUM" column's window -- defaults to the previous fiscal quarter.
   avgWindowLabel: string;
   // "Avg Live AUM" column's window -- defaults to the current fiscal
@@ -317,7 +321,7 @@ export function AmcTable({
       [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
       "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
       [`${reportedColumnLabel} ${reportedColumnSublabel} (Cr)`]: amc.reportedAumCr,
-      [`${liveVsColumnLabel} (%)`]: amc.deltaPct * 100,
+      "Exit AUM QoQ Change (%)": amc.deltaPct * 100,
       Holdings: historical ? null : amc.holdingsCount,
       Debt: historical ? null : amc.debtInstrumentCount,
       "Live Priced": historical ? null : amc.livePricedCount,
@@ -411,7 +415,14 @@ export function AmcTable({
               />
               <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
               <SortableHead label={reportedColumnLabel} sublabel={reportedColumnSublabel} sk="reportedAumCr" {...headProps} />
-              <SortableHead label={liveVsColumnLabel} sk="deltaPct" {...headProps} className={GROUP_DIVIDER_CLASS} />
+              <SortableHead
+                label="Exit AUM"
+                sublabel="QoQ Change"
+                sublabelAccent={false}
+                sk="deltaPct"
+                {...headProps}
+                className={GROUP_DIVIDER_CLASS}
+              />
               <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />
               <SortableHead label="Debt" sk="debtInstrumentCount" {...headProps} />
               <SortableHead label="Live Priced" sk="livePricedCount" {...headProps} />
@@ -507,6 +518,35 @@ export function AmcTable({
                 )}
               </TableRow>
             )}
+            {indexBenchmarkRows.map((row) => (
+              <TableRow key={row.indexKey} className="bg-muted/30">
+                <TableCell className="font-serif font-medium">{row.displayName}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {row.avgLiveAumCr !== null ? formatIndexLevel(row.avgLiveAumCr) : "—"}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {row.avgAumCr !== null ? formatIndexLevel(row.avgAumCr) : "—"}
+                </TableCell>
+                <PctCell value={row.avgAumQoQChangePct} className={GROUP_DIVIDER_CLASS} />
+                <TableCell className="text-right tabular-nums">
+                  {row.liveAumCr !== null ? formatIndexLevel(row.liveAumCr) : "—"}
+                </TableCell>
+                <PctCell value={row.oneDayChangePct} />
+                <TableCell className="text-right tabular-nums text-muted-foreground">
+                  {row.reportedAumCr !== null ? formatIndexLevel(row.reportedAumCr) : "—"}
+                </TableCell>
+                <PctCell value={row.deltaPct} className={GROUP_DIVIDER_CLASS} />
+                <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                {showNetFlow && (
+                  <>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                  </>
+                )}
+              </TableRow>
+            ))}
           </TableFooter>
         </Table>
       </div>

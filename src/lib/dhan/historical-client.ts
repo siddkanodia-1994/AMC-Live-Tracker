@@ -1,5 +1,5 @@
 import { getActiveDhanClientId, getActiveDhanToken } from "./token";
-import type { ExchangeSegment } from "./types";
+import type { DhanInstrumentType, ExchangeSegment } from "./types";
 
 const DHAN_HISTORICAL_URL = "https://api.dhan.co/v2/charts/historical";
 // DHAN's documented limit for the historical/charts data API is 5
@@ -35,7 +35,8 @@ async function fetchHistoricalClosesOnce(
   securityId: string,
   exchangeSegment: ExchangeSegment,
   fromDate: string,
-  toDateInclusive: string
+  toDateInclusive: string,
+  instrument: DhanInstrumentType
 ): Promise<{ closes: HistoricalClose[] | null; retryable: boolean; detail: string }> {
   let token: string;
   let clientId: string;
@@ -61,7 +62,7 @@ async function fetchHistoricalClosesOnce(
       body: JSON.stringify({
         securityId,
         exchangeSegment,
-        instrument: "EQUITY",
+        instrument,
         expiryCode: 0,
         oi: false,
         fromDate,
@@ -113,13 +114,14 @@ export async function fetchHistoricalCloses(
   securityId: string,
   exchangeSegment: ExchangeSegment,
   fromDate: string,
-  toDateInclusive: string
+  toDateInclusive: string,
+  instrument: DhanInstrumentType = "EQUITY"
 ): Promise<HistoricalClose[]> {
   let lastDetail = "";
   let attemptsMade = 0;
   for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
     attemptsMade = attempt;
-    const result = await fetchHistoricalClosesOnce(securityId, exchangeSegment, fromDate, toDateInclusive);
+    const result = await fetchHistoricalClosesOnce(securityId, exchangeSegment, fromDate, toDateInclusive, instrument);
     if (result.closes !== null) return result.closes;
     lastDetail = result.detail;
     if (!result.retryable) break;
@@ -141,7 +143,7 @@ export async function fetchHistoricalCloses(
  * returns its whole date range in one response).
  */
 export async function fetchHistoricalClosesForMany(
-  requests: { securityId: string; exchangeSegment: ExchangeSegment }[],
+  requests: { securityId: string; exchangeSegment: ExchangeSegment; instrument?: DhanInstrumentType }[],
   fromDate: string,
   toDateInclusive: string,
   onProgress?: (done: number, total: number) => void
@@ -149,8 +151,8 @@ export async function fetchHistoricalClosesForMany(
   const results = new Map<string, HistoricalClose[]>();
 
   for (let i = 0; i < requests.length; i++) {
-    const { securityId, exchangeSegment } = requests[i];
-    const closes = await fetchHistoricalCloses(securityId, exchangeSegment, fromDate, toDateInclusive);
+    const { securityId, exchangeSegment, instrument = "EQUITY" } = requests[i];
+    const closes = await fetchHistoricalCloses(securityId, exchangeSegment, fromDate, toDateInclusive, instrument);
     results.set(`${exchangeSegment}:${securityId}`, closes);
     onProgress?.(i + 1, requests.length);
 

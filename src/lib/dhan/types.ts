@@ -1,4 +1,9 @@
-export type ExchangeSegment = "NSE_EQ" | "BSE_EQ";
+export type ExchangeSegment = "NSE_EQ" | "BSE_EQ" | "IDX_I";
+
+// DHAN's historical/charts API's own instrument-type discriminator --
+// "INDEX" for IDX_I-segment instruments (e.g. NIFTY 50/500), "EQUITY" for
+// everything else this app tracks.
+export type DhanInstrumentType = "EQUITY" | "INDEX";
 
 export interface LtpRequestItem {
   securityId: string;

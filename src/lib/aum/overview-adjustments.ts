@@ -1,9 +1,11 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { appSettings } from "../db/schema";
+import type { IndexKey } from "../dhan/indices";
 import { getIstDateString } from "../utils/date";
 import { getAvailableReportPeriods } from "./aum-growth";
 import { getAllAmcsLiveAumAsOf, getAverageAumForRange, getCanonicalSnapshotDateBounds, getReportedAumForPeriod } from "./history";
+import { getAverageIndexLevelForRange, getIndexLevelsAsOf } from "./index-benchmarks";
 import { getFiscalQuarterBounds, getPreviousFiscalQuarterBounds } from "./report-period";
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
@@ -33,6 +35,13 @@ export interface OverviewAdjustments {
   // advances at quarter boundaries, not every month.
   histLiveDate: string;
   histLiveAumByAmcId: Record<number, number>;
+  // Same three windows/date above, applied to the Overview table's Nifty
+  // 50/Nifty 500 benchmark rows instead of AMCs -- kept in lockstep with
+  // the AMC figures (same avgFrom/avgTo/currentAvgFrom/currentAvgTo/
+  // histLiveDate) so picking a custom window updates both together.
+  indexAvgLevelByKey: Record<IndexKey, number | null>;
+  indexCurrentAvgLevelByKey: Record<IndexKey, number | null>;
+  indexHistLiveLevelByKey: Record<IndexKey, number | null>;
 }
 
 /**
@@ -84,12 +93,16 @@ export async function getOverviewAdjustments(options?: {
 
   const histLiveDate = options?.histLiveDate ? clamp(options.histLiveDate) : clamp(prevQuarter.end);
 
-  const [reportedAumMap, avgAumMap, currentAvgAumMap, histLiveAumMap] = await Promise.all([
-    getReportedAumForPeriod(reportPeriod),
-    getAverageAumForRange(avgFrom, avgTo),
-    getAverageAumForRange(currentAvgFrom, currentAvgTo),
-    getAllAmcsLiveAumAsOf(histLiveDate),
-  ]);
+  const [reportedAumMap, avgAumMap, currentAvgAumMap, histLiveAumMap, indexAvgLevelByKey, indexCurrentAvgLevelByKey, indexHistLiveLevelByKey] =
+    await Promise.all([
+      getReportedAumForPeriod(reportPeriod),
+      getAverageAumForRange(avgFrom, avgTo),
+      getAverageAumForRange(currentAvgFrom, currentAvgTo),
+      getAllAmcsLiveAumAsOf(histLiveDate),
+      getAverageIndexLevelForRange(avgFrom, avgTo),
+      getAverageIndexLevelForRange(currentAvgFrom, currentAvgTo),
+      getIndexLevelsAsOf(histLiveDate),
+    ]);
 
   return {
     reportPeriod,
@@ -105,5 +118,8 @@ export async function getOverviewAdjustments(options?: {
     maxSnapshotDate: maxDate,
     histLiveDate,
     histLiveAumByAmcId: Object.fromEntries([...histLiveAumMap].map(([amcId, v]) => [amcId, v.liveAumCr])),
+    indexAvgLevelByKey,
+    indexCurrentAvgLevelByKey,
+    indexHistLiveLevelByKey,
   };
 }

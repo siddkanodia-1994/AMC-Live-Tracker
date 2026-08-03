@@ -21,6 +21,12 @@ export function formatPriceInr(priceInr: number): string {
   })}`;
 }
 
+// Overview table's Nifty 50/Nifty 500 benchmark rows -- an index level is a
+// plain point value, not a currency amount, so no ₹ symbol or "cr" suffix.
+export function formatIndexLevel(level: number): string {
+  return level.toLocaleString("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+}
+
 export function formatShares(shares: number): string {
   return shares.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }

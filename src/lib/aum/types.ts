@@ -1,3 +1,5 @@
+import type { IndexKey } from "../dhan/indices";
+
 // "last_close" = DHAN didn't provide a live price (market closed, expired
 // token, rate limit, ...) but we have a known good price from the most
 // recent successful pricing of this ISIN, so it's used instead of falling
@@ -110,6 +112,27 @@ export interface AmcLiveAum {
   netFlowBaselineCr: number | null;
 }
 
+// Overview table-only benchmark row (Nifty 50 / Nifty 500) -- computed
+// client-side by amc-grid.tsx from indexLiveLevels (live path) + the
+// index*ByKey fields on OverviewAdjustments (avg/hist-live path), mirroring
+// exactly how adjustedAmcs blends data.amcs with adjustments.data. Never
+// folded into computeTotals/Industry Total -- these aren't AMCs.
+export interface IndexBenchmarkRow {
+  indexKey: IndexKey;
+  displayName: string;
+  avgLiveAumCr: number | null;
+  avgAumCr: number | null;
+  avgAumQoQChangePct: number | null;
+  liveAumCr: number | null;
+  oneDayChangePct: number | null;
+  // Non-null only in "hist-live" AUM Basis mode (indices have no disclosed
+  // "Reported AUM" figure) -- reportedColumnLabel/deltaPct both render "—"
+  // for these rows in "reported" mode, per the confirmed "not applicable"
+  // convention.
+  reportedAumCr: number | null;
+  deltaPct: number | null;
+}
+
 export type DhanStatus = "ok" | "degraded" | "unavailable";
 
 export interface LiveAumSnapshot {
@@ -219,6 +242,11 @@ export interface LiveAumSnapshot {
   // fixed. Optional/route-populated, same convention as min/maxSnapshotDate
   // above; not populated in historical (asOfDate) mode.
   dailyDataQualityAlert?: { count: number; worstDate: string; worstPct: number } | null;
+  // Live index level + 1D change for the Overview table's Nifty 50/Nifty
+  // 500 benchmark rows -- route-populated (refreshLiveIndexLevels), same
+  // optional convention as the fields above. Not populated in historical
+  // (asOfDate) mode.
+  indexLiveLevels?: Record<IndexKey, { liveLevelValue: number | null; oneDayChangePct: number | null }>;
 }
 
 export interface ComputedLiveAum {

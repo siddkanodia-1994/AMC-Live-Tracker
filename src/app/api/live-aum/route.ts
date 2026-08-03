@@ -3,6 +3,7 @@ import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum"
 import { computeOverviewAsOf } from "@/lib/aum/overview-as-of";
 import { getCanonicalSnapshotDateBounds } from "@/lib/aum/history";
 import { getDailyDataQualityAlerts } from "@/lib/aum/daily-data-quality";
+import { refreshLiveIndexLevels } from "@/lib/aum/index-benchmarks";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -15,10 +16,11 @@ export async function GET(request: Request) {
       const snapshot = await computeOverviewAsOf(asOfDate);
       return NextResponse.json(snapshot);
     }
-    const [snapshot, bounds, dailyDataQualityAlert] = await Promise.all([
+    const [snapshot, bounds, dailyDataQualityAlert, indexLiveLevels] = await Promise.all([
       computeLiveAum({ forceRefresh }),
       getCanonicalSnapshotDateBounds(),
       getDailyDataQualityAlerts().catch(() => null),
+      refreshLiveIndexLevels(),
     ]);
     return NextResponse.json({
       ...snapshot,
@@ -26,6 +28,7 @@ export async function GET(request: Request) {
       minSnapshotDate: bounds.minDate,
       maxSnapshotDate: bounds.maxDate,
       dailyDataQualityAlert,
+      indexLiveLevels,
     });
   } catch (err) {
     if (err instanceof NoDataImportedError) {
