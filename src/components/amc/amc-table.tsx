@@ -180,13 +180,13 @@ function TotalsRow({
   return (
     <TableRow>
       <TableCell>{label}</TableCell>
+      <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalCurrentQuarterAvgAumCr)}</TableCell>
+      <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalAvgAumCr)}</TableCell>
+      <PctCell value={historical ? null : totals.totalAvgAumQoQChangePct} className={GROUP_DIVIDER_CLASS} />
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalLiveAumCr)}</TableCell>
       <PctCell value={totals.totalOneDayChangePct} />
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalReportedAumCr)}</TableCell>
-      <PctCell value={totals.totalLiveVsReportedPct} className={GROUP_DIVIDER_CLASS} />
-      <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalCurrentQuarterAvgAumCr)}</TableCell>
-      <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalAvgAumCr)}</TableCell>
-      <PctCell value={historical ? null : totals.totalAvgAumQoQChangePct} />
+      <PctCell value={totals.totalLiveVsReportedPct} />
       <TableCell className="text-right tabular-nums" title={holdingsTitle}>
         {historical ? "—" : totals.totalHoldingsCount}
       </TableCell>
@@ -308,13 +308,13 @@ export function AmcTable({
     sheetName: "Overview",
     rows: sorted.map((amc) => ({
       AMC: amc.overviewName,
+      [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: historical ? null : (amc.currentQuarterAvgLiveAumCr ?? null),
+      [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
+      "Avg AUM QoQ Change (%)": !historical && amc.avgAumQoQChangePct != null ? amc.avgAumQoQChangePct * 100 : null,
       [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
       "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
       [`${reportedColumnLabel} ${reportedColumnSublabel} (Cr)`]: amc.reportedAumCr,
       [`${liveVsColumnLabel} (%)`]: amc.deltaPct * 100,
-      [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: historical ? null : (amc.currentQuarterAvgLiveAumCr ?? null),
-      [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
-      "Avg AUM QoQ Change (%)": !historical && amc.avgAumQoQChangePct != null ? amc.avgAumQoQChangePct * 100 : null,
       Holdings: historical ? null : amc.holdingsCount,
       Debt: historical ? null : amc.debtInstrumentCount,
       "Live Priced": historical ? null : amc.livePricedCount,
@@ -355,13 +355,13 @@ export function AmcTable({
             <TableRow>
               <TableHead />
               <TableHead
-                colSpan={4}
+                colSpan={3}
                 className={`text-center text-xs font-bold tracking-wide text-blue-900 uppercase dark:text-blue-300 ${GROUP_DIVIDER_CLASS}`}
               >
-                Exit AUM Growth
-              </TableHead>
-              <TableHead colSpan={3} className="text-center text-xs font-bold tracking-wide text-blue-900 uppercase dark:text-blue-300">
                 Avg AUM Growth
+              </TableHead>
+              <TableHead colSpan={4} className="text-center text-xs font-bold tracking-wide text-blue-900 uppercase dark:text-blue-300">
+                Exit AUM Growth
               </TableHead>
               <TableHead colSpan={showNetFlow ? 5 : 3} />
             </TableRow>
@@ -380,15 +380,6 @@ export function AmcTable({
                 </div>
               </TableHead>
               <SortableHead
-                label="Live AUM"
-                sublabel={asOfDate ? formatShortDate(asOfDate) : undefined}
-                sk="liveAumCr"
-                {...headProps}
-              />
-              <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
-              <SortableHead label={reportedColumnLabel} sublabel={reportedColumnSublabel} sk="reportedAumCr" {...headProps} />
-              <SortableHead label={liveVsColumnLabel} sk="deltaPct" {...headProps} className={GROUP_DIVIDER_CLASS} />
-              <SortableHead
                 label="Avg Live AUM"
                 sublabel={currentAvgWindowLabel}
                 sk="currentQuarterAvgLiveAumCr"
@@ -401,7 +392,17 @@ export function AmcTable({
                 sublabelAccent={false}
                 sk="avgAumQoQChangePct"
                 {...headProps}
+                className={GROUP_DIVIDER_CLASS}
               />
+              <SortableHead
+                label="Live AUM"
+                sublabel={asOfDate ? formatShortDate(asOfDate) : undefined}
+                sk="liveAumCr"
+                {...headProps}
+              />
+              <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
+              <SortableHead label={reportedColumnLabel} sublabel={reportedColumnSublabel} sk="reportedAumCr" {...headProps} />
+              <SortableHead label={liveVsColumnLabel} sk="deltaPct" {...headProps} />
               <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />
               <SortableHead label="Debt" sk="debtInstrumentCount" {...headProps} />
               <SortableHead label="Live Priced" sk="livePricedCount" {...headProps} />
@@ -433,19 +434,19 @@ export function AmcTable({
                     {amc.overviewName}
                   </Link>
                 </TableCell>
-                <TableCell className="text-right tabular-nums">{formatCr(amc.liveAumCr)}</TableCell>
-                <PctCell value={amc.oneDayChangePct} />
-                <TableCell className="text-right tabular-nums text-muted-foreground">
-                  {formatCr(amc.reportedAumCr)}
-                </TableCell>
-                <PctCell value={amc.deltaPct} className={GROUP_DIVIDER_CLASS} />
                 <TableCell className="text-right tabular-nums">
                   {amc.currentQuarterAvgLiveAumCr != null ? formatCr(amc.currentQuarterAvgLiveAumCr) : "—"}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {amc.avgLiveAumCr !== null ? formatCr(amc.avgLiveAumCr) : "—"}
                 </TableCell>
-                <PctCell value={amc.avgAumQoQChangePct} />
+                <PctCell value={amc.avgAumQoQChangePct} className={GROUP_DIVIDER_CLASS} />
+                <TableCell className="text-right tabular-nums">{formatCr(amc.liveAumCr)}</TableCell>
+                <PctCell value={amc.oneDayChangePct} />
+                <TableCell className="text-right tabular-nums text-muted-foreground">
+                  {formatCr(amc.reportedAumCr)}
+                </TableCell>
+                <PctCell value={amc.deltaPct} />
                 <TableCell className="text-right tabular-nums">{historical ? "—" : amc.holdingsCount}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {historical ? "—" : amc.debtInstrumentCount}
@@ -471,15 +472,15 @@ export function AmcTable({
             {isRestricted && (
               <TableRow className="text-muted-foreground">
                 <TableCell>Industry Total (all {allAmcs.length} AMCs)</TableCell>
-                <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalLiveAumCr)}</TableCell>
-                <PctCell value={industryTotals.totalOneDayChangePct} />
-                <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalReportedAumCr)}</TableCell>
-                <PctCell value={industryTotals.totalLiveVsReportedPct} className={GROUP_DIVIDER_CLASS} />
                 <TableCell className="text-right tabular-nums">
                   {historical ? "—" : formatCr(industryTotals.totalCurrentQuarterAvgAumCr)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(industryTotals.totalAvgAumCr)}</TableCell>
-                <PctCell value={historical ? null : industryTotals.totalAvgAumQoQChangePct} />
+                <PctCell value={historical ? null : industryTotals.totalAvgAumQoQChangePct} className={GROUP_DIVIDER_CLASS} />
+                <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalLiveAumCr)}</TableCell>
+                <PctCell value={industryTotals.totalOneDayChangePct} />
+                <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalReportedAumCr)}</TableCell>
+                <PctCell value={industryTotals.totalLiveVsReportedPct} />
                 <TableCell className="text-right tabular-nums" title="Distinct stocks held anywhere in the industry — not a sum of each AMC's count">
                   {historical ? "—" : distinctHoldingsCount}
                 </TableCell>

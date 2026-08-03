@@ -293,13 +293,17 @@ export function AmcGrid({
   }, [adjustedAmcs, query]);
 
   // Card 1's comparison basis: industry-wide Live AUM as of the last day of
-  // the previous calendar month (e.g. 30 Jun while viewing July), not
-  // Reported AUM -- a month-to-date live-growth signal instead of a
-  // live-vs-last-disclosed-figure divergence signal. Reuses
-  // adjustments.data.histLiveAumByAmcId -- the EXACT same per-AMC data the
-  // "Hist. Live AUM" column/toggle below already computes (defaults to
-  // lastDayOfPreviousCalendarMonth server-side, see overview-adjustments.ts)
-  // -- rather than a separate history-based lookup. That's not just fewer
+  // the previous FISCAL QUARTER (e.g. 30 Jun through all of Q2 FY27, then
+  // 30 Sep from 1 Oct onward), not Reported AUM -- a quarter-to-date
+  // live-growth signal instead of a live-vs-last-disclosed-figure
+  // divergence signal. Reuses adjustments.data.histLiveAumByAmcId -- the
+  // EXACT same per-AMC data the "Hist. Live AUM" column/toggle below
+  // already computes (defaults to prevQuarter.end server-side, see
+  // overview-adjustments.ts) -- rather than a separate history-based
+  // lookup. Deliberately kept linked to that column's own default (not a
+  // separate monthly lookup) -- simpler, no extra query, and consistent
+  // with the rest of the page's quarter-based framing (Avg AUM Window/Avg
+  // Live AUM Window are already quarterly). That's not just fewer
   // moving parts: getIndustryAumHistory() sums ALL AMCs ever canonically
   // tracked on that date, including ones no longer in the current AMC
   // roster (confirmed: 5 SIFs merged/renamed away between May and June),
@@ -314,8 +318,8 @@ export function AmcGrid({
   // comparison basis AFTER the day being viewed, which reads backwards. So
   // this badge just doesn't render in that mode, same treatment card 2
   // already gives its own "not available for historical dates" case.
-  const lastMonthEndDate = data?.asOfDate ? null : (adjustments.data?.histLiveDate ?? null);
-  const lastMonthEndLiveAumCr = useMemo(() => {
+  const lastQuarterEndDate = data?.asOfDate ? null : (adjustments.data?.histLiveDate ?? null);
+  const lastQuarterEndLiveAumCr = useMemo(() => {
     if (!data || data.asOfDate || !adjustments.data) return null;
     const map = adjustments.data.histLiveAumByAmcId;
     return data.amcs.reduce((sum, amc) => sum + (map[amc.amcId] ?? amc.liveAumCr), 0);
@@ -324,7 +328,7 @@ export function AmcGrid({
   const industryTotals = useMemo(() => {
     if (!data) return null;
     const totalAvgAumCr = data.amcs.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
-    const liveDeltaCr = lastMonthEndLiveAumCr !== null ? data.totalLiveAumCr - lastMonthEndLiveAumCr : null;
+    const liveDeltaCr = lastQuarterEndLiveAumCr !== null ? data.totalLiveAumCr - lastQuarterEndLiveAumCr : null;
     const avgDeltaCr = totalAvgAumCr - data.totalReportedAumCr;
     // Falls back to today's own liveAumCr (not skipping the AMC) for any AMC
     // with no prior-day figure yet -- that AMC contributes zero change to the
@@ -346,8 +350,8 @@ export function AmcGrid({
       totalAvgAumCr,
       liveDeltaCr,
       liveDeltaPct:
-        liveDeltaCr !== null && lastMonthEndLiveAumCr !== 0 && lastMonthEndLiveAumCr !== null
-          ? liveDeltaCr / lastMonthEndLiveAumCr
+        liveDeltaCr !== null && lastQuarterEndLiveAumCr !== 0 && lastQuarterEndLiveAumCr !== null
+          ? liveDeltaCr / lastQuarterEndLiveAumCr
           : null,
       avgDeltaCr,
       avgDeltaPct: data.totalReportedAumCr !== 0 ? avgDeltaCr / data.totalReportedAumCr : 0,
@@ -359,7 +363,7 @@ export function AmcGrid({
       oneDayChangeCr,
       oneDayChangePct: totalPreviousDayLiveAumCr !== 0 ? oneDayChangeCr / totalPreviousDayLiveAumCr : null,
     };
-  }, [data, lastMonthEndLiveAumCr]);
+  }, [data, lastQuarterEndLiveAumCr]);
 
   if (error && !data) {
     return (
@@ -487,9 +491,9 @@ export function AmcGrid({
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              {lastMonthEndDate !== null && lastMonthEndLiveAumCr !== null && (
+              {lastQuarterEndDate !== null && lastQuarterEndLiveAumCr !== null && (
                 <>
-                  vs {formatShortDate(lastMonthEndDate)}: {formatCr(lastMonthEndLiveAumCr)} ·{" "}
+                  vs {formatShortDate(lastQuarterEndDate)}: {formatCr(lastQuarterEndLiveAumCr)} ·{" "}
                 </>
               )}
               {data.pricesAreLive ? (

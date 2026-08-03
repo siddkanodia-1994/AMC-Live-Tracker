@@ -4,7 +4,7 @@ import { appSettings } from "../db/schema";
 import { getIstDateString } from "../utils/date";
 import { getAvailableReportPeriods } from "./aum-growth";
 import { getAllAmcsLiveAumAsOf, getAverageAumForRange, getCanonicalSnapshotDateBounds, getReportedAumForPeriod } from "./history";
-import { getFiscalQuarterBounds, getPreviousFiscalQuarterBounds, lastDayOfPreviousCalendarMonth } from "./report-period";
+import { getFiscalQuarterBounds, getPreviousFiscalQuarterBounds } from "./report-period";
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
 
@@ -28,7 +28,9 @@ export interface OverviewAdjustments {
   // The Overview table's "Hist. Live AUM" toggle mode -- each AMC's live
   // (repriced) AUM as of an arbitrary past date, an alternative to
   // reportedAumByAmcId above. Defaults to the last day of the most
-  // recently completed calendar month when not explicitly requested.
+  // recently completed FISCAL QUARTER when not explicitly requested (same
+  // prevQuarter used for the "Avg AUM" window default above) -- so it only
+  // advances at quarter boundaries, not every month.
   histLiveDate: string;
   histLiveAumByAmcId: Record<number, number>;
 }
@@ -80,9 +82,7 @@ export async function getOverviewAdjustments(options?: {
   let currentAvgTo = options?.currentAvgTo ? clamp(options.currentAvgTo) : clamp(today);
   if (currentAvgFrom > currentAvgTo) [currentAvgFrom, currentAvgTo] = [currentAvgTo, currentAvgFrom];
 
-  const histLiveDate = options?.histLiveDate
-    ? clamp(options.histLiveDate)
-    : clamp(lastDayOfPreviousCalendarMonth(today));
+  const histLiveDate = options?.histLiveDate ? clamp(options.histLiveDate) : clamp(prevQuarter.end);
 
   const [reportedAumMap, avgAumMap, currentAvgAumMap, histLiveAumMap] = await Promise.all([
     getReportedAumForPeriod(reportPeriod),
