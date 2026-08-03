@@ -24,11 +24,14 @@ type SortKey =
   | "netFlowCr"
   | "netFlowPct";
 
-// Structural separator between the "Exit AUM Growth" and "Avg AUM Growth"
-// column groups -- applied at every row type (group-header, column-header,
-// body, both footer rows) so it reads as one continuous divider running the
-// full table height, not just a header decoration.
-const GROUP_DIVIDER_CLASS = "border-r-2 border-blue-900/30 dark:border-blue-300/30";
+// Structural separator between the table's three column groups (Avg AUM
+// Growth / Exit AUM Growth / Portfolio) -- applied at every row type
+// (group-header, column-header, body, both footer rows) so each reads as
+// one continuous divider running the full table height, not just a header
+// decoration. Thin/low-opacity deliberately: with three groups now, two of
+// these run at once, and a heavier rule at every boundary starts to look
+// like a grid rather than a soft grouping cue.
+const GROUP_DIVIDER_CLASS = "border-r border-blue-900/20 dark:border-blue-300/20";
 
 const NET_FLOW_TITLE =
   "Reported AUM minus what AUM would be if the prior period's holdings had simply been repriced through this month-end (no trading), divided by the prior period's reported AUM. Conflates investor subscriptions/redemptions with the manager's own buying/selling — an approximation, not a pure flows figure. Blank until a prior period + its daily-snapshot backfill exist. Same denominator as the AUM Growth tab's Net Flow %, so both show the same percentage for the same underlying flow amount.";
@@ -186,7 +189,7 @@ function TotalsRow({
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalLiveAumCr)}</TableCell>
       <PctCell value={totals.totalOneDayChangePct} />
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalReportedAumCr)}</TableCell>
-      <PctCell value={totals.totalLiveVsReportedPct} />
+      <PctCell value={totals.totalLiveVsReportedPct} className={GROUP_DIVIDER_CLASS} />
       <TableCell className="text-right tabular-nums" title={holdingsTitle}>
         {historical ? "—" : totals.totalHoldingsCount}
       </TableCell>
@@ -360,10 +363,16 @@ export function AmcTable({
               >
                 Avg AUM Growth
               </TableHead>
-              <TableHead colSpan={4} className="text-center text-xs font-bold tracking-wide text-blue-900 uppercase dark:text-blue-300">
+              <TableHead
+                colSpan={4}
+                className={`text-center text-xs font-bold tracking-wide text-blue-900 uppercase dark:text-blue-300 ${GROUP_DIVIDER_CLASS}`}
+              >
                 Exit AUM Growth
               </TableHead>
-              <TableHead colSpan={showNetFlow ? 5 : 3} />
+              <TableHead colSpan={3} className="text-center text-xs font-bold tracking-wide text-blue-900 uppercase dark:text-blue-300">
+                Portfolio
+              </TableHead>
+              {showNetFlow && <TableHead colSpan={2} />}
             </TableRow>
             <TableRow>
               <TableHead className="align-bottom">
@@ -402,7 +411,7 @@ export function AmcTable({
               />
               <SortableHead label="1D Change" sk="oneDayChangePct" {...headProps} />
               <SortableHead label={reportedColumnLabel} sublabel={reportedColumnSublabel} sk="reportedAumCr" {...headProps} />
-              <SortableHead label={liveVsColumnLabel} sk="deltaPct" {...headProps} />
+              <SortableHead label={liveVsColumnLabel} sk="deltaPct" {...headProps} className={GROUP_DIVIDER_CLASS} />
               <SortableHead label="Holdings" sk="holdingsCount" {...headProps} />
               <SortableHead label="Debt" sk="debtInstrumentCount" {...headProps} />
               <SortableHead label="Live Priced" sk="livePricedCount" {...headProps} />
@@ -446,7 +455,7 @@ export function AmcTable({
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {formatCr(amc.reportedAumCr)}
                 </TableCell>
-                <PctCell value={amc.deltaPct} />
+                <PctCell value={amc.deltaPct} className={GROUP_DIVIDER_CLASS} />
                 <TableCell className="text-right tabular-nums">{historical ? "—" : amc.holdingsCount}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {historical ? "—" : amc.debtInstrumentCount}
@@ -480,7 +489,7 @@ export function AmcTable({
                 <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalLiveAumCr)}</TableCell>
                 <PctCell value={industryTotals.totalOneDayChangePct} />
                 <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalReportedAumCr)}</TableCell>
-                <PctCell value={industryTotals.totalLiveVsReportedPct} />
+                <PctCell value={industryTotals.totalLiveVsReportedPct} className={GROUP_DIVIDER_CLASS} />
                 <TableCell className="text-right tabular-nums" title="Distinct stocks held anywhere in the industry — not a sum of each AMC's count">
                   {historical ? "—" : distinctHoldingsCount}
                 </TableCell>
