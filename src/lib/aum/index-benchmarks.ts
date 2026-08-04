@@ -3,7 +3,10 @@ import { db } from "../db/client";
 import { indexDailyLevel } from "../db/schema";
 import { fetchLtps } from "../dhan/client";
 import { INDEX_KEYS, INDEX_SECURITY_IDS, type IndexKey } from "../dhan/indices";
+import { getCachedIndexLiveLevels, setCachedIndexLiveLevels } from "./cache";
+import { LIVE_AUM_CACHE_TTL_MS, OFF_HOURS_CACHE_TTL_MS } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
+import { isMarketOpen, msUntilNextMarketOpen } from "../utils/market-hours";
 import { writeIndexDailyLevelRows } from "./index-level-store";
 
 export interface IndexLiveLevel {
@@ -15,10 +18,18 @@ export interface IndexLiveLevel {
  * Fetches live LTPs for NIFTY 50 / NIFTY 500 via DHAN and writes today's row
  * into index_daily_level (same overwrite-today's-row pattern the AMC live
  * path already uses for isin_daily_price/live_aum_daily_snapshot). Called
- * once per /api/live-aum request, in parallel with computeLiveAum -- never
- * from inside that file, which stays untouched.
+ * once per /api/live-aum request -- sequenced AFTER computeLiveAum by the
+ * caller, never run concurrently with it (a 2026-08-04 production 429
+ * traced to exactly that: two independent, unpaced fetchLtps calls landing
+ * in the same second violates DHAN's documented 1 request/sec limit).
+ * Cached with the same market-hours-aware TTL as computeLiveAum (see
+ * cache.ts) -- previously called DHAN fresh on every single poll with no
+ * caching at all, the compounding half of that same incident.
  */
 export async function refreshLiveIndexLevels(): Promise<Record<IndexKey, IndexLiveLevel>> {
+  const cached = getCachedIndexLiveLevels<Record<IndexKey, IndexLiveLevel>>();
+  if (cached) return cached;
+
   const today = getIstDateString();
   const result = Object.fromEntries(
     INDEX_KEYS.map((key) => [key, { liveLevelValue: null, oneDayChangePct: null }])
@@ -56,6 +67,7 @@ export async function refreshLiveIndexLevels(): Promise<Record<IndexKey, IndexLi
     console.error("Failed to refresh live index levels:", err);
   }
 
+  setCachedIndexLiveLevels(result, isMarketOpen() ? LIVE_AUM_CACHE_TTL_MS : Math.min(OFF_HOURS_CACHE_TTL_MS, msUntilNextMarketOpen()));
   return result;
 }
 

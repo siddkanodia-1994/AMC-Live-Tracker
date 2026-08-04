@@ -17,8 +17,16 @@ export async function GET(request: Request) {
       const snapshot = await computeOverviewAsOf(asOfDate);
       return NextResponse.json(snapshot);
     }
-    const [snapshot, bounds, dailyDataQualityAlert, indexLiveLevels, outageReclaims] = await Promise.all([
-      computeLiveAum({ forceRefresh }),
+    // refreshLiveIndexLevels is deliberately NOT in the Promise.all below --
+    // it calls DHAN's same LTP endpoint as computeLiveAum, and running both
+    // at the same instant caused a real production 429 (2026-08-04):
+    // DHAN's 1 request/sec limit doesn't know these are "two different
+    // features," it just sees two requests land in the same second. Both
+    // are now cached (see index-benchmarks.ts/cache.ts), so this sequencing
+    // only costs real latency on the rare poll where both need a genuinely
+    // fresh DHAN call at once.
+    const snapshot = await computeLiveAum({ forceRefresh });
+    const [bounds, dailyDataQualityAlert, indexLiveLevels, outageReclaims] = await Promise.all([
       getCanonicalSnapshotDateBounds(),
       getDailyDataQualityAlerts().catch(() => null),
       refreshLiveIndexLevels(),

@@ -76,8 +76,35 @@ export function setCachedInstrumentMap<T extends unknown[]>(rows: T): void {
   instrumentMapCache = { rows, expiresAt: Date.now() + STATIC_TABLE_CACHE_TTL_MS };
 }
 
+// Same TTL semantics as the main live-AUM cache above (LIVE_AUM_CACHE_TTL_MS
+// in-market, OFF_HOURS_CACHE_TTL_MS otherwise) -- added after a real
+// production 429 (2026-08-04): refreshLiveIndexLevels previously called
+// DHAN fresh on every single /api/live-aum poll with no caching at all,
+// guaranteeing a DHAN call on every request instead of ~once per TTL window
+// like every other price fetch in this app. Kept generic/untyped (cast at
+// the call site) rather than importing IndexLiveLevel here, matching
+// getCachedHoldings/getCachedInstrumentMap's existing convention -- avoids
+// a circular import (index-benchmarks.ts already imports from this file).
+interface IndexLiveLevelCacheEntry {
+  result: unknown;
+  expiresAt: number;
+}
+
+let indexLiveLevelsCache: IndexLiveLevelCacheEntry | null = null;
+
+export function getCachedIndexLiveLevels<T>(): T | null {
+  if (!indexLiveLevelsCache) return null;
+  if (Date.now() > indexLiveLevelsCache.expiresAt) return null;
+  return indexLiveLevelsCache.result as T;
+}
+
+export function setCachedIndexLiveLevels(result: unknown, ttlMs: number): void {
+  indexLiveLevelsCache = { result, expiresAt: Date.now() + ttlMs };
+}
+
 export function invalidateLiveAumCache(): void {
   cache = null;
   holdingsCache = null;
   instrumentMapCache = null;
+  indexLiveLevelsCache = null;
 }
