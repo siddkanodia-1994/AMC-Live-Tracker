@@ -3,7 +3,6 @@ import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum"
 import { computeOverviewAsOf } from "@/lib/aum/overview-as-of";
 import { getCanonicalSnapshotDateBounds } from "@/lib/aum/history";
 import { getDailyDataQualityAlerts } from "@/lib/aum/daily-data-quality";
-import { refreshLiveIndexLevels } from "@/lib/aum/index-benchmarks";
 import { getRecentOutageReclaims } from "@/lib/aum/outage-reclaim-log";
 
 export async function GET(request: Request) {
@@ -17,19 +16,14 @@ export async function GET(request: Request) {
       const snapshot = await computeOverviewAsOf(asOfDate);
       return NextResponse.json(snapshot);
     }
-    // refreshLiveIndexLevels is deliberately NOT in the Promise.all below --
-    // it calls DHAN's same LTP endpoint as computeLiveAum, and running both
-    // at the same instant caused a real production 429 (2026-08-04):
-    // DHAN's 1 request/sec limit doesn't know these are "two different
-    // features," it just sees two requests land in the same second. Both
-    // are now cached (see index-benchmarks.ts/cache.ts), so this sequencing
-    // only costs real latency on the rare poll where both need a genuinely
-    // fresh DHAN call at once.
-    const snapshot = await computeLiveAum({ forceRefresh });
-    const [bounds, dailyDataQualityAlert, indexLiveLevels, outageReclaims] = await Promise.all([
+    // computeLiveAum now fetches Nifty 50/500 as part of its own single
+    // DHAN LTP batch (see compute-live-aum.ts) -- no second, independent
+    // DHAN call to coordinate here anymore, safe to run everything
+    // concurrently.
+    const [snapshot, bounds, dailyDataQualityAlert, outageReclaims] = await Promise.all([
+      computeLiveAum({ forceRefresh }),
       getCanonicalSnapshotDateBounds(),
       getDailyDataQualityAlerts().catch(() => null),
-      refreshLiveIndexLevels(),
       getRecentOutageReclaims().catch(() => []),
     ]);
     return NextResponse.json({
@@ -38,7 +32,6 @@ export async function GET(request: Request) {
       minSnapshotDate: bounds.minDate,
       maxSnapshotDate: bounds.maxDate,
       dailyDataQualityAlert,
-      indexLiveLevels,
       outageReclaims,
     });
   } catch (err) {

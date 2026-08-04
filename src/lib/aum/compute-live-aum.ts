@@ -2,9 +2,12 @@ import { desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, holdings, instrumentMap, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { fetchLtps, segmentKey } from "../dhan/client";
+import { INDEX_KEYS, INDEX_SECURITY_IDS, type IndexKey } from "../dhan/indices";
 import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
 import { isBankDebtOrRepo, isCashEquivalent, isUsListedEquityIsin } from "../excel/instrument-classification";
 import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
+import { getPreviousIndexLevels } from "./index-benchmarks";
+import { writeIndexDailyLevelRows } from "./index-level-store";
 import { writeIsinDailyPriceRows } from "./isin-price-store";
 import { getDismissedIsinsForToday } from "./last-close-dismissal";
 import { getMutedIsins } from "./last-close-mute";
@@ -251,6 +254,19 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
     requests.push(item);
   }
 
+  // Nifty 50/500 benchmark rows (Overview table) ride along in this exact
+  // same batch/pacing/cache cycle as every stock -- confirmed this doesn't
+  // change chunk count (still comfortably under 2 chunks of
+  // DHAN_MAX_INSTRUMENTS_PER_REQUEST). A prior design fetched these via a
+  // second, independent fetchLtps call and repeatedly hit real production
+  // issues (429s from the two calls landing in the same second, then a
+  // failed attempt getting cached and stuck) -- folding them into the one
+  // request DHAN's rate limit already has to be respected for eliminates
+  // that whole class of bug rather than continuing to coordinate it.
+  for (const key of INDEX_KEYS) {
+    requests.push({ securityId: INDEX_SECURITY_IDS[key], exchangeSegment: "IDX_I" });
+  }
+
   // Don't ask DHAN outside market hours (non-trading day, or a trading day
   // after close / before open) unless this is a deliberate forced call --
   // nothing can have moved since the last close, and polling anyway is how
@@ -259,14 +275,41 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   const ltpResult = shouldFetchLive
     ? await fetchLtps(requests)
     : { pricesBySecurityId: new Map<string, number>(), failedSecurityIds: new Set<string>() };
-  const [foreignPrices, usdInrRate, previousIsinPrices, todayIsinPrices, shareAdjustmentsByIsin] = await Promise.all([
+
+  // Extracted immediately, entirely independent of the AMC-holdings loop
+  // below (which only ever looks up prices via each holding's own ISIN-
+  // derived key -- these 2 index keys are invisible to it by construction,
+  // so totalPriceable/distinctIsinInfo/etc. below are unaffected).
+  const indexLiveLevels = Object.fromEntries(
+    INDEX_KEYS.map((key) => [key, { liveLevelValue: null, oneDayChangePct: null } as { liveLevelValue: number | null; oneDayChangePct: number | null }])
+  ) as Record<IndexKey, { liveLevelValue: number | null; oneDayChangePct: number | null }>;
+  const indexRowsToWrite: { indexKey: IndexKey; snapshotDate: string; levelValue: number }[] = [];
+  for (const key of INDEX_KEYS) {
+    const price = ltpResult.pricesBySecurityId.get(`IDX_I:${INDEX_SECURITY_IDS[key]}`);
+    if (price != null) {
+      indexLiveLevels[key].liveLevelValue = price;
+      indexRowsToWrite.push({ indexKey: key, snapshotDate: getIstDateString(), levelValue: price });
+    }
+  }
+  const [foreignPrices, usdInrRate, previousIsinPrices, todayIsinPrices, shareAdjustmentsByIsin, previousIndexLevels] = await Promise.all([
     getAllForeignPrices().catch(() => new Map<string, number>()),
     getCachedUsdInrRate().catch(() => null),
     getPreviousDayIsinPrices().catch(() => new Map<string, number>()),
     getTodayIsinPrices().catch(() => new Map<string, number>()),
     getActiveShareMultipliers(reportPeriod).catch(() => new Map<string, ShareAdjustment>()),
+    getPreviousIndexLevels(getIstDateString()).catch(
+      () => Object.fromEntries(INDEX_KEYS.map((key) => [key, null])) as Record<IndexKey, number | null>
+    ),
   ]);
   const todayDateStr = getIstDateString();
+
+  for (const key of INDEX_KEYS) {
+    const live = indexLiveLevels[key].liveLevelValue;
+    const prior = previousIndexLevels[key];
+    if (live !== null && prior !== null && prior !== 0) {
+      indexLiveLevels[key].oneDayChangePct = live / prior - 1;
+    }
+  }
 
   // Whether today's session has genuinely produced any data yet -- true
   // once we're either actively fetching live (market hours, or the 4:05 PM
@@ -611,6 +654,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
     // stale-quote / lost-live-pricing warnings (both gated on this field)
     // stay correctly silent all evening.
     pricesAreLive: isMarketOpen(),
+    indexLiveLevels,
   };
 
   // Skip persisting on non-trading days (weekend/holiday), and skip it
@@ -627,7 +671,11 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   // "today" snapshot built from nothing but yesterday's carried-forward
   // prices, hours before today's real close exists.
   if (tradingDay && haveTodayData) {
-    await Promise.all([writeDailySnapshot(snapshot), writeDailyIsinPrices(todayPriceByIsin)]);
+    await Promise.all([
+      writeDailySnapshot(snapshot),
+      writeDailyIsinPrices(todayPriceByIsin),
+      indexRowsToWrite.length > 0 ? writeIndexDailyLevelRows(indexRowsToWrite) : Promise.resolve(),
+    ]);
   }
 
   const [averages, previousDay, netFlows, rolling90] = await Promise.all([

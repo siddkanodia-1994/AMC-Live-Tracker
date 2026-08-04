@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
 import { upsertDailyDataQuality } from "@/lib/aum/daily-data-quality";
-import { refreshLiveIndexLevels } from "@/lib/aum/index-benchmarks";
 import { clearRecoveredManualMutes, recordLastCloseLog } from "@/lib/aum/last-close-mute";
 import { reclaimDhanOutages } from "@/lib/aum/outage-reclaim";
 import { detectShareAdjustments } from "@/lib/aum/split-detection";
@@ -70,16 +69,9 @@ export async function GET(request: Request) {
       console.error("Failed to detect share adjustments:", err);
     }
 
-    // Best-effort, same isolation as above: today's Nifty 50/500 level --
-    // unlike AMC prices (captured above regardless of site traffic), this
-    // was previously only captured as a side effect of a live page visit.
-    // Running it here too gives indices the same guaranteed-daily-capture
-    // AMCs already have.
-    try {
-      await refreshLiveIndexLevels();
-    } catch (err) {
-      console.error("Failed to refresh live index levels:", err);
-    }
+    // Nifty 50/500 levels: no separate step needed here -- computeLiveAum
+    // above already fetched and persisted today's index_daily_level rows
+    // as part of its own single DHAN batch (see compute-live-aum.ts).
 
     // Best-effort, same isolation as above: auto-detect and correct any
     // past day(s) that look like a DHAN outage (industry-wide last-close
