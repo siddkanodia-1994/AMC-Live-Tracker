@@ -749,6 +749,25 @@ export function AmcGrid({
                 </ul>
               </details>
             )}
+            {data.outageReclaims && data.outageReclaims.length > 0 && (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer">
+                  {data.outageReclaims.length} day{data.outageReclaims.length === 1 ? "" : "s"} auto-corrected after a
+                  DHAN outage
+                </summary>
+                <ul className="mt-1 list-disc pl-4">
+                  {data.outageReclaims.map((r) => (
+                    <li key={`${r.kind}-${r.snapshotDate}`}>
+                      {formatShortDate(r.snapshotDate)} —{" "}
+                      {r.kind === "amc_isin"
+                        ? `${r.correctedIsinCount ?? 0} stock price${(r.correctedIsinCount ?? 0) === 1 ? "" : "s"} replaced with DHAN's real historical close`
+                        : `${(r.indexKeysCorrected ?? []).join(", ")} level backfilled from DHAN's real historical close`}
+                      {r.detail ? ` (${r.detail})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
           </div>
           <button
             type="button"

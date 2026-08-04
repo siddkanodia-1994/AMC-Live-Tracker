@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { dailyDataQuality, holdings, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
+import { dailyDataQuality, holdings, isinDailyPrice, isinLastCloseLog, liveAumDailySnapshot, outageReclaimLog } from "../db/schema";
 import { isBankDebtOrRepo, isForeignIsin } from "../excel/instrument-classification";
 
 export interface DailyDataQualityRow {
@@ -25,6 +25,25 @@ export interface DailyDataQualityRow {
  * this was built (audited 2026-07-14: zero overlaps, zero leftovers).
  * Pure DB reads -- no DHAN calls -- so this is cheap and safe to run for
  * an entire history in one script (see backfill-daily-data-quality.ts).
+ *
+ * liveConsidered/coveragePct start from isinLastCloseLog (which ISINs were
+ * classified priceSource==="last_close" that specific day), NOT "does an
+ * isin_daily_price row exist" -- the outage-day last_close fallback
+ * (compute-live-aum.ts) still writes a row for today's date even on a
+ * total DHAN outage, so a row-exists check can't distinguish a genuinely
+ * healthy day from a fully-stale one (audited 2026-08-03: a real outage on
+ * 2026-07-29 left this metric completely flat for 23 straight trading
+ * days). isinLastCloseLog is the same per-day signal outage-detection.ts's
+ * detectAmcOutageDates already relies on for exactly this reason.
+ *
+ * A last-close-flagged ISIN counts as covered again once outage-reclaim.ts
+ * has genuinely corrected it (a real DHAN historical close fetched after
+ * detection, not just the original stale carry-forward) -- this tab
+ * reflects CURRENT data quality, not a permanent "an outage once happened
+ * here" audit log (confirmed with the user: once fixed, show the
+ * rectified %). An ISIN DHAN never had data for even after reclaim (e.g.
+ * delisted) stays counted as missing -- a real, permanent, honestly-shown
+ * gap, not silently excluded.
  */
 export async function computeDailyDataQualityForDate(date: string): Promise<DailyDataQualityRow | null> {
   const canonicalRows = await db
@@ -94,13 +113,70 @@ export async function computeDailyDataQualityForDate(date: string): Promise<Dail
   const infFundUnits = infFundUnitIsins.size;
   const indianStocks = totalHoldings - debtInstruments - foreignHoldings - nonIsinBearing - infFundUnits;
 
-  let liveConsidered = 0;
+  let liveConsidered = eligibleEquityIsins.size;
   if (eligibleEquityIsins.size > 0) {
-    const priced = await db
-      .select({ isin: isinDailyPrice.isin })
-      .from(isinDailyPrice)
-      .where(and(eq(isinDailyPrice.snapshotDate, date), inArray(isinDailyPrice.isin, [...eligibleEquityIsins])));
-    liveConsidered = priced.length;
+    const isinList = [...eligibleEquityIsins];
+    // Neon's HTTP driver chokes on a single query with 1000+ bind params
+    // (confirmed 2026-08-04: a 1127-param IN-clause timed out entirely) --
+    // chunk both ISIN-list lookups below, same BATCH_SIZE convention
+    // already used for bulk writes (isin-price-store.ts).
+    const BATCH_SIZE = 500;
+
+    // Does ANY isin_daily_price row exist at all for this date? Absence
+    // here means priceSource==="stale_fallback" that day (DHAN had no live
+    // price AND no prior price to carry forward at all) -- a strictly
+    // worse, permanently-blind category that never appears in
+    // isinLastCloseLog (that log only covers last_close, which requires a
+    // prior price to exist). Confirmed via direct audit (2026-08-03): 21 of
+    // 1133 eligible ISINs have literally no price row on an ordinary
+    // healthy day -- these must still count as missing, or coverage
+    // silently looks better than reality.
+    const pricedByIsin = new Map<string, Date>();
+    for (let i = 0; i < isinList.length; i += BATCH_SIZE) {
+      const batch = isinList.slice(i, i + BATCH_SIZE);
+      const rows = await db
+        .select({ isin: isinDailyPrice.isin, computedAt: isinDailyPrice.computedAt })
+        .from(isinDailyPrice)
+        .where(and(eq(isinDailyPrice.snapshotDate, date), inArray(isinDailyPrice.isin, batch)));
+      for (const r of rows) pricedByIsin.set(r.isin, r.computedAt);
+    }
+    const neverPricedCount = isinList.length - pricedByIsin.size;
+
+    const lastCloseIsins = new Set<string>();
+    for (let i = 0; i < isinList.length; i += BATCH_SIZE) {
+      const batch = isinList.slice(i, i + BATCH_SIZE);
+      const rows = await db
+        .select({ isin: isinLastCloseLog.isin })
+        .from(isinLastCloseLog)
+        .where(and(eq(isinLastCloseLog.snapshotDate, date), inArray(isinLastCloseLog.isin, batch)));
+      for (const r of rows) lastCloseIsins.add(r.isin);
+    }
+
+    let stillStaleCount = lastCloseIsins.size;
+    if (lastCloseIsins.size > 0) {
+      // If this date has since been reclaimed, some (or all) of these
+      // last-close ISINs may have a genuine DHAN historical close written
+      // AFTER the outage was detected -- those count as covered again.
+      // Ones DHAN still had nothing for stay counted as missing.
+      const [correctedOutage] = await db
+        .select({ detectedAt: outageReclaimLog.detectedAt })
+        .from(outageReclaimLog)
+        .where(
+          and(
+            eq(outageReclaimLog.kind, "amc_isin"),
+            eq(outageReclaimLog.snapshotDate, date),
+            eq(outageReclaimLog.status, "corrected")
+          )
+        );
+      if (correctedOutage) {
+        const rectifiedCount = [...lastCloseIsins].filter((isin) => {
+          const computedAt = pricedByIsin.get(isin);
+          return computedAt !== undefined && computedAt > correctedOutage.detectedAt;
+        }).length;
+        stillStaleCount = lastCloseIsins.size - rectifiedCount;
+      }
+    }
+    liveConsidered = eligibleEquityIsins.size - neverPricedCount - stillStaleCount;
   }
 
   const coveragePct = indianStocks !== 0 ? (liveConsidered / indianStocks) * 100 : 0;

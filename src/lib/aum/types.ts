@@ -247,6 +247,18 @@ export interface LiveAumSnapshot {
   // optional convention as the fields above. Not populated in historical
   // (asOfDate) mode.
   indexLiveLevels?: Record<IndexKey, { liveLevelValue: number | null; oneDayChangePct: number | null }>;
+  // Recently auto-corrected DHAN-outage days (see outage-reclaim.ts) --
+  // always visible when non-empty, never gated behind a click, same
+  // disclosure convention as shareAdjustments above. Route-populated
+  // (getRecentOutageReclaims); not populated in historical (asOfDate) mode.
+  outageReclaims?: {
+    kind: "amc_isin" | "index_level";
+    snapshotDate: string;
+    correctedIsinCount: number | null;
+    indexKeysCorrected: string[] | null;
+    detail: string | null;
+    correctedAt: string | null;
+  }[];
 }
 
 export interface ComputedLiveAum {

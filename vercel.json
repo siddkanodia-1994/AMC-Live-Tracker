@@ -7,7 +7,8 @@
     "src/app/api/admin/sync-instruments/route.ts": { "maxDuration": 60 },
     "src/app/api/admin/reclaim-forward-gap/route.ts": { "maxDuration": 300 },
     "src/app/api/admin/detect-share-adjustments/route.ts": { "maxDuration": 30 },
-    "src/app/api/cron/daily-snapshot/route.ts": { "maxDuration": 30 }
+    "src/app/api/admin/reclaim-outages/route.ts": { "maxDuration": 180 },
+    "src/app/api/cron/daily-snapshot/route.ts": { "maxDuration": 180 }
   },
   "crons": [
     {

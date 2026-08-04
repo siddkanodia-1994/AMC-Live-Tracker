@@ -1,11 +1,19 @@
 import { NextResponse } from "next/server";
 import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
 import { upsertDailyDataQuality } from "@/lib/aum/daily-data-quality";
+import { refreshLiveIndexLevels } from "@/lib/aum/index-benchmarks";
 import { clearRecoveredManualMutes, recordLastCloseLog } from "@/lib/aum/last-close-mute";
+import { reclaimDhanOutages } from "@/lib/aum/outage-reclaim";
 import { detectShareAdjustments } from "@/lib/aum/split-detection";
 import { getIstDateString } from "@/lib/utils/date";
 
-export const maxDuration = 30;
+// Bumped from 30 -> 180: the outage-reclaim step below can fetch DHAN
+// historical closes for up to a few hundred ISINs (paced ~500ms each) when
+// a past-outage day needs correcting -- comfortably still under the 300s
+// already proven fine for reclaim-forward-gap's admin route on this Vercel
+// plan. On a normal day with nothing to correct, this step is a handful of
+// cheap DB reads and returns almost instantly.
+export const maxDuration = 180;
 
 // Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` automatically when
 // CRON_SECRET is set — this keeps the endpoint from being triggerable by
@@ -60,6 +68,28 @@ export async function GET(request: Request) {
       await detectShareAdjustments(getIstDateString());
     } catch (err) {
       console.error("Failed to detect share adjustments:", err);
+    }
+
+    // Best-effort, same isolation as above: today's Nifty 50/500 level --
+    // unlike AMC prices (captured above regardless of site traffic), this
+    // was previously only captured as a side effect of a live page visit.
+    // Running it here too gives indices the same guaranteed-daily-capture
+    // AMCs already have.
+    try {
+      await refreshLiveIndexLevels();
+    } catch (err) {
+      console.error("Failed to refresh live index levels:", err);
+    }
+
+    // Best-effort, same isolation as above: auto-detect and correct any
+    // past day(s) that look like a DHAN outage (industry-wide last-close
+    // fallback silently stamped in as canonical) -- only proceeds if
+    // TODAY's own DHAN fetch just succeeded, so it never wastes a retry
+    // while still broken. See outage-reclaim.ts.
+    try {
+      await reclaimDhanOutages({ todayDhanStatus: snapshot.dhanStatus });
+    } catch (err) {
+      console.error("Failed to reclaim DHAN outages:", err);
     }
 
     return NextResponse.json({ ok: true, amcsSnapshotted: snapshot.amcs.length });

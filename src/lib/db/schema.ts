@@ -210,6 +210,36 @@ export const indexDailyLevel = pgTable(
   (t) => [uniqueIndex("index_daily_level_key_date_idx").on(t.indexKey, t.snapshotDate)]
 );
 
+// Idempotency guard AND visible audit trail for the automatic DHAN-outage
+// detection+self-correction system (outage-detection.ts/outage-reclaim.ts).
+// One row per (kind, snapshotDate). kind='amc_isin': a calendar date where
+// the industry-wide last-close signature looked like a genuine DHAN outage
+// (not a holiday -- see getRealTradingDatesInWindow). kind='index_level': a
+// date where index_daily_level had a genuine gap for NIFTY 50/500. status
+// starts 'detected' the moment the anomaly is first flagged; becomes
+// 'corrected' once a real DHAN historical close has been written back (or
+// 'no_data' if DHAN's historical endpoint genuinely had nothing for that
+// date even with a healthy token -- rare, e.g. every affected ISIN
+// delisted); 'failed' if the correction attempt itself threw (retried on a
+// later cron run, unlike the other two terminal states).
+export const outageReclaimLog = pgTable(
+  "outage_reclaim_log",
+  {
+    id: serial("id").primaryKey(),
+    kind: text("kind").notNull(), // 'amc_isin' | 'index_level'
+    snapshotDate: date("snapshot_date").notNull(),
+    status: text("status").notNull(), // 'detected' | 'corrected' | 'no_data' | 'failed'
+    lastCloseIsinCount: integer("last_close_isin_count"), // amc_isin only
+    universeIsinCount: integer("universe_isin_count"), // amc_isin only
+    correctedIsinCount: integer("corrected_isin_count"), // amc_isin only
+    indexKeysCorrected: jsonb("index_keys_corrected").$type<string[]>(), // index_level only
+    detail: text("detail"),
+    detectedAt: timestamp("detected_at", { withTimezone: true }).notNull().defaultNow(),
+    correctedAt: timestamp("corrected_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("outage_reclaim_log_kind_date_idx").on(t.kind, t.snapshotDate)]
+);
+
 // One row per (ISIN, trading date) where that ISIN was classified
 // priceSource === "last_close" that day -- written once daily by the 4:05pm
 // IST close-capture cron (not on every 45s poll), so a transient intraday

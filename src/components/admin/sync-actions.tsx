@@ -30,6 +30,11 @@ interface ReclaimResult {
   warnings: string[];
 }
 
+interface OutageReclaimSummary {
+  amc: { datesProcessed: string[]; isinsCorrected: number };
+  index: { datesProcessed: string[]; keysCorrected: number };
+}
+
 interface ShareAdjustment {
   isin: string;
   reportPeriod: string;
@@ -51,6 +56,8 @@ export function SyncActions({ secret }: { secret: string }) {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [reclaiming, setReclaiming] = useState(false);
   const [reclaimResult, setReclaimResult] = useState<ReclaimResult | null>(null);
+  const [reclaimingOutages, setReclaimingOutages] = useState(false);
+  const [outageReclaimResult, setOutageReclaimResult] = useState<OutageReclaimSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [muteThresholdInput, setMuteThresholdInput] = useState("");
@@ -223,6 +230,26 @@ export function SyncActions({ secret }: { secret: string }) {
     }
   }
 
+  async function handleReclaimOutages() {
+    setReclaimingOutages(true);
+    setOutageReclaimResult(null);
+    try {
+      const res = await adminFetch("/api/admin/reclaim-outages", secret, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Reclaim failed");
+      }
+      const result: OutageReclaimSummary = await res.json();
+      setOutageReclaimResult(result);
+      const totalDates = new Set([...result.amc.datesProcessed, ...result.index.datesProcessed]).size;
+      toast.success(totalDates > 0 ? `Corrected ${totalDates} outage day${totalDates === 1 ? "" : "s"}` : "No outage days detected — nothing to correct.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Reclaim failed");
+    } finally {
+      setReclaimingOutages(false);
+    }
+  }
+
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <Card>
@@ -331,6 +358,44 @@ export function SyncActions({ secret }: { secret: string }) {
                     ))}
                   </ul>
                 </details>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Reclaim DHAN outages</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            The daily cron already does this automatically once DHAN is healthy again. Use this to
+            force an immediate correction right after fixing a broken token instead of waiting for
+            tonight&apos;s cron. Safe to re-run — a no-op if nothing looks like an outage.
+          </p>
+          <Button onClick={handleReclaimOutages} disabled={reclaimingOutages}>
+            {reclaimingOutages ? "Reclaiming..." : "Reclaim outages now"}
+          </Button>
+          {outageReclaimResult && (
+            <div className="text-sm">
+              {outageReclaimResult.amc.datesProcessed.length === 0 && outageReclaimResult.index.datesProcessed.length === 0 ? (
+                <p>Nothing to reclaim — no outage days detected in the lookback window.</p>
+              ) : (
+                <>
+                  {outageReclaimResult.amc.datesProcessed.length > 0 && (
+                    <p>
+                      Stock prices: {outageReclaimResult.amc.datesProcessed.join(", ")} —{" "}
+                      {outageReclaimResult.amc.isinsCorrected} ISIN price(s) corrected.
+                    </p>
+                  )}
+                  {outageReclaimResult.index.datesProcessed.length > 0 && (
+                    <p>
+                      Index levels: {outageReclaimResult.index.datesProcessed.join(", ")} —{" "}
+                      {outageReclaimResult.index.keysCorrected} level(s) corrected.
+                    </p>
+                  )}
+                </>
               )}
             </div>
           )}

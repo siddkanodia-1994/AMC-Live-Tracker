@@ -29,6 +29,28 @@ export function yesterdayIst(): string {
   return now.toISOString().slice(0, 10);
 }
 
+// Extracted so outage-reclaim.ts's corrective UPDATE path can reuse the
+// exact same AUM math instead of re-deriving it -- identical logic to what
+// backfillDailySnapshots always inlined here.
+export function computeAmcLiveAumCrForDate(
+  amcHoldingRows: (typeof holdings.$inferSelect)[],
+  closesByIsinAndDate: Map<string, Map<string, number>>,
+  date: string,
+  residualPlugCr: number
+): number {
+  let liveSumCr = 0;
+  for (const h of amcHoldingRows) {
+    const reportedMarketValueCr = Number(h.marketValueCr);
+    if (!h.isPriceable || !h.isin) {
+      liveSumCr += reportedMarketValueCr;
+      continue;
+    }
+    const close = closesByIsinAndDate.get(h.isin)?.get(date);
+    liveSumCr += close !== undefined ? (close * Number(h.shares)) / CRORE : reportedMarketValueCr;
+  }
+  return liveSumCr + residualPlugCr;
+}
+
 export interface BackfillResult {
   fromDate: string;
   toDate: string;
@@ -247,25 +269,9 @@ export async function backfillDailySnapshots(options?: {
   for (const date of sortedDates) {
     for (const period of periodRows) {
       const amcHoldings = holdingsByAmcId.get(period.amcId) ?? [];
-      let liveSumCr = 0;
-
-      for (const h of amcHoldings) {
-        const reportedMarketValueCr = Number(h.marketValueCr);
-        if (!h.isPriceable || !h.isin) {
-          liveSumCr += reportedMarketValueCr;
-          continue;
-        }
-        const close = closesByIsinAndDate.get(h.isin)?.get(date);
-        if (close !== undefined) {
-          liveSumCr += (close * Number(h.shares)) / CRORE;
-        } else {
-          liveSumCr += reportedMarketValueCr;
-        }
-      }
-
       const residualPlugCr = Number(period.residualPlugCr);
       const reportedAumCr = Number(period.reportedAumCr);
-      const liveAumCr = liveSumCr + residualPlugCr;
+      const liveAumCr = computeAmcLiveAumCrForDate(amcHoldings, closesByIsinAndDate, date, residualPlugCr);
       const deltaCr = liveAumCr - reportedAumCr;
       const deltaPct = reportedAumCr !== 0 ? deltaCr / reportedAumCr : 0;
 
