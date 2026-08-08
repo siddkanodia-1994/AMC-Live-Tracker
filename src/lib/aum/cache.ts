@@ -1,3 +1,6 @@
+import { and, eq, sql } from "drizzle-orm";
+import { db } from "../db/client";
+import { liveAumFetchLease } from "../db/schema";
 import type { ComputedLiveAum } from "./types";
 
 // Module-scope in-memory cache — no dedicated Postgres cache table (see plan).
@@ -80,4 +83,43 @@ export function invalidateLiveAumCache(): void {
   cache = null;
   holdingsCache = null;
   instrumentMapCache = null;
+}
+
+const DHAN_LEASE_ID = "dhan_ltp_fetch";
+
+/**
+ * Atomically claims the cross-instance DHAN-fetch lease (see dhan-lease.ts):
+ * succeeds only if no lease row exists yet, or the existing one has already
+ * expired -- per Postgres's own now(), never a caller's local clock, so this
+ * is immune to inter-instance clock skew by construction. A single
+ * self-contained INSERT...ON CONFLICT...WHERE...RETURNING statement, not a
+ * pg_advisory_lock: this app's db client (neon-http) is a stateless
+ * per-query HTTP driver with no persistent session for a lock to survive
+ * across (see schema.ts's liveAumFetchLease comment for the full reasoning).
+ */
+export async function claimDhanFetchLease(ownerToken: string, ttlMs: number): Promise<boolean> {
+  const rows = await db
+    .insert(liveAumFetchLease)
+    .values({ id: DHAN_LEASE_ID, ownerToken, leaseExpiresAt: new Date(Date.now() + ttlMs) })
+    .onConflictDoUpdate({
+      target: liveAumFetchLease.id,
+      set: { ownerToken, leaseExpiresAt: new Date(Date.now() + ttlMs), updatedAt: sql`now()` },
+      setWhere: sql`${liveAumFetchLease.leaseExpiresAt} < now()`,
+    })
+    .returning({ ownerToken: liveAumFetchLease.ownerToken });
+  return rows.length > 0 && rows[0].ownerToken === ownerToken;
+}
+
+/**
+ * Releases the lease immediately after a real DHAN call finishes (success or
+ * failure) so the next legitimate cycle doesn't wait out the full TTL -- the
+ * TTL is only a safety net for an instance killed mid-flight (e.g. a hard
+ * Vercel function timeout) before it can release. Guarded by ownerToken so a
+ * late/slow release can never clear a different, newer holder's lease.
+ */
+export async function releaseDhanFetchLease(ownerToken: string): Promise<void> {
+  await db
+    .update(liveAumFetchLease)
+    .set({ leaseExpiresAt: sql`now()` })
+    .where(and(eq(liveAumFetchLease.id, DHAN_LEASE_ID), eq(liveAumFetchLease.ownerToken, ownerToken)));
 }

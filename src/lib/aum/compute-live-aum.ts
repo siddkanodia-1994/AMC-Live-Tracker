@@ -1,12 +1,13 @@
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, holdings, instrumentMap, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
-import { fetchLtps, segmentKey } from "../dhan/client";
+import { segmentKey } from "../dhan/client";
+import { fetchLtpsWithLease } from "./dhan-lease";
 import { INDEX_KEYS, INDEX_SECURITY_IDS, type IndexKey } from "../dhan/indices";
 import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
 import { isBankDebtOrRepo, isCashEquivalent, isUsListedEquityIsin } from "../excel/instrument-classification";
 import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
-import { getPreviousIndexLevels } from "./index-benchmarks";
+import { getIndexLevelsAsOf, getPreviousIndexLevels } from "./index-benchmarks";
 import { writeIndexDailyLevelRows } from "./index-level-store";
 import { writeIsinDailyPriceRows } from "./isin-price-store";
 import { getDismissedIsinsForToday } from "./last-close-dismissal";
@@ -272,8 +273,14 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   // nothing can have moved since the last close, and polling anyway is how
   // this app previously ended up rate-limited (429s) over a weekend for no
   // benefit. See shouldFetchLive's comment above for the market-hours part.
+  // fetchLtpsWithLease (not the raw fetchLtps) -- gates the call behind a
+  // cross-instance Postgres lease so at most one concurrent Vercel instance
+  // is ever mid-flight calling DHAN at a time (2026-08-06 incident: multiple
+  // instances' independent in-memory caches expired close together and
+  // together exceeded DHAN's real rate limit, even though each instance's
+  // own request was internally well-paced).
   const ltpResult = shouldFetchLive
-    ? await fetchLtps(requests)
+    ? await fetchLtpsWithLease(requests, forceRefresh)
     : { pricesBySecurityId: new Map<string, number>(), failedSecurityIds: new Set<string>() };
 
   // Extracted immediately, entirely independent of the AMC-holdings loop
@@ -291,19 +298,34 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       indexRowsToWrite.push({ indexKey: key, snapshotDate: getIstDateString(), levelValue: price });
     }
   }
-  const [foreignPrices, usdInrRate, previousIsinPrices, todayIsinPrices, shareAdjustmentsByIsin, previousIndexLevels] = await Promise.all([
-    getAllForeignPrices().catch(() => new Map<string, number>()),
-    getCachedUsdInrRate().catch(() => null),
-    getPreviousDayIsinPrices().catch(() => new Map<string, number>()),
-    getTodayIsinPrices().catch(() => new Map<string, number>()),
-    getActiveShareMultipliers(reportPeriod).catch(() => new Map<string, ShareAdjustment>()),
-    getPreviousIndexLevels(getIstDateString()).catch(
-      () => Object.fromEntries(INDEX_KEYS.map((key) => [key, null])) as Record<IndexKey, number | null>
-    ),
-  ]);
+  const [foreignPrices, usdInrRate, previousIsinPrices, todayIsinPrices, shareAdjustmentsByIsin, previousIndexLevels, fallbackIndexLevels] =
+    await Promise.all([
+      getAllForeignPrices().catch(() => new Map<string, number>()),
+      getCachedUsdInrRate().catch(() => null),
+      getPreviousDayIsinPrices().catch(() => new Map<string, number>()),
+      getTodayIsinPrices().catch(() => new Map<string, number>()),
+      getActiveShareMultipliers(reportPeriod).catch(() => new Map<string, ShareAdjustment>()),
+      getPreviousIndexLevels(getIstDateString()).catch(
+        () => Object.fromEntries(INDEX_KEYS.map((key) => [key, null])) as Record<IndexKey, number | null>
+      ),
+      // Most recent known level at or before today (today's own earlier
+      // capture if one exists, else the prior trading day's close) -- the
+      // index equivalent of stocks' todayIsinPrices ?? previousIsinPrices
+      // fallback, so a row freezes on a real number (e.g. after market
+      // close, when shouldFetchLive is false and no fresh DHAN price ever
+      // comes in) instead of going blank. Reuses getIndexLevelsAsOf as-is
+      // (already built for the Hist. Live AUM display) rather than a new
+      // query -- lte(date) naturally covers both cases in one call.
+      getIndexLevelsAsOf(getIstDateString()).catch(
+        () => Object.fromEntries(INDEX_KEYS.map((key) => [key, null])) as Record<IndexKey, number | null>
+      ),
+    ]);
   const todayDateStr = getIstDateString();
 
   for (const key of INDEX_KEYS) {
+    if (indexLiveLevels[key].liveLevelValue === null) {
+      indexLiveLevels[key].liveLevelValue = fallbackIndexLevels[key];
+    }
     const live = indexLiveLevels[key].liveLevelValue;
     const prior = previousIndexLevels[key];
     if (live !== null && prior !== null && prior !== 0) {
@@ -465,7 +487,13 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
         const isLive = priceSource === "live" || priceSource === "foreign_live" || priceSource === "last_close";
         amcHoldingIsins.add(h.isin);
         if (isLive) amcLivePricedIsins.add(h.isin);
-        if (priceSource === "last_close") {
+        // leaseSkipped: this run never actually asked DHAN (another
+        // instance held the fetch lease) -- every holding necessarily
+        // resolves to last_close this cycle, which would otherwise flood
+        // distinctLastCloseCount/lastCloseStocks and falsely alarm the
+        // Overview banner ("N stocks lost live pricing") over a routine,
+        // benign skip rather than a genuine DHAN problem.
+        if (priceSource === "last_close" && !ltpResult.leaseSkipped) {
           distinctLastCloseIsins.add(h.isin);
           if (!lastCloseCompanyNameByIsin.has(h.isin)) lastCloseCompanyNameByIsin.set(h.isin, h.companyName);
         }
@@ -570,10 +598,12 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   // (needs a sync) even when zero DHAN requests were ever attempted, which
   // is just as much a "not working" state as a failed API call.
   let dhanStatus: DhanStatus;
-  if (!shouldFetchLive) {
-    // We deliberately didn't ask DHAN anything -- non-trading day, or a
-    // trading day outside market hours and not a forced call -- that's not
-    // a problem to report, unlike a genuine failure during an attempted
+  if (!shouldFetchLive || ltpResult.leaseSkipped) {
+    // We deliberately didn't ask DHAN anything -- non-trading day, a
+    // trading day outside market hours and not a forced call, OR another
+    // instance held the cross-instance fetch lease this cycle (a routine
+    // skip, not a DHAN problem -- see dhan-lease.ts). None of these are a
+    // problem to report, unlike a genuine failure during an attempted
     // fetch (handled below, unchanged), which still needs to alert the
     // admin to refresh the token.
     dhanStatus = "ok";

@@ -128,6 +128,31 @@ export const appSettings = pgTable("app_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Cross-instance coordination for DHAN's global (account-wide, not per-
+// instance) 1 request/sec rate limit -- Vercel runs several concurrent
+// serverless instances, each with its own independent in-memory cache (see
+// cache.ts), so without this, multiple instances whose ~45s in-memory TTLs
+// expire close together each independently call DHAN, and the combined
+// request rate can exceed DHAN's real limit even though each instance's own
+// fetchLtps() paces itself correctly in isolation. Confirmed as the live
+// cause of a production incident on 2026-08-06 (two fresh computations
+// ~105s apart both got a 429 rejecting the entire batch). Single fixed-id
+// row -- the limit is DHAN-account-wide, not scoped to report period --
+// atomically claimed via cache.ts's claimDhanFetchLease, an
+// INSERT...ON CONFLICT...WHERE...RETURNING, NOT pg_advisory_lock: this
+// app's db client (neon-http) is a stateless per-query HTTP driver with no
+// persistent session for a lock to survive across, and the alternative
+// WebSocket driver (transactional-client.ts) routes through Neon's
+// PgBouncer transaction-mode pooler, which only guarantees a lock is safe
+// inside one held transaction -- and holding a transaction open across a
+// multi-second external DHAN call is an anti-pattern under pooling.
+export const liveAumFetchLease = pgTable("live_aum_fetch_lease", {
+  id: text("id").primaryKey(), // always the constant "dhan_ltp_fetch"
+  ownerToken: text("owner_token").notNull(),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // One row per AMC per calendar day PER REPORT PERIOD being priced. A given
 // (amcId, snapshotDate) pair can have MULTIPLE rows -- one per reportPeriod
 // that's been repriced to that date -- e.g. both a reportPeriod='2026-05' row
