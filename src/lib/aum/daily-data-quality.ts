@@ -154,24 +154,25 @@ export async function computeDailyDataQualityForDate(date: string): Promise<Dail
 
     let stillStaleCount = lastCloseIsins.size;
     if (lastCloseIsins.size > 0) {
-      // If this date has since been reclaimed, some (or all) of these
-      // last-close ISINs may have a genuine DHAN historical close written
-      // AFTER the outage was detected -- those count as covered again.
-      // Ones DHAN still had nothing for stay counted as missing.
-      const [correctedOutage] = await db
+      // If this date has an outage-reclaim record at all -- whether fully
+      // 'corrected' or still 'detected' (a large outage is chunked across
+      // several cron runs, see outage-reclaim.ts) -- some of these
+      // last-close ISINs may already have a genuine DHAN historical close
+      // written AFTER the outage was detected, and those count as covered
+      // again right away rather than waiting for the entire day to finish
+      // reclaiming. Not gated on status==="corrected": that would credit
+      // nothing at all until the very last ISIN of a 1000+-ISIN outage day
+      // is fixed, silently showing 0% coverage for days/weeks of real,
+      // already-verified progress (confirmed 2026-08-10: 6 Aug showed 0%
+      // instead of the true ~13.2% while 150/1112 were already reclaimed).
+      const [outageRow] = await db
         .select({ detectedAt: outageReclaimLog.detectedAt })
         .from(outageReclaimLog)
-        .where(
-          and(
-            eq(outageReclaimLog.kind, "amc_isin"),
-            eq(outageReclaimLog.snapshotDate, date),
-            eq(outageReclaimLog.status, "corrected")
-          )
-        );
-      if (correctedOutage) {
+        .where(and(eq(outageReclaimLog.kind, "amc_isin"), eq(outageReclaimLog.snapshotDate, date)));
+      if (outageRow) {
         const rectifiedCount = [...lastCloseIsins].filter((isin) => {
           const computedAt = pricedByIsin.get(isin);
-          return computedAt !== undefined && computedAt > correctedOutage.detectedAt;
+          return computedAt !== undefined && computedAt > outageRow.detectedAt;
         }).length;
         stillStaleCount = lastCloseIsins.size - rectifiedCount;
       }

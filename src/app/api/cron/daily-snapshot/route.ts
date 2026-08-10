@@ -36,26 +36,30 @@ export async function GET(request: Request) {
   try {
     const snapshot = await computeLiveAum({ forceRefresh: true });
 
-    // Best-effort: today's DHAN price-coverage stats for the Daily Data
-    // tab, computed right after the close capture above. A failure here
-    // shouldn't fail the whole cron response -- the snapshot itself is
-    // the primary job, this is a secondary regression-guard signal.
-    try {
-      await upsertDailyDataQuality(getIstDateString());
-    } catch (err) {
-      console.error("Failed to upsert daily data quality:", err);
-    }
-
-    // Best-effort, same isolation as above: today's per-ISIN last-close log
-    // (feeds the Overview banner's 5-day auto-mute) and clearing any manual
-    // mutes for ISINs that have recovered to a real live price. Neither
-    // should fail the whole cron response if something goes wrong here.
+    // Best-effort: today's per-ISIN last-close log (feeds the Overview
+    // banner's 5-day auto-mute) and clearing any manual mutes for ISINs
+    // that have recovered to a real live price. This must run BEFORE
+    // upsertDailyDataQuality below -- that step reads today's
+    // isin_last_close_log row to compute today's coverage %, so it would
+    // be blind to today's own outage signal if it ran first.
     try {
       const lastCloseIsins = snapshot.lastCloseStocks.map((s) => s.isin);
       await recordLastCloseLog(getIstDateString(), lastCloseIsins);
       await clearRecoveredManualMutes(lastCloseIsins);
     } catch (err) {
       console.error("Failed to update last-close mute bookkeeping:", err);
+    }
+
+    // Best-effort, same isolation as above: today's DHAN price-coverage
+    // stats for the Daily Data tab, computed right after the close capture
+    // above. Must run AFTER the last-close log write above (see comment
+    // there). A failure here shouldn't fail the whole cron response -- the
+    // snapshot itself is the primary job, this is a secondary
+    // regression-guard signal.
+    try {
+      await upsertDailyDataQuality(getIstDateString());
+    } catch (err) {
+      console.error("Failed to upsert daily data quality:", err);
     }
 
     // Best-effort, same isolation as above: detect any stock split/bonus
