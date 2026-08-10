@@ -6,6 +6,7 @@ import type { ExchangeSegment } from "../dhan/types";
 import { INDEX_KEYS, INDEX_SECURITY_IDS, type IndexKey } from "../dhan/indices";
 import { computeAmcLiveAumCrForDate } from "./backfill";
 import { invalidateLiveAumCache } from "./cache";
+import { upsertDailyDataQuality } from "./daily-data-quality";
 import { writeIndexDailyLevelRows } from "./index-level-store";
 import { writeIsinDailyPriceRows } from "./isin-price-store";
 import { getIstDateString } from "../utils/date";
@@ -179,6 +180,19 @@ async function reclaimAmcOutages(): Promise<{ datesProcessed: string[]; isinsCor
 
     await recomputeCanonicalSnapshotsForDate(date);
     invalidateLiveAumCache();
+
+    // Best-effort: refresh this date's stored Daily Data tab coverage row
+    // right after this pass's corrections land, so it keeps climbing on its
+    // own as reclaim makes progress across cron runs -- without this, a
+    // date's coveragePct would only ever be recomputed for "today" (see the
+    // daily cron) and would otherwise sit frozen at whatever it was when
+    // this outage was first detected, even after the underlying prices are
+    // long since fixed. Pure DB reads, no DHAN calls -- isolated so a
+    // failure here can never affect the correction writes that just
+    // succeeded above.
+    await upsertDailyDataQuality(date).catch((err) => {
+      console.error("Failed to refresh daily data quality after outage reclaim:", err);
+    });
 
     const refreshedPriceRows = await db
       .select({ isin: isinDailyPrice.isin, computedAt: isinDailyPrice.computedAt })

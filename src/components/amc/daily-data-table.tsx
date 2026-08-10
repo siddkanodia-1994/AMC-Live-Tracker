@@ -2,6 +2,7 @@
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { useRegisterExport } from "@/components/layout/export-context";
 import { formatShortDate } from "@/lib/utils/format";
 import { useDailyDataQuality } from "@/hooks/use-daily-data-quality";
@@ -11,6 +12,37 @@ function rowClassName(coveragePct: number): string {
   if (coveragePct < 80) return "bg-red-500/10 text-red-700 dark:text-red-400";
   if (coveragePct < 85) return "bg-amber-500/10 text-amber-700 dark:text-amber-400";
   return "";
+}
+
+// Tells apart a day that's actively self-healing (will keep climbing on
+// its own as outage-reclaim makes progress) from one whose number is
+// already final -- without this, a low/tinted row alone can't be told
+// apart from a permanently degraded day.
+function OutageReclaimBadge({ outageReclaim }: { outageReclaim: NonNullable<DailyDataQualityRow["outageReclaim"]> }) {
+  const { status, flaggedCount, correctedCount } = outageReclaim;
+  if (status === "no_data") return null;
+
+  if (status === "corrected") {
+    return (
+      <Badge variant="outline" className="ml-2 border-emerald-500/40 text-emerald-600 dark:text-emerald-400">
+        Rectified
+      </Badge>
+    );
+  }
+
+  const label =
+    status === "failed"
+      ? `Reclaiming — last attempt failed, retrying (${correctedCount}/${flaggedCount})`
+      : correctedCount === 0
+        ? `Reclaiming — queued (0/${flaggedCount})`
+        : `Reclaiming — ${correctedCount}/${flaggedCount} corrected so far`;
+
+  return (
+    <Badge variant="outline" className="ml-2 border-amber-500/40 text-amber-700 dark:text-amber-400">
+      <span className="mr-1.5 inline-block size-1.5 rounded-full bg-amber-500 animate-pulse" />
+      {label}
+    </Badge>
+  );
 }
 
 function CountCell({ value }: { value: number }) {
@@ -57,7 +89,10 @@ export function DailyDataTable() {
         ISINs prefixed &quot;INF&quot; — one AMC holding another mutual fund/ETF&apos;s units, not an individual
         stock. Every column is mutually exclusive; they sum exactly to Total Holdings. Rows below 85% are tinted
         amber, below 80% red — the same 80% floor that lights up the Overview banner. Updated automatically each
-        trading day shortly after market close.
+        trading day shortly after market close. A date affected by a DHAN outage carries a badge next to it: amber
+        &quot;Reclaiming&quot; while the correction is still in progress (its coverage % keeps climbing on its own
+        as more gets corrected each day), or green &quot;Rectified&quot; once fully corrected — that&apos;s the
+        final number.
       </p>
       <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>
@@ -77,7 +112,10 @@ export function DailyDataTable() {
           <TableBody>
             {rows.map((r) => (
               <TableRow key={r.snapshotDate} className={rowClassName(r.coveragePct)}>
-                <TableCell className="font-medium">{formatShortDate(r.snapshotDate)}</TableCell>
+                <TableCell className="font-medium">
+                  {formatShortDate(r.snapshotDate)}
+                  {r.outageReclaim && <OutageReclaimBadge outageReclaim={r.outageReclaim} />}
+                </TableCell>
                 <CountCell value={r.totalHoldings} />
                 <CountCell value={r.debtInstruments} />
                 <CountCell value={r.foreignHoldings} />

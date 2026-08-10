@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { dailyDataQuality, holdings, isinDailyPrice, isinLastCloseLog, liveAumDailySnapshot, outageReclaimLog } from "../db/schema";
 import { isBankDebtOrRepo, isForeignIsin } from "../excel/instrument-classification";
+import { getAllAmcOutageReclaimRows, type OutageStatus } from "./outage-reclaim-log";
 
 export interface DailyDataQualityRow {
   snapshotDate: string;
@@ -13,6 +14,45 @@ export interface DailyDataQualityRow {
   indianStocks: number;
   liveConsidered: number;
   coveragePct: number;
+  // Present only for dates with an outage-reclaim record (see
+  // outage-reclaim.ts) -- lets the Daily Data tab show whether a
+  // low/tinted row is still actively self-healing ("detected"/"failed",
+  // will keep climbing) or a final, fully-corrected value ("corrected").
+  outageReclaim?: {
+    status: OutageStatus;
+    flaggedCount: number;
+    correctedCount: number;
+    detectedAt: string;
+    correctedAt: string | null;
+  };
+}
+
+const BATCH_SIZE = 500;
+
+/**
+ * How many of a date's last-close-flagged ISINs already have a genuine
+ * DHAN historical close written after the outage was detected -- i.e.
+ * outage-reclaim.ts's current progress on that date, computed fresh (not
+ * cached) so the Daily Data tab always reflects the latest reclaim state.
+ * Self-contained (re-fetches the flagged ISIN list) since callers here
+ * only have a date + detectedAt, not an already-fetched ISIN map.
+ */
+async function countRectifiedIsins(date: string, detectedAt: Date): Promise<number> {
+  const flaggedRows = await db.select({ isin: isinLastCloseLog.isin }).from(isinLastCloseLog).where(eq(isinLastCloseLog.snapshotDate, date));
+  const flaggedIsins = [...new Set(flaggedRows.map((r) => r.isin))];
+
+  let rectified = 0;
+  for (let i = 0; i < flaggedIsins.length; i += BATCH_SIZE) {
+    const batch = flaggedIsins.slice(i, i + BATCH_SIZE);
+    const rows = await db
+      .select({ isin: isinDailyPrice.isin, computedAt: isinDailyPrice.computedAt })
+      .from(isinDailyPrice)
+      .where(and(eq(isinDailyPrice.snapshotDate, date), inArray(isinDailyPrice.isin, batch)));
+    for (const r of rows) {
+      if (r.computedAt > detectedAt) rectified++;
+    }
+  }
+  return rectified;
 }
 
 /**
@@ -118,9 +158,8 @@ export async function computeDailyDataQualityForDate(date: string): Promise<Dail
     const isinList = [...eligibleEquityIsins];
     // Neon's HTTP driver chokes on a single query with 1000+ bind params
     // (confirmed 2026-08-04: a 1127-param IN-clause timed out entirely) --
-    // chunk both ISIN-list lookups below, same BATCH_SIZE convention
-    // already used for bulk writes (isin-price-store.ts).
-    const BATCH_SIZE = 500;
+    // chunk both ISIN-list lookups below, same module-level BATCH_SIZE
+    // convention already used for bulk writes (isin-price-store.ts).
 
     // Does ANY isin_daily_price row exist at all for this date? Absence
     // here means priceSource==="stale_fallback" that day (DHAN had no live
@@ -236,17 +275,42 @@ export async function getDailyDataQualityHistory(): Promise<DailyDataQualityRow[
   // every prior one. Table display and Excel export both read this same
   // array, so both follow this order.
   const rows = await db.select().from(dailyDataQuality).orderBy(desc(dailyDataQuality.snapshotDate));
-  return rows.map((r) => ({
-    snapshotDate: r.snapshotDate,
-    totalHoldings: r.totalHoldings,
-    debtInstruments: r.debtInstruments,
-    foreignHoldings: r.foreignHoldings,
-    nonIsinBearing: r.nonIsinBearing,
-    infFundUnits: r.infFundUnits,
-    indianStocks: r.indianStocks,
-    liveConsidered: r.liveConsidered,
-    coveragePct: Number(r.coveragePct),
-  }));
+  const outageRowsByDate = await getAllAmcOutageReclaimRows();
+
+  const result: DailyDataQualityRow[] = [];
+  for (const r of rows) {
+    const outage = outageRowsByDate.get(r.snapshotDate);
+    let outageReclaim: DailyDataQualityRow["outageReclaim"];
+    if (outage) {
+      const isTerminal = outage.status === "corrected" || outage.status === "no_data";
+      const flaggedCount = outage.lastCloseIsinCount ?? 0;
+      // Terminal rows already have their final counts stored at
+      // completion time -- no need to recompute. Non-terminal
+      // (detected/failed) rows need a fresh count since reclaim keeps
+      // chipping away at them across cron runs (see countRectifiedIsins).
+      const correctedCount = isTerminal ? (outage.correctedIsinCount ?? flaggedCount) : await countRectifiedIsins(r.snapshotDate, new Date(outage.detectedAt));
+      outageReclaim = {
+        status: outage.status,
+        flaggedCount,
+        correctedCount,
+        detectedAt: outage.detectedAt,
+        correctedAt: outage.correctedAt,
+      };
+    }
+    result.push({
+      snapshotDate: r.snapshotDate,
+      totalHoldings: r.totalHoldings,
+      debtInstruments: r.debtInstruments,
+      foreignHoldings: r.foreignHoldings,
+      nonIsinBearing: r.nonIsinBearing,
+      infFundUnits: r.infFundUnits,
+      indianStocks: r.indianStocks,
+      liveConsidered: r.liveConsidered,
+      coveragePct: Number(r.coveragePct),
+      outageReclaim,
+    });
+  }
+  return result;
 }
 
 export interface DailyDataQualityAlert {

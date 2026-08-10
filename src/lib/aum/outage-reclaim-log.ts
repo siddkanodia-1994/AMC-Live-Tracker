@@ -89,6 +89,33 @@ export async function markFailed(kind: OutageKind, snapshotDate: string, detail:
     .where(and(eq(outageReclaimLog.kind, kind), eq(outageReclaimLog.snapshotDate, snapshotDate)));
 }
 
+/**
+ * Every amc_isin outage-reclaim row regardless of status, keyed by
+ * snapshotDate -- feeds the Daily Data tab's per-row "still reclaiming" vs
+ * "rectified" badge (see daily-data-quality.ts), which needs in-progress
+ * (`detected`/`failed`) rows too, unlike getRecentOutageReclaims above
+ * which only ever returns already-`corrected` ones.
+ */
+export async function getAllAmcOutageReclaimRows(): Promise<Map<string, OutageReclaimRow>> {
+  const rows = await db.select().from(outageReclaimLog).where(eq(outageReclaimLog.kind, "amc_isin"));
+  const byDate = new Map<string, OutageReclaimRow>();
+  for (const r of rows) {
+    byDate.set(r.snapshotDate, {
+      kind: r.kind as OutageKind,
+      snapshotDate: r.snapshotDate,
+      status: r.status as OutageStatus,
+      lastCloseIsinCount: r.lastCloseIsinCount,
+      universeIsinCount: r.universeIsinCount,
+      correctedIsinCount: r.correctedIsinCount,
+      indexKeysCorrected: r.indexKeysCorrected,
+      detail: r.detail,
+      detectedAt: r.detectedAt.toISOString(),
+      correctedAt: r.correctedAt ? r.correctedAt.toISOString() : null,
+    });
+  }
+  return byDate;
+}
+
 /** Feeds the Overview page's "N days auto-corrected" disclosure -- corrected rows only, most recent first. */
 export async function getRecentOutageReclaims(sinceDaysAgo = 30): Promise<OutageReclaimRow[]> {
   const cutoff = new Date(Date.now() - sinceDaysAgo * 24 * 60 * 60 * 1000);
