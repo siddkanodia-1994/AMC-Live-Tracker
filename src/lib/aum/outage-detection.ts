@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lt } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { appSettings, indexDailyLevel, isinLastCloseLog, liveAumDailySnapshot } from "../db/schema";
 import { INDEX_KEYS, type IndexKey } from "../dhan/indices";
@@ -7,6 +7,9 @@ import { computeDailyDataQualityForDate } from "./daily-data-quality";
 const LOOKBACK_DAYS_KEY = "outage_reclaim_lookback_days";
 const THRESHOLD_PCT_KEY = "outage_reclaim_threshold_pct";
 const MAX_ISINS_PER_RUN_KEY = "outage_reclaim_max_isins_per_run";
+const WATERMARK_DATE_KEY = "outage_detection_watermark_date";
+const WATERMARK_THRESHOLD_KEY = "outage_detection_watermark_threshold_pct";
+const WATERMARK_WINDOW_START_KEY = "outage_detection_watermark_window_start";
 
 const DEFAULT_LOOKBACK_DAYS = 14;
 const DEFAULT_THRESHOLD_PCT = 0.5;
@@ -49,6 +52,46 @@ export async function setOutageMaxIsinsPerRun(n: number): Promise<void> {
     .insert(appSettings)
     .values({ key: MAX_ISINS_PER_RUN_KEY, value: String(n) })
     .onConflictDoUpdate({ target: appSettings.key, set: { value: String(n), updatedAt: new Date() } });
+}
+
+interface DetectionWatermark {
+  lastCheckedDate: string;
+  thresholdPct: number;
+  windowStart: string;
+}
+
+/**
+ * The state of the last successful detectAmcOutageDates scan -- lets a
+ * repeat call skip dates it's already confirmed clean instead of
+ * re-deriving daily data quality for the whole lookback window every
+ * time (see setDetectionWatermark below for why this is safe).
+ */
+async function getDetectionWatermark(): Promise<DetectionWatermark | null> {
+  const rows = await db
+    .select()
+    .from(appSettings)
+    .where(inArray(appSettings.key, [WATERMARK_DATE_KEY, WATERMARK_THRESHOLD_KEY, WATERMARK_WINDOW_START_KEY]));
+  const byKey = new Map(rows.map((r) => [r.key, r.value]));
+  const lastCheckedDate = byKey.get(WATERMARK_DATE_KEY);
+  const thresholdPct = Number.parseFloat(byKey.get(WATERMARK_THRESHOLD_KEY) ?? "");
+  const windowStart = byKey.get(WATERMARK_WINDOW_START_KEY);
+  if (!lastCheckedDate || !windowStart || !Number.isFinite(thresholdPct)) return null;
+  return { lastCheckedDate, thresholdPct, windowStart };
+}
+
+async function setDetectionWatermark(watermark: DetectionWatermark): Promise<void> {
+  const now = new Date();
+  await db
+    .insert(appSettings)
+    .values([
+      { key: WATERMARK_DATE_KEY, value: watermark.lastCheckedDate, updatedAt: now },
+      { key: WATERMARK_THRESHOLD_KEY, value: String(watermark.thresholdPct), updatedAt: now },
+      { key: WATERMARK_WINDOW_START_KEY, value: watermark.windowStart, updatedAt: now },
+    ])
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: sql`excluded.value`, updatedAt: now },
+    });
 }
 
 /**
@@ -101,10 +144,29 @@ export async function detectAmcOutageDates(options: {
 
   const thresholdPct = options.thresholdPct ?? (await getOutageThresholdPct());
 
+  // A completed trading day's isinLastCloseLog entries are written once
+  // (by that day's own close-capture step) and never added to again, so
+  // a date already checked against the same threshold/window can never
+  // produce a different answer -- skip re-deriving daily data quality for
+  // dates already covered by the last successful scan. Falls back to a
+  // full rescan (self-healing, one-time cost) whenever the threshold or
+  // window has widened since that scan, so a config change can never
+  // cause a date to be silently skipped.
+  const watermark = await getDetectionWatermark();
+  // Invalid (forces a one-time full rescan) if the threshold changed, or
+  // if the window now starts earlier than the last scan's did -- a wider
+  // lookback pulls in older dates that were never part of any previous
+  // scan's realDates at all, so they must not be silently skipped.
+  const watermarkValid =
+    watermark !== null && watermark.thresholdPct === thresholdPct && options.windowStart >= watermark.windowStart;
+  const datesToScan = watermarkValid ? realDates.filter((d) => d > watermark!.lastCheckedDate) : realDates;
+
+  if (datesToScan.length === 0) return [];
+
   const lastCloseRows = await db
     .select({ snapshotDate: isinLastCloseLog.snapshotDate, isin: isinLastCloseLog.isin })
     .from(isinLastCloseLog)
-    .where(inArray(isinLastCloseLog.snapshotDate, realDates));
+    .where(inArray(isinLastCloseLog.snapshotDate, datesToScan));
 
   const isinsByDate = new Map<string, Set<string>>();
   for (const r of lastCloseRows) {
@@ -114,7 +176,7 @@ export async function detectAmcOutageDates(options: {
   }
 
   const candidates: AmcOutageCandidate[] = [];
-  for (const date of realDates) {
+  for (const date of datesToScan) {
     const lastCloseIsinCount = isinsByDate.get(date)?.size ?? 0;
     if (lastCloseIsinCount === 0) continue;
     const quality = await computeDailyDataQualityForDate(date);
@@ -124,6 +186,13 @@ export async function detectAmcOutageDates(options: {
       candidates.push({ snapshotDate: date, lastCloseIsinCount, universeIsinCount });
     }
   }
+
+  await setDetectionWatermark({
+    lastCheckedDate: datesToScan[datesToScan.length - 1],
+    thresholdPct,
+    windowStart: options.windowStart,
+  });
+
   return candidates;
 }
 
