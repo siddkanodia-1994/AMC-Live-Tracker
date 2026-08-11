@@ -3,6 +3,7 @@ import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum"
 import { upsertDailyDataQuality } from "@/lib/aum/daily-data-quality";
 import { clearRecoveredManualMutes, recordLastCloseLog } from "@/lib/aum/last-close-mute";
 import { reclaimDhanOutages } from "@/lib/aum/outage-reclaim";
+import { reclaimStaleInstrumentMappings } from "@/lib/aum/stale-mapping-reclaim";
 import { detectShareAdjustments } from "@/lib/aum/split-detection";
 import { getIstDateString } from "@/lib/utils/date";
 
@@ -86,6 +87,22 @@ export async function GET(request: Request) {
       await reclaimDhanOutages({ todayDhanStatus: snapshot.dhanStatus });
     } catch (err) {
       console.error("Failed to reclaim DHAN outages:", err);
+    }
+
+    // Best-effort, same isolation as above: a single ISIN stuck on
+    // last_close for the auto-mute threshold's worth of trading days
+    // (timer-based mute only, not a manually-accepted known reason) is
+    // never enough to trip reclaimDhanOutages' whole-day 50% threshold
+    // above, so it needs its own check -- that streak length is exactly
+    // the signature of a stale DHAN security ID (confirmed real incident,
+    // 2026-08-10). See stale-mapping-reclaim.ts.
+    try {
+      const staleMappingCandidates = snapshot.lastCloseStocks
+        .filter((s) => s.autoMuted && s.muteReason === null)
+        .map((s) => ({ isin: s.isin, companyName: s.companyName }));
+      await reclaimStaleInstrumentMappings(staleMappingCandidates);
+    } catch (err) {
+      console.error("Failed to reclaim stale instrument mappings:", err);
     }
 
     return NextResponse.json({ ok: true, amcsSnapshotted: snapshot.amcs.length });

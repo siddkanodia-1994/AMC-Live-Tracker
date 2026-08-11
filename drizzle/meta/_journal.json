@@ -99,6 +99,13 @@
       "when": 1786101635230,
       "tag": "0013_empty_smiling_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1786421480973,
+      "tag": "0014_last_human_torch",
+      "breakpoints": true
     }
   ]
 }

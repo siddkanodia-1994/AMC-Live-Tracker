@@ -259,6 +259,18 @@ export interface LiveAumSnapshot {
     detail: string | null;
     correctedAt: string | null;
   }[];
+  // Recently auto-corrected stale DHAN security-ID mappings (see
+  // stale-mapping-reclaim.ts) -- same always-visible-when-non-empty
+  // disclosure convention as outageReclaims above. Route-populated
+  // (getRecentStaleMappingCorrections); not populated in historical
+  // (asOfDate) mode.
+  staleMappingCorrections?: {
+    isin: string;
+    companyName: string;
+    oldSecurityId: string | null;
+    newSecurityId: string;
+    correctedAt: string;
+  }[];
 }
 
 export interface ComputedLiveAum {

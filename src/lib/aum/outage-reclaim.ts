@@ -44,7 +44,7 @@ function windowStartFor(lookbackDays: number, beforeDate: string): string {
 // still-pending prices) -- always safe to run, reflects current best
 // knowledge, and works identically whether this is the first or Nth
 // correction pass over a large outage day.
-async function recomputeCanonicalSnapshotsForDate(date: string): Promise<void> {
+export async function recomputeCanonicalSnapshotsForDate(date: string): Promise<void> {
   const existingCanonicalRows = await db
     .select({ amcId: liveAumDailySnapshot.amcId, reportPeriod: liveAumDailySnapshot.reportPeriod, reportedAumCr: liveAumDailySnapshot.reportedAumCr })
     .from(liveAumDailySnapshot)

@@ -49,6 +49,16 @@ export async function downloadInstrumentMaster(): Promise<RawInstrumentRow[]> {
   return rows;
 }
 
+/**
+ * When an ISIN appears on both NSE and BSE in DHAN's master, prefer the
+ * NSE row -- shared by syncInstrumentMap (bulk resync) and
+ * stale-mapping-reclaim.ts (single-ISIN self-heal) so the tie-break rule
+ * can't drift between the two callers.
+ */
+export function pickPreferredInstrumentRow(rows: RawInstrumentRow[]): RawInstrumentRow | undefined {
+  return rows.find((r) => r.exchangeSegment === "NSE_EQ") ?? rows[0];
+}
+
 export interface SyncInstrumentMapResult {
   upserted: number;
   unmatchedIsins: string[];
@@ -72,13 +82,17 @@ export async function syncInstrumentMap(): Promise<SyncInstrumentMapResult> {
 
   const masterRows = await downloadInstrumentMaster();
 
-  const byIsin = new Map<string, RawInstrumentRow>();
+  const rowsByIsin = new Map<string, RawInstrumentRow[]>();
   for (const row of masterRows) {
     if (!priceableIsins.has(row.isin)) continue;
-    const existing = byIsin.get(row.isin);
-    if (!existing || (existing.exchangeSegment === "BSE_EQ" && row.exchangeSegment === "NSE_EQ")) {
-      byIsin.set(row.isin, row);
-    }
+    const list = rowsByIsin.get(row.isin) ?? [];
+    list.push(row);
+    rowsByIsin.set(row.isin, list);
+  }
+  const byIsin = new Map<string, RawInstrumentRow>();
+  for (const [isin, rows] of rowsByIsin) {
+    const preferred = pickPreferredInstrumentRow(rows);
+    if (preferred) byIsin.set(isin, preferred);
   }
 
   const rowsToUpsert = [...byIsin.values()];

@@ -265,6 +265,28 @@ export const outageReclaimLog = pgTable(
   (t) => [uniqueIndex("outage_reclaim_log_kind_date_idx").on(t.kind, t.snapshotDate)]
 );
 
+// One row per auto-corrected DHAN security-ID mapping drift (see
+// stale-mapping-reclaim.ts): a single ISIN stuck on last_close for the
+// auto-mute threshold's worth of trading days turned out to have a stale
+// instrument_map entry (DHAN reissued its security ID and we never
+// re-synced), self-corrected without human intervention. Distinct from
+// outageReclaimLog above, which only ever fires for a whole-day,
+// whole-universe outage (>=50% of ISINs last_close on one date) -- this
+// catches the opposite shape of problem: one ISIN, wrong every day, for
+// possibly many days, invisible to that day-level threshold. No unique
+// constraint -- the same ISIN could in principle drift again later and
+// get a second row.
+export const staleMappingCorrectionLog = pgTable("stale_mapping_correction_log", {
+  id: serial("id").primaryKey(),
+  isin: text("isin").notNull(),
+  companyName: text("company_name").notNull(),
+  oldSecurityId: text("old_security_id"), // null if there was no prior mapping at all
+  oldExchangeSegment: text("old_exchange_segment"),
+  newSecurityId: text("new_security_id").notNull(),
+  newExchangeSegment: text("new_exchange_segment").notNull(),
+  correctedAt: timestamp("corrected_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // One row per (ISIN, trading date) where that ISIN was classified
 // priceSource === "last_close" that day -- written once daily by the 4:05pm
 // IST close-capture cron (not on every 45s poll), so a transient intraday

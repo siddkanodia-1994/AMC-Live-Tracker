@@ -768,6 +768,21 @@ export function AmcGrid({
                 </ul>
               </details>
             )}
+            {data.staleMappingCorrections && data.staleMappingCorrections.length > 0 && (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer">
+                  {data.staleMappingCorrections.length} stock DHAN mapping{data.staleMappingCorrections.length === 1 ? "" : "s"} auto-corrected
+                </summary>
+                <ul className="mt-1 list-disc pl-4">
+                  {data.staleMappingCorrections.map((c) => (
+                    <li key={`${c.isin}-${c.correctedAt}`}>
+                      {formatShortDate(c.correctedAt.slice(0, 10))} — {c.companyName}: DHAN security ID{" "}
+                      {c.oldSecurityId ?? "(none)"} → {c.newSecurityId} (was stale, historical prices backfilled)
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
           </div>
           <button
             type="button"
