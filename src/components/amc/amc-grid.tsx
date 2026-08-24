@@ -15,6 +15,7 @@ import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-tabl
 import { SectoralHoldingsTable } from "./sectoral-holdings-table";
 import { StockTab } from "@/components/stock/stock-tab";
 import { DailyDataTable } from "./daily-data-table";
+import { CorrectionsLog } from "./corrections-log";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,7 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { InfoIcon } from "lucide-react";
-import { formatCr, formatDeltaCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
+import { formatCr, formatDeltaCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import { DEFAULT_TOP_N, TOP_N_OPTIONS, type TopNOption } from "@/lib/utils/top-n";
 import { LIVE_AUM_CACHE_TTL_MS } from "@/lib/utils/constants";
 import { listFiscalQuarters } from "@/lib/aum/report-period";
@@ -732,57 +733,6 @@ export function AmcGrid({
                 </ul>
               </details>
             )}
-            {data.shareAdjustments && data.shareAdjustments.length > 0 && (
-              <details className="text-xs text-muted-foreground">
-                <summary className="cursor-pointer">
-                  {data.shareAdjustments.length} stock{data.shareAdjustments.length === 1 ? "" : "s"} auto-adjusted
-                  for a split/bonus
-                </summary>
-                <ul className="mt-1 list-disc pl-4">
-                  {data.shareAdjustments.map((s) => (
-                    <li key={s.isin}>
-                      {s.companyName} — {s.multiplier >= 1 ? `×${s.multiplier.toFixed(1)}` : `÷${(1 / s.multiplier).toFixed(1)}`}{" "}
-                      split detected {formatShortDate(s.firstDetectedOn)} ({formatPriceInr(s.priceBeforeInr)} →{" "}
-                      {formatPriceInr(s.priceAfterInr)}). Manage in Admin if this was detected incorrectly.
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            {data.outageReclaims && data.outageReclaims.length > 0 && (
-              <details className="text-xs text-muted-foreground">
-                <summary className="cursor-pointer">
-                  {data.outageReclaims.length} day{data.outageReclaims.length === 1 ? "" : "s"} auto-corrected after a
-                  DHAN outage
-                </summary>
-                <ul className="mt-1 list-disc pl-4">
-                  {data.outageReclaims.map((r) => (
-                    <li key={`${r.kind}-${r.snapshotDate}`}>
-                      {formatShortDate(r.snapshotDate)} —{" "}
-                      {r.kind === "amc_isin"
-                        ? `${r.correctedIsinCount ?? 0} stock price${(r.correctedIsinCount ?? 0) === 1 ? "" : "s"} replaced with DHAN's real historical close`
-                        : `${(r.indexKeysCorrected ?? []).join(", ")} level backfilled from DHAN's real historical close`}
-                      {r.detail ? ` (${r.detail})` : ""}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            {data.staleMappingCorrections && data.staleMappingCorrections.length > 0 && (
-              <details className="text-xs text-muted-foreground">
-                <summary className="cursor-pointer">
-                  {data.staleMappingCorrections.length} stock DHAN mapping{data.staleMappingCorrections.length === 1 ? "" : "s"} auto-corrected
-                </summary>
-                <ul className="mt-1 list-disc pl-4">
-                  {data.staleMappingCorrections.map((c) => (
-                    <li key={`${c.isin}-${c.correctedAt}`}>
-                      {formatShortDate(c.correctedAt.slice(0, 10))} — {c.companyName}: DHAN security ID{" "}
-                      {c.oldSecurityId ?? "(none)"} → {c.newSecurityId} (was stale, historical prices backfilled)
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
           </div>
           <button
             type="button"
@@ -857,6 +807,9 @@ export function AmcGrid({
               </TabsTrigger>
               <TabsTrigger value="daily-data" className="after:bg-[var(--toolbar-accent)]">
                 Daily Data
+              </TabsTrigger>
+              <TabsTrigger value="corrections-log" className="after:bg-[var(--toolbar-accent)]">
+                Corrections Log
               </TabsTrigger>
             </TabsList>
             <div className="flex items-center gap-3 text-sm">
@@ -1202,6 +1155,13 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="daily-data">
           <DailyDataTable />
+        </TabsContent>
+        <TabsContent value="corrections-log">
+          <CorrectionsLog
+            shareAdjustments={data.shareAdjustments}
+            outageReclaims={data.outageReclaims}
+            staleMappingCorrections={data.staleMappingCorrections}
+          />
         </TabsContent>
       </Tabs>
     </div>
