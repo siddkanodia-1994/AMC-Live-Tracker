@@ -15,6 +15,7 @@ async function main() {
   console.log(`Report period: ${result.reportPeriod}`);
   console.log(`AMCs imported: ${result.amcsImported}`);
   console.log(`Holdings imported: ${result.holdingsImported}`);
+  console.log(`Official CCE% rows imported: ${result.cceRowsImported}`);
   if (result.warnings.length > 0) {
     console.log(`\nWarnings (${result.warnings.length}):`);
     for (const w of result.warnings) console.log(`  - ${w}`);

@@ -10,6 +10,7 @@ interface ImportResult {
   reportPeriod: string;
   amcsImported: number;
   holdingsImported: number;
+  cceRowsImported: number;
   warnings: string[];
 }
 
@@ -300,8 +301,8 @@ export function SyncActions({ secret }: { secret: string }) {
           {importResult && (
             <div className="text-sm">
               <p>
-                {importResult.amcsImported} AMCs, {importResult.holdingsImported} holdings imported for{" "}
-                {importResult.reportPeriod}.
+                {importResult.amcsImported} AMCs, {importResult.holdingsImported} holdings, {importResult.cceRowsImported}{" "}
+                official CCE% rows imported for {importResult.reportPeriod}.
               </p>
               {importResult.warnings.length > 0 && (
                 <details className="text-amber-600 dark:text-amber-400">

@@ -1,12 +1,15 @@
 import { read, type WorkBook } from "xlsx";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { transactionalDb } from "../db/transactional-client";
-import { amcPeriods, amcs, appSettings, holdings, importLog } from "../db/schema";
+import { amcPeriods, amcs, appSettings, holdings, importLog, officialCceHistory } from "../db/schema";
 import { getAmcMap } from "./amc-name-map";
 import { assertMapCoversWorkbook } from "./amc-name-map";
 import { deriveReportPeriod, parseOverviewSheet } from "./parse-overview";
 import { parseAmcSheet } from "./parse-amc-sheet";
+import { parseCashHoldingsSheet } from "./parse-cash-holdings";
 import type { ImportResult } from "./types";
+
+const CCE_BATCH_SIZE = 500;
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
 
@@ -21,6 +24,9 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
   const allWarnings: string[] = [];
   let holdingsImported = 0;
   let amcsImported = 0;
+  let cceRowsImported = 0;
+  const cashHoldings = parseCashHoldingsSheet(wb);
+  allWarnings.push(...cashHoldings.warnings);
 
   await transactionalDb.transaction(async (tx) => {
     for (const entry of getAmcMap()) {
@@ -128,6 +134,44 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
       amcsImported++;
     }
 
+    // Cross-check history from the "Cash Holdings" sheet -- keyed by
+    // sheetName (e.g. "QSIF"), same identity the rest of this function uses,
+    // resolved against every AMC on record (not just ones touched above) so
+    // a fund missing from this month's Overview but still present in the
+    // sheet's rolling window still resolves correctly.
+    if (cashHoldings.rows.length > 0) {
+      const allAmcs = await tx.select().from(amcs);
+      const sheetNameToAmcId = new Map(allAmcs.map((a) => [a.sheetName.trim().toLowerCase(), a.id]));
+
+      const cceValues: (typeof officialCceHistory.$inferInsert)[] = [];
+      const unmatchedSheetNames = new Set<string>();
+      for (const row of cashHoldings.rows) {
+        const amcId = sheetNameToAmcId.get(row.sheetName.trim().toLowerCase());
+        if (!amcId) {
+          unmatchedSheetNames.add(row.sheetName);
+          continue;
+        }
+        cceValues.push({ amcId, month: row.month, ccePct: String(row.ccePct) });
+      }
+      if (unmatchedSheetNames.size > 0) {
+        allWarnings.push(
+          `[Cash Holdings] ${unmatchedSheetNames.size} row(s) could not be matched to an AMC and were skipped: ${[...unmatchedSheetNames].join(", ")}`
+        );
+      }
+
+      for (let i = 0; i < cceValues.length; i += CCE_BATCH_SIZE) {
+        const batch = cceValues.slice(i, i + CCE_BATCH_SIZE);
+        await tx
+          .insert(officialCceHistory)
+          .values(batch)
+          .onConflictDoUpdate({
+            target: [officialCceHistory.amcId, officialCceHistory.month],
+            set: { ccePct: sql`excluded.cce_pct`, importedAt: sql`now()` },
+          });
+      }
+      cceRowsImported = cceValues.length;
+    }
+
     // Advance the "live" period pointer only forward, never backward — an
     // out-of-order upload (e.g. re-uploading an old month) updates that
     // period's history without regressing which period is considered current.
@@ -163,6 +207,7 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
     reportPeriod,
     amcsImported,
     holdingsImported,
+    cceRowsImported,
     warnings: allWarnings,
   };
 }

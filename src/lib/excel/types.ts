@@ -45,5 +45,6 @@ export interface ImportResult {
   reportPeriod: string;
   amcsImported: number;
   holdingsImported: number;
+  cceRowsImported: number;
   warnings: string[];
 }
