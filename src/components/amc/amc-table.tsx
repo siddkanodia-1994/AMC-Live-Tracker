@@ -313,21 +313,43 @@ export function AmcTable({
   useRegisterExport(() => ({
     fileName: `overview-${asOfDate ?? new Date().toISOString().slice(0, 10)}`,
     sheetName: "Overview",
-    rows: sorted.map((amc) => ({
-      AMC: amc.overviewName,
-      [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: historical ? null : (amc.currentQuarterAvgLiveAumCr ?? null),
-      [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
-      "Avg AUM QoQ Change (%)": !historical && amc.avgAumQoQChangePct != null ? amc.avgAumQoQChangePct * 100 : null,
-      [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
-      "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
-      [`${reportedColumnLabel} ${reportedColumnSublabel} (Cr)`]: amc.reportedAumCr,
-      "Exit AUM QoQ Change (%)": amc.deltaPct * 100,
-      Holdings: historical ? null : amc.holdingsCount,
-      Debt: historical ? null : amc.debtInstrumentCount,
-      "Live Priced": historical ? null : amc.livePricedCount,
-      [`Est. Net Flow ${periodLabel} (Cr)`]: amc.netFlowCr,
-      [`Est. Net Flow ${periodLabel} (%)`]: amc.netFlowPct !== null ? amc.netFlowPct * 100 : null,
-    })),
+    rows: [
+      ...sorted.map((amc) => ({
+        AMC: amc.overviewName,
+        [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: historical ? null : (amc.currentQuarterAvgLiveAumCr ?? null),
+        [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
+        "Avg AUM QoQ Change (%)": !historical && amc.avgAumQoQChangePct != null ? amc.avgAumQoQChangePct * 100 : null,
+        [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
+        "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
+        [`${reportedColumnLabel} ${reportedColumnSublabel} (Cr)`]: amc.reportedAumCr,
+        "Exit AUM QoQ Change (%)": amc.deltaPct * 100,
+        Holdings: historical ? null : amc.holdingsCount,
+        Debt: historical ? null : amc.debtInstrumentCount,
+        "Live Priced": historical ? null : amc.livePricedCount,
+        [`Est. Net Flow ${periodLabel} (Cr)`]: amc.netFlowCr,
+        [`Est. Net Flow ${periodLabel} (%)`]: amc.netFlowPct !== null ? amc.netFlowPct * 100 : null,
+      })),
+      // Benchmark index rows (Nifty 50/500/Midcap 150/Smallcap 250) --
+      // already an empty array in historical mode (see amc-grid.tsx), so
+      // no separate `historical` guard needed here. Holdings/Debt/Live
+      // Priced/Net Flow never apply to an index, matching the "—" shown
+      // on-screen for these columns.
+      ...indexBenchmarkRows.map((row) => ({
+        AMC: row.displayName,
+        [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: row.avgLiveAumCr,
+        [`Avg AUM (${avgWindowLabel}) (Cr)`]: row.avgAumCr,
+        "Avg AUM QoQ Change (%)": row.avgAumQoQChangePct != null ? row.avgAumQoQChangePct * 100 : null,
+        [`${liveAumLabel} (Cr)`]: row.liveAumCr,
+        "1D Change (%)": row.oneDayChangePct !== null ? row.oneDayChangePct * 100 : null,
+        [`${reportedColumnLabel} ${reportedColumnSublabel} (Cr)`]: row.reportedAumCr,
+        "Exit AUM QoQ Change (%)": row.deltaPct !== null ? row.deltaPct * 100 : null,
+        Holdings: null,
+        Debt: null,
+        "Live Priced": null,
+        [`Est. Net Flow ${periodLabel} (Cr)`]: null,
+        [`Est. Net Flow ${periodLabel} (%)`]: null,
+      })),
+    ],
   }));
 
   const subsetTotals = computeTotals(limited);
