@@ -215,7 +215,7 @@
     "slug": "taurus-mutual-fund"
   },
   {
-    "overviewName": "Quant SIF",
+    "overviewName": "Quant QSIF",
     "sheetName": "QSIF",
     "slug": "quant-sif"
   },
@@ -245,7 +245,7 @@
     "slug": "the-wealth-company-mutual-fund"
   },
   {
-    "overviewName": "DynaSIF",
+    "overviewName": "360 ONE DynaSIF",
     "sheetName": "DynaSIF",
     "slug": "dynasif"
   },
@@ -265,7 +265,7 @@
     "slug": "unifi-mutual-fund"
   },
   {
-    "overviewName": "Arthaya SIF",
+    "overviewName": "Union Arthaya SIF",
     "sheetName": "Arthaya SIF",
     "slug": "arthaya-sif"
   },
@@ -275,7 +275,7 @@
     "slug": "arudha-sif"
   },
   {
-    "overviewName": "WSIF",
+    "overviewName": "Wealth Company WSIF",
     "sheetName": "WSIF",
     "slug": "wsif"
   },
