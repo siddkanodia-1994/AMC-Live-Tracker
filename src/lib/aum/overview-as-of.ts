@@ -1,8 +1,9 @@
-import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcs, holdings, liveAumDailySnapshot } from "../db/schema";
+import { amcPeriods, amcs, holdings, liveAumDailySnapshot } from "../db/schema";
 import { isBankDebtOrRepo, isCashEquivalent } from "../excel/instrument-classification";
 import { getCanonicalSnapshotDateBounds } from "./history";
+import { resolveReportPeriodForDate } from "./report-period";
 import type { AmcLiveAum, LiveAumSnapshot } from "./types";
 
 /**
@@ -67,41 +68,66 @@ export async function computeOverviewAsOf(
   }
   const asOfDate = requestedDate < minDate ? minDate : requestedDate > maxDate ? maxDate : requestedDate;
 
-  // Need only the newest TWO canonical rows per AMC (as-of value + the prior
-  // day for 1D change) -- a row_number() window function bounds what
-  // Postgres sends back to exactly 2 rows/AMC, instead of the old
-  // fetch-every-snapshot-ever-and-dedupe-in-JS query (unbounded, grows every
-  // trading day forever -- a top contributor to the Neon egress-quota
-  // exhaustion this fixes).
-  const ranked = db.$with("ranked_snapshots").as(
-    db
-      .select({
-        amcId: liveAumDailySnapshot.amcId,
-        snapshotDate: liveAumDailySnapshot.snapshotDate,
-        liveAumCr: liveAumDailySnapshot.liveAumCr,
-        reportedAumCr: liveAumDailySnapshot.reportedAumCr,
-        reportPeriod: liveAumDailySnapshot.reportPeriod,
-        rn: sql<number>`row_number() over (partition by ${liveAumDailySnapshot.amcId} order by ${liveAumDailySnapshot.snapshotDate} desc)`.as(
-          "rn"
-        ),
-      })
-      .from(liveAumDailySnapshot)
-      .where(and(lte(liveAumDailySnapshot.snapshotDate, asOfDate), eq(liveAumDailySnapshot.isCanonical, true)))
-  );
-
-  const [snapshotRows, amcRows] = await Promise.all([
-    db
-      .with(ranked)
-      .select()
-      .from(ranked)
-      .where(sql`${ranked.rn} <= 2`)
-      .orderBy(ranked.amcId, desc(ranked.snapshotDate)),
+  // Which report period owns this date, per AMC -- resolved from each
+  // AMC's own forward-gap windows (resolveReportPeriodForDate), not from
+  // "whatever the nearest existing snapshot row says". The two used to
+  // agree everywhere except a non-trading date sitting between an old
+  // period's last trading day and a new period's first one (e.g. a weekend
+  // right after a new month's file is uploaded), where the snapshot-row
+  // approach would incorrectly reach back into the OLD period. This is a
+  // small, bounded query (one row per AMC per calendar month since launch),
+  // nothing like scanning liveAumDailySnapshot itself.
+  const [periodRows, amcRows] = await Promise.all([
+    db.select({ amcId: amcPeriods.amcId, reportPeriod: amcPeriods.reportPeriod }).from(amcPeriods),
     db.select({ id: amcs.id, slug: amcs.slug, overviewName: amcs.overviewName }).from(amcs),
   ]);
 
-  // Rows are ordered newest-first and canonical rows are unique per
-  // (amcId, snapshotDate), so per AMC the first row seen is its as-of value
-  // and the next one is the prior day's — same walk as getPreviousDayLiveAum.
+  const periodsByAmc = new Map<number, string[]>();
+  for (const r of periodRows) {
+    const list = periodsByAmc.get(r.amcId) ?? [];
+    list.push(r.reportPeriod);
+    periodsByAmc.set(r.amcId, list);
+  }
+  const resolvedPeriodByAmc = new Map<number, string>();
+  for (const [amcId, periods] of periodsByAmc) {
+    periods.sort();
+    const resolved = resolveReportPeriodForDate(periods, asOfDate);
+    if (resolved) resolvedPeriodByAmc.set(amcId, resolved);
+  }
+
+  // Group AMCs by their resolved period (almost always a single group --
+  // divergence only happens for an AMC missing from the very latest
+  // month's file) so each period's own snapshot rows are fetched with one
+  // query scoped to just that period's own AMCs and its own forward-gap
+  // window (bounded to roughly one month of trading days), mirroring
+  // getIndustryCashDebtAsOf's existing per-period grouping below.
+  const amcIdsByPeriod = new Map<string, number[]>();
+  for (const [amcId, period] of resolvedPeriodByAmc) {
+    const list = amcIdsByPeriod.get(period) ?? [];
+    list.push(amcId);
+    amcIdsByPeriod.set(period, list);
+  }
+
+  const snapshotRowsPerGroup = await Promise.all(
+    [...amcIdsByPeriod.entries()].map(([period, amcIds]) =>
+      db
+        .select({
+          amcId: liveAumDailySnapshot.amcId,
+          snapshotDate: liveAumDailySnapshot.snapshotDate,
+          liveAumCr: liveAumDailySnapshot.liveAumCr,
+          reportedAumCr: liveAumDailySnapshot.reportedAumCr,
+        })
+        .from(liveAumDailySnapshot)
+        .where(
+          and(
+            inArray(liveAumDailySnapshot.amcId, amcIds),
+            eq(liveAumDailySnapshot.reportPeriod, period),
+            eq(liveAumDailySnapshot.isCanonical, true)
+          )
+        )
+    )
+  );
+
   interface AsOfValues {
     liveAumCr: number;
     reportedAumCr: number;
@@ -110,18 +136,31 @@ export async function computeOverviewAsOf(
     prevLiveAumCr: number | null;
   }
   const byAmcId = new Map<number, AsOfValues>();
-  for (const r of snapshotRows) {
-    const existing = byAmcId.get(r.amcId);
-    if (!existing) {
-      byAmcId.set(r.amcId, {
-        liveAumCr: Number(r.liveAumCr),
-        reportedAumCr: Number(r.reportedAumCr),
-        reportPeriod: r.reportPeriod,
-        snapshotDate: r.snapshotDate,
-        prevLiveAumCr: null,
+  for (const groupRows of snapshotRowsPerGroup) {
+    const rowsByAmc = new Map<number, { snapshotDate: string; liveAumCr: number; reportedAumCr: number }[]>();
+    for (const r of groupRows) {
+      const list = rowsByAmc.get(r.amcId) ?? [];
+      list.push({ snapshotDate: r.snapshotDate, liveAumCr: Number(r.liveAumCr), reportedAumCr: Number(r.reportedAumCr) });
+      rowsByAmc.set(r.amcId, list);
+    }
+    for (const [amcId, rows] of rowsByAmc) {
+      // Newest first. Prefer the latest row on-or-before asOfDate; if the
+      // resolved period has no data yet at or before this date (a
+      // non-trading day sitting before that period's first actual trading
+      // day), fall forward to the period's own earliest row instead of
+      // reaching into a different period.
+      rows.sort((a, b) => (a.snapshotDate < b.snapshotDate ? 1 : a.snapshotDate > b.snapshotDate ? -1 : 0));
+      const onOrBeforeIndex = rows.findIndex((r) => r.snapshotDate <= asOfDate);
+      const chosenIndex = onOrBeforeIndex !== -1 ? onOrBeforeIndex : rows.length - 1;
+      const chosen = rows[chosenIndex];
+      const prev = rows[chosenIndex + 1] ?? null;
+      byAmcId.set(amcId, {
+        liveAumCr: chosen.liveAumCr,
+        reportedAumCr: chosen.reportedAumCr,
+        reportPeriod: resolvedPeriodByAmc.get(amcId)!,
+        snapshotDate: chosen.snapshotDate,
+        prevLiveAumCr: prev ? prev.liveAumCr : null,
       });
-    } else if (existing.prevLiveAumCr === null && r.snapshotDate < existing.snapshotDate) {
-      existing.prevLiveAumCr = Number(r.liveAumCr);
     }
   }
 

@@ -1,9 +1,10 @@
 import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcs, holdings, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
+import { amcPeriods, amcs, holdings, isinDailyPrice } from "../db/schema";
 import { isBankDebtOrRepo, isCashEquivalent } from "../excel/instrument-classification";
 import { CRORE } from "../utils/constants";
 import { getCanonicalSnapshotDateBounds } from "./history";
+import { resolveReportPeriodForDate } from "./report-period";
 import { getActiveShareMultipliers, type ShareAdjustment } from "./share-adjustments";
 import type { AmcLiveAum, HoldingLiveView } from "./types";
 
@@ -35,23 +36,25 @@ export async function computeAmcAsOf(
   const { minDate, maxDate } = await getCanonicalSnapshotDateBounds();
   const asOfDate = !minDate || !maxDate ? requestedDate : requestedDate < minDate ? minDate : requestedDate > maxDate ? maxDate : requestedDate;
 
-  // This AMC's canonical reportPeriod on or before the date -- the same "on
-  // or before" tolerance getAllAmcsLiveAumAsOf uses, just scoped to one AMC
-  // so a plain ORDER BY + LIMIT 1 is enough (no window function needed).
-  const [canonicalRow] = await db
-    .select({ reportPeriod: liveAumDailySnapshot.reportPeriod, reportedAumCr: liveAumDailySnapshot.reportedAumCr })
-    .from(liveAumDailySnapshot)
-    .where(
-      and(
-        eq(liveAumDailySnapshot.amcId, amcRow.id),
-        lte(liveAumDailySnapshot.snapshotDate, asOfDate),
-        eq(liveAumDailySnapshot.isCanonical, true)
-      )
-    )
-    .orderBy(desc(liveAumDailySnapshot.snapshotDate))
-    .limit(1);
-  if (!canonicalRow) return null;
-  const reportPeriod = canonicalRow.reportPeriod;
+  // Which report period owns this date -- resolved from the period's own
+  // forward-gap window (resolveReportPeriodForDate), not from "whatever the
+  // nearest existing snapshot row says". The two used to agree everywhere
+  // except a non-trading date sitting between an old period's last trading
+  // day and a new period's first one (e.g. a weekend right after a new
+  // month's file is uploaded), where the snapshot-row approach would
+  // incorrectly reach back into the OLD period.
+  const amcPeriodRows = await db
+    .select({ reportPeriod: amcPeriods.reportPeriod, reportedAumCr: amcPeriods.reportedAumCr })
+    .from(amcPeriods)
+    .where(eq(amcPeriods.amcId, amcRow.id))
+    .orderBy(amcPeriods.reportPeriod);
+  if (amcPeriodRows.length === 0) return null;
+
+  const reportPeriod = resolveReportPeriodForDate(
+    amcPeriodRows.map((p) => p.reportPeriod),
+    asOfDate
+  )!;
+  const reportedAumCr = Number(amcPeriodRows.find((p) => p.reportPeriod === reportPeriod)!.reportedAumCr);
 
   const holdingRows = await db.select().from(holdings).where(and(eq(holdings.amcId, amcRow.id), eq(holdings.reportPeriod, reportPeriod)));
 
@@ -202,7 +205,6 @@ export async function computeAmcAsOf(
     });
   }
 
-  const reportedAumCr = Number(canonicalRow.reportedAumCr);
   const liveAumCr = holdingViews.reduce((sum, h) => sum + h.liveMarketValueCr, 0);
   const previousDayLiveAumCr = previousDaySumCr > 0 ? previousDaySumCr : null;
   const amcOneDayChangePct = previousDayLiveAumCr !== null && previousDayLiveAumCr !== 0 ? liveWithPrevDaySumCr / previousDayLiveAumCr - 1 : null;

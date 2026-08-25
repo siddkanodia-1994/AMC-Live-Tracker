@@ -112,6 +112,31 @@ export function listFiscalQuarters(minDate: string, maxDate: string): FiscalQuar
   return quarters;
 }
 
+/**
+ * Which report period conceptually "owns" a given calendar date -- the
+ * latest period (from a list of periods this AMC/entity has been reported
+ * under, sorted ascending) whose forward-gap window (firstDayOfNextMonth)
+ * has already started on or before the date. Unlike asking "what's the
+ * nearest existing snapshot row for this date", this is pure date
+ * arithmetic and can't accidentally reach backward across a period
+ * boundary on a non-trading day that falls right after a new upload (e.g.
+ * a weekend immediately after month-end, before the new period's first
+ * actual trading day) -- confirmed via the "new holding missing from the
+ * as-of view on the 1st/2nd of the month" audit. Falls back to the
+ * earliest period if the date precedes every period's own window (already
+ * unreachable in practice, since callers clamp asOfDate to the overall
+ * snapshot bounds first).
+ */
+export function resolveReportPeriodForDate(periodsAsc: string[], asOfDate: string): string | null {
+  if (periodsAsc.length === 0) return null;
+  let result = periodsAsc[0];
+  for (const period of periodsAsc) {
+    if (firstDayOfNextMonth(period) <= asOfDate) result = period;
+    else break;
+  }
+  return result;
+}
+
 // Most recent date in a sorted-ascending list that's <= target, or the
 // earliest available date if none qualify (never returns null when the list
 // is non-empty) -- mirrors the same "closest available on or before" leniency
