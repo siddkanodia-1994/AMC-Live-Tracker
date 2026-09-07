@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
 import { upsertDailyDataQuality } from "@/lib/aum/daily-data-quality";
-import { clearRecoveredManualMutes, recordLastCloseLog } from "@/lib/aum/last-close-mute";
+import { clearRecoveredManualMutes, getAutoMuteThresholdDays, recordLastCloseLog } from "@/lib/aum/last-close-mute";
 import { reclaimDhanOutages } from "@/lib/aum/outage-reclaim";
 import { reclaimStaleInstrumentMappings } from "@/lib/aum/stale-mapping-reclaim";
 import { detectShareAdjustments } from "@/lib/aum/split-detection";
@@ -95,10 +95,20 @@ export async function GET(request: Request) {
     // never enough to trip reclaimDhanOutages' whole-day 50% threshold
     // above, so it needs its own check -- that streak length is exactly
     // the signature of a stale DHAN security ID (confirmed real incident,
-    // 2026-08-10). See stale-mapping-reclaim.ts.
+    // 2026-08-10; also HFCL, 2026-09-07). See stale-mapping-reclaim.ts.
+    //
+    // Triggers on daysUnchanged (derived straight from isin_daily_price)
+    // as well as the autoMuted flag (derived from isin_last_close_log),
+    // not autoMuted alone -- the log write above is best-effort and can
+    // silently miss a day (confirmed: HFCL's own log had a gap despite
+    // isin_daily_price correctly showing it stuck), which breaks the
+    // log-based mute streak and left a genuine ID drift undetected for
+    // days. daysUnchanged has no such gap, so this is a strictly additive
+    // safety net -- every ISIN that qualified via autoMuted still does.
     try {
+      const thresholdDays = await getAutoMuteThresholdDays();
       const staleMappingCandidates = snapshot.lastCloseStocks
-        .filter((s) => s.autoMuted && s.muteReason === null)
+        .filter((s) => s.muteReason === null && (s.autoMuted || (s.daysUnchanged ?? 0) >= thresholdDays))
         .map((s) => ({ isin: s.isin, companyName: s.companyName }));
       await reclaimStaleInstrumentMappings(staleMappingCandidates);
     } catch (err) {
