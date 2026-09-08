@@ -13,6 +13,7 @@ import { AumTrendChart } from "./aum-trend-chart";
 import { TotalAumGrowthTable } from "./total-aum-growth-table";
 import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-table";
 import { SectoralHoldingsTable } from "./sectoral-holdings-table";
+import { EtfTable } from "@/components/etf/etf-table";
 import { StockTab } from "@/components/stock/stock-tab";
 import { DailyDataTable } from "./daily-data-table";
 import { CorrectionsLog } from "./corrections-log";
@@ -802,6 +803,9 @@ export function AmcGrid({
               <TabsTrigger value="cash-holdings" className="after:bg-[var(--toolbar-accent)]">
                 Cash Holdings
               </TabsTrigger>
+              <TabsTrigger value="gold-silver-etfs" className="after:bg-[var(--toolbar-accent)]">
+                Gold &amp; Silver ETFs
+              </TabsTrigger>
               <TabsTrigger value="stock" className="after:bg-[var(--toolbar-accent)]">
                 Stock
               </TabsTrigger>
@@ -1149,6 +1153,9 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="cash-holdings">
           <CashHoldingsTable topN={topN} />
+        </TabsContent>
+        <TabsContent value="gold-silver-etfs">
+          <EtfTable />
         </TabsContent>
         <TabsContent value="stock">
           <StockTab />

@@ -5,6 +5,7 @@ import { clearRecoveredManualMutes, getAutoMuteThresholdDays, recordLastCloseLog
 import { reclaimDhanOutages } from "@/lib/aum/outage-reclaim";
 import { reclaimStaleInstrumentMappings } from "@/lib/aum/stale-mapping-reclaim";
 import { detectShareAdjustments } from "@/lib/aum/split-detection";
+import { runEtfIngestion } from "@/lib/etf/ingest";
 import { getIstDateString } from "@/lib/utils/date";
 
 // Bumped from 30 -> 180: the outage-reclaim step below can fetch DHAN
@@ -113,6 +114,16 @@ export async function GET(request: Request) {
       await reclaimStaleInstrumentMappings(staleMappingCandidates);
     } catch (err) {
       console.error("Failed to reclaim stale instrument mappings:", err);
+    }
+
+    // Best-effort, fully isolated from the equity pipeline above: the Gold/
+    // Silver ETF tab's own daily NAV pull + quarterly AUM-baseline rollover
+    // check. Entirely independent data source (TigZig/AMFI, not DHAN), so a
+    // failure here can never affect equity computation, and vice versa.
+    try {
+      await runEtfIngestion();
+    } catch (err) {
+      console.error("Failed to run ETF ingestion:", err);
     }
 
     return NextResponse.json({ ok: true, amcsSnapshotted: snapshot.amcs.length });

@@ -492,3 +492,60 @@ export const importLog = pgTable("import_log", {
   warnings: jsonb("warnings").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Gold/Silver ETF scheme registry -- one row per scheme, ever. Deliberately
+// independent of DHAN/instrumentMap: sourced from AMFI's own public records
+// via a free third-party reformatting API (api.tigzig.com/mf/v1), not DHAN's
+// instrument master, so this feature carries none of DHAN's daily-token
+// operational burden.
+export const etfSchemes = pgTable(
+  "etf_schemes",
+  {
+    id: serial("id").primaryKey(),
+    schemeCode: integer("scheme_code").notNull(), // AMFI/TigZig numeric scheme code
+    isin: text("isin"), // nullable -- a brand-new scheme can lack one for a few weeks
+    name: text("name").notNull(),
+    assetClass: text("asset_class").notNull(), // 'gold' | 'silver'
+    slug: text("slug").notNull(),
+  },
+  (t) => [uniqueIndex("etf_schemes_scheme_code_idx").on(t.schemeCode), uniqueIndex("etf_schemes_slug_idx").on(t.slug)]
+);
+
+// Per-quarter reported AUM baseline for an ETF scheme, captured from
+// TigZig's "latest quarterly AAUM" snapshot the moment a new quarter first
+// appears there. Unique on (schemeId, reportPeriod) so re-running the
+// ingestion mid-quarter is a harmless upsert -- same shape as amcPeriods.
+// navAtPeriodEnd is this scheme's own NAV at capture time, the denominator
+// for the live-AUM price ratio.
+export const etfPeriodAum = pgTable(
+  "etf_period_aum",
+  {
+    id: serial("id").primaryKey(),
+    schemeId: integer("scheme_id")
+      .notNull()
+      .references(() => etfSchemes.id, { onDelete: "cascade" }),
+    reportPeriod: text("report_period").notNull(), // TigZig's own label, e.g. "June-2026"
+    reportedAumCr: numeric("reported_aum_cr", { precision: 18, scale: 4 }).notNull(),
+    navAtPeriodEnd: numeric("nav_at_period_end", { precision: 18, scale: 4 }).notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("etf_period_aum_scheme_period_idx").on(t.schemeId, t.reportPeriod)]
+);
+
+// Daily NAV per ETF scheme -- this feature's own price history, entirely
+// separate from isinDailyPrice (DHAN-keyed), sourced from the same TigZig
+// API as the AUM baseline above. Unique on (schemeId, snapshotDate),
+// overwritten intraday the same way isinDailyPrice is.
+export const etfDailyNav = pgTable(
+  "etf_daily_nav",
+  {
+    id: serial("id").primaryKey(),
+    schemeId: integer("scheme_id")
+      .notNull()
+      .references(() => etfSchemes.id, { onDelete: "cascade" }),
+    snapshotDate: date("snapshot_date").notNull(),
+    nav: numeric("nav", { precision: 18, scale: 4 }).notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("etf_daily_nav_scheme_date_idx").on(t.schemeId, t.snapshotDate)]
+);
