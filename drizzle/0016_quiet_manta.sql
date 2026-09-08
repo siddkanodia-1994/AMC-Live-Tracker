@@ -1,0 +1,1 @@
+ALTER TABLE "etf_schemes" ADD COLUMN "amc" text DEFAULT '' NOT NULL;

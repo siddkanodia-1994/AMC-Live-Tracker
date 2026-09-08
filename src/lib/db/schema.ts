@@ -505,6 +505,7 @@ export const etfSchemes = pgTable(
     schemeCode: integer("scheme_code").notNull(), // AMFI/TigZig numeric scheme code
     isin: text("isin"), // nullable -- a brand-new scheme can lack one for a few weeks
     name: text("name").notNull(),
+    amc: text("amc").notNull(), // matches amcs.overviewName where that AMC also runs an equity scheme tracked in Overview
     assetClass: text("asset_class").notNull(), // 'gold' | 'silver'
     slug: text("slug").notNull(),
   },

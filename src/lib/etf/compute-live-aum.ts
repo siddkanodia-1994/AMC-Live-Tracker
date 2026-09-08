@@ -7,6 +7,7 @@ export interface EtfLiveAum {
   schemeId: number;
   slug: string;
   name: string;
+  amc: string;
   assetClass: "gold" | "silver";
   reportPeriod: string | null;
   reportedAumCr: number | null; // AMFI's own average-for-the-quarter figure
@@ -68,6 +69,7 @@ export async function computeEtfLiveAum(): Promise<EtfLiveAum[]> {
       schemeId: scheme.id,
       slug: scheme.slug,
       name: scheme.name,
+      amc: scheme.amc,
       assetClass: scheme.assetClass as "gold" | "silver",
       reportPeriod: latestPeriod?.reportPeriod ?? null,
       reportedAumCr,
