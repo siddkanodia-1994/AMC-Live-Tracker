@@ -3,6 +3,25 @@ import { etfDailyNav } from "../db/schema";
 import { inArray, desc } from "drizzle-orm";
 import { getEtfSchemesWithLatestPeriod } from "./ingest";
 
+/**
+ * Each AMC's latest disclosed quarterly AAUM, summed across its Gold and
+ * Silver schemes -- the same "Total (Gold+Silver) Reported AUM" figure
+ * shown on the Gold & Silver ETFs tab, keyed by AMC name (matches
+ * amcs.overviewName exactly, see etfSchemes.amc). No NAV repricing here:
+ * the Overview tab's "Avg AUM"/"Avg Live AUM" toggle only ever adds this
+ * static quarterly figure, never a live-repriced estimate, since that's
+ * the only "average" concept ETFs have (see ingest.ts's docs on why).
+ */
+export async function getEtfReportedAumTotalsByAmc(): Promise<Map<string, number>> {
+  const schemesWithPeriod = await getEtfSchemesWithLatestPeriod();
+  const totals = new Map<string, number>();
+  for (const { scheme, latestPeriod } of schemesWithPeriod) {
+    if (!latestPeriod) continue;
+    totals.set(scheme.amc, (totals.get(scheme.amc) ?? 0) + Number(latestPeriod.reportedAumCr));
+  }
+  return totals;
+}
+
 export interface EtfLiveAum {
   schemeId: number;
   slug: string;

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useLiveAum } from "@/hooks/use-live-aum";
 import { useOverviewAdjustments } from "@/hooks/use-overview-adjustments";
+import { useEtfAumTotals } from "@/hooks/use-etf-aum-totals";
 import { useCooldownRemainingMs } from "@/hooks/use-cooldown-remaining";
 import { AmcTable } from "./amc-table";
 import { FieldBox, WindowFieldBox } from "./field-box";
@@ -247,6 +248,17 @@ export function AmcGrid({
   // (Live AUM here, periodB's reported AUM on AUM Growth, current reported
   // AUM on Cash Holdings), since none of those have a common shared field.
   const [topN, setTopN] = useState<TopNOption>(DEFAULT_TOP_N);
+
+  // Lifted here (not local to AmcTable, unlike showNetFlow) because it also
+  // drives Card 2's headline figure below, not just the Overview table.
+  // Deliberately not persisted, matching every other toggle on this page.
+  const [showGoldSilver, setShowGoldSilver] = useState(false);
+  const etfAumTotals = useEtfAumTotals();
+  const etfTotalsByAmc = useMemo(() => etfAumTotals.data?.totalsByAmc ?? {}, [etfAumTotals.data]);
+  const etfIndustryTotalCr = useMemo(
+    () => Object.values(etfTotalsByAmc).reduce((sum, v) => sum + v, 0),
+    [etfTotalsByAmc]
+  );
 
   // Overlays the Reported AUM month / Avg AUM range / Avg Live AUM range
   // adjustments onto the live snapshot's AMC rows, recomputing Live vs
@@ -547,9 +559,26 @@ export function AmcGrid({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-normal text-muted-foreground">
-              Average Industry Equity AUM (last 90 days)
-            </CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-sm font-normal text-muted-foreground">
+                {showGoldSilver
+                  ? "Average Industry AUM (Equity + Gold/Silver, last 90 days)"
+                  : "Average Industry Equity AUM (last 90 days)"}
+              </CardTitle>
+              {showGoldSilver && (
+                <Tooltip>
+                  <TooltipTrigger className="text-muted-foreground hover:text-foreground">
+                    <InfoIcon className="size-3.5" />
+                    <span className="sr-only">About the Gold/Silver addition</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    The Gold/Silver portion is every AMC&apos;s latest disclosed quarterly AAUM (from the Gold &amp;
+                    Silver ETFs tab), added as a flat figure to both the current and previous 90-day equity averages
+                    — not itself a rolling 90-day figure, since ETFs have no daily AUM history to average.
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-1">
             {data.asOfDate ? (
@@ -560,11 +589,31 @@ export function AmcGrid({
             ) : (
               <>
                 <div className="flex items-center gap-2">
-                  <div className="text-3xl font-semibold tabular-nums">{formatCr(industryTotals.total90dAvgAumCr)}</div>
-                  <AumDeltaBadge deltaCr={industryTotals.avgDeltaCr90d} deltaPct={industryTotals.avgDeltaPct90d} />
+                  <div className="text-3xl font-semibold tabular-nums">
+                    {formatCr(
+                      showGoldSilver
+                        ? industryTotals.total90dAvgAumCr + etfIndustryTotalCr
+                        : industryTotals.total90dAvgAumCr
+                    )}
+                  </div>
+                  <AumDeltaBadge
+                    deltaCr={industryTotals.avgDeltaCr90d}
+                    deltaPct={
+                      showGoldSilver && industryTotals.totalPrev90dAvgAumCr + etfIndustryTotalCr !== 0
+                        ? (industryTotals.total90dAvgAumCr + etfIndustryTotalCr) /
+                            (industryTotals.totalPrev90dAvgAumCr + etfIndustryTotalCr) -
+                          1
+                        : industryTotals.avgDeltaPct90d
+                    }
+                  />
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  Previous 90d avg: {formatCr(industryTotals.totalPrev90dAvgAumCr)}
+                  Previous 90d avg:{" "}
+                  {formatCr(
+                    showGoldSilver
+                      ? industryTotals.totalPrev90dAvgAumCr + etfIndustryTotalCr
+                      : industryTotals.totalPrev90dAvgAumCr
+                  )}
                   {data.prev90Start && data.prev90End && data.last90Start && data.last90End && (
                     <>
                       {" "}
@@ -1137,6 +1186,9 @@ export function AmcGrid({
             distinctHoldingsCount={data.distinctHoldingsCount}
             distinctDebtInstrumentCount={data.distinctDebtInstrumentCount}
             distinctLivePricedCount={data.distinctLivePricedCount}
+            etfTotalsByAmc={etfTotalsByAmc}
+            showGoldSilver={showGoldSilver}
+            onToggleGoldSilver={() => setShowGoldSilver((v) => !v)}
           />
           {filteredAmcs.length === 0 && (
             <p className="mt-4 text-center text-sm text-muted-foreground">No AMCs match &quot;{query}&quot;.</p>

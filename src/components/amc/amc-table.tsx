@@ -18,11 +18,59 @@ type SortKey =
   | "currentQuarterAvgLiveAumCr"
   | "avgLiveAumCr"
   | "avgAumQoQChangePct"
+  | "avgLiveAumCrCombined"
+  | "avgAumCrCombined"
+  | "avgAumQoQChangePctCombined"
   | "holdingsCount"
   | "debtInstrumentCount"
   | "livePricedCount"
   | "netFlowCr"
   | "netFlowPct";
+
+// Not real fields on AmcLiveAum -- derived on the fly from an AMC's own
+// avgLiveAumCr/currentQuarterAvgLiveAumCr plus its Gold+Silver ETF total
+// (looked up by overviewName, since etf_schemes.amc is seeded to match that
+// string exactly). Same ETF figure is added to both columns because ETFs
+// have no daily AUM history to distinguish "this quarter" vs "previous
+// quarter" the way equity's rolling windows do -- see the plan's audit.
+// This necessarily dampens the resulting QoQ% vs the equity-only one
+// (adding the same constant to numerator and denominator pulls the ratio
+// toward 1), which is expected, not a bug.
+function combinedAvgFigures(amc: AmcLiveAum, etfTotalsByAmc: Record<string, number>) {
+  const etfTotal = etfTotalsByAmc[amc.overviewName] ?? 0;
+  const avgLiveAumCrCombined = amc.currentQuarterAvgLiveAumCr != null ? amc.currentQuarterAvgLiveAumCr + etfTotal : null;
+  const avgAumCrCombined = amc.avgLiveAumCr != null ? amc.avgLiveAumCr + etfTotal : null;
+  const avgAumQoQChangePctCombined =
+    avgLiveAumCrCombined != null && avgAumCrCombined != null && avgAumCrCombined !== 0
+      ? avgLiveAumCrCombined / avgAumCrCombined - 1
+      : null;
+  return { etfTotal, avgLiveAumCrCombined, avgAumCrCombined, avgAumQoQChangePctCombined };
+}
+
+const COMBINED_SORT_KEYS: SortKey[] = ["avgLiveAumCrCombined", "avgAumCrCombined", "avgAumQoQChangePctCombined"];
+
+function sortValue(
+  amc: AmcLiveAum,
+  key: SortKey,
+  etfTotalsByAmc: Record<string, number>
+): number | string | null | undefined {
+  if (COMBINED_SORT_KEYS.includes(key)) {
+    const combined = combinedAvgFigures(amc, etfTotalsByAmc);
+    if (key === "avgLiveAumCrCombined") return combined.avgLiveAumCrCombined;
+    if (key === "avgAumCrCombined") return combined.avgAumCrCombined;
+    return combined.avgAumQoQChangePctCombined;
+  }
+  return amc[key as keyof AmcLiveAum] as number | string | null | undefined;
+}
+
+// Subtle teal tint on every "+ Gold/Silver" cell -- distinguishes the new,
+// combined group from the equity-only "Avg AUM Growth" group (blue) at a
+// glance, using the same --toolbar-accent color as the rest of the app's
+// active-state accents rather than introducing a new hue.
+const GS_CELL_CLASS = "bg-[var(--toolbar-accent)]/[0.06]";
+
+const GOLD_SILVER_TITLE =
+  "Adds each AMC's Total (Gold+Silver) Reported AUM — from the Gold & Silver ETFs tab, AMFI's own latest disclosed quarterly average — onto both equity averaging columns equally, then recomputes QoQ Change from the combined figures. Since ETFs have no daily AUM history, the same ETF figure is added to both the current-quarter and previous-quarter columns, which dampens the resulting QoQ Change versus the equity-only figure. An AMC with no Gold/Silver ETF is unaffected.";
 
 // Structural separator between the table's three column groups (Avg AUM
 // Growth / Exit AUM Growth / Portfolio) -- applied at every row type
@@ -110,6 +158,9 @@ interface Totals {
   totalAvgAumCr: number;
   totalCurrentQuarterAvgAumCr: number;
   totalAvgAumQoQChangePct: number | null;
+  totalAvgAumCrCombined: number;
+  totalCurrentQuarterAvgAumCrCombined: number;
+  totalAvgAumQoQChangePctCombined: number | null;
   totalReportedAumCr: number;
   totalLiveVsReportedPct: number | null;
   totalOneDayChangePct: number | null;
@@ -120,11 +171,19 @@ interface Totals {
   totalNetFlowPct: number | null;
 }
 
-function computeTotals(list: AmcLiveAum[]): Totals {
+function computeTotals(list: AmcLiveAum[], etfTotalsByAmc: Record<string, number>): Totals {
   const totalLiveAumCr = list.reduce((sum, a) => sum + a.liveAumCr, 0);
   const totalAvgAumCr = list.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
   const totalCurrentQuarterAvgAumCr = list.reduce((sum, a) => sum + (a.currentQuarterAvgLiveAumCr ?? a.reportedAumCr), 0);
   const totalAvgAumQoQChangePct = totalAvgAumCr !== 0 ? totalCurrentQuarterAvgAumCr / totalAvgAumCr - 1 : null;
+  // Sum the combined (equity + Gold/Silver) per-AMC figures first, THEN
+  // divide -- never sum each AMC's own already-computed combined QoQ%,
+  // which would double-weight AMCs with a small denominator.
+  const totalEtfTotal = list.reduce((sum, a) => sum + (etfTotalsByAmc[a.overviewName] ?? 0), 0);
+  const totalAvgAumCrCombined = totalAvgAumCr + totalEtfTotal;
+  const totalCurrentQuarterAvgAumCrCombined = totalCurrentQuarterAvgAumCr + totalEtfTotal;
+  const totalAvgAumQoQChangePctCombined =
+    totalAvgAumCrCombined !== 0 ? totalCurrentQuarterAvgAumCrCombined / totalAvgAumCrCombined - 1 : null;
   const totalReportedAumCr = list.reduce((sum, a) => sum + a.reportedAumCr, 0);
   const totalLiveVsReportedPct = totalReportedAumCr !== 0 ? totalLiveAumCr / totalReportedAumCr - 1 : null;
 
@@ -153,6 +212,9 @@ function computeTotals(list: AmcLiveAum[]): Totals {
     totalAvgAumCr,
     totalCurrentQuarterAvgAumCr,
     totalAvgAumQoQChangePct,
+    totalAvgAumCrCombined,
+    totalCurrentQuarterAvgAumCrCombined,
+    totalAvgAumQoQChangePctCombined,
     totalReportedAumCr,
     totalLiveVsReportedPct,
     totalOneDayChangePct,
@@ -173,12 +235,14 @@ function TotalsRow({
   holdingsTitle,
   historical,
   showNetFlow,
+  showGoldSilver,
 }: {
   label: string;
   totals: Totals;
   holdingsTitle?: string;
   historical: boolean;
   showNetFlow: boolean;
+  showGoldSilver: boolean;
 }) {
   return (
     <TableRow>
@@ -186,6 +250,20 @@ function TotalsRow({
       <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalCurrentQuarterAvgAumCr)}</TableCell>
       <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalAvgAumCr)}</TableCell>
       <PctCell value={historical ? null : totals.totalAvgAumQoQChangePct} className={GROUP_DIVIDER_CLASS} />
+      {showGoldSilver && (
+        <>
+          <TableCell className={`text-right tabular-nums ${GS_CELL_CLASS}`}>
+            {historical ? "—" : formatCr(totals.totalCurrentQuarterAvgAumCrCombined)}
+          </TableCell>
+          <TableCell className={`text-right tabular-nums ${GS_CELL_CLASS}`}>
+            {historical ? "—" : formatCr(totals.totalAvgAumCrCombined)}
+          </TableCell>
+          <PctCell
+            value={historical ? null : totals.totalAvgAumQoQChangePctCombined}
+            className={`${GS_CELL_CLASS} ${GROUP_DIVIDER_CLASS}`}
+          />
+        </>
+      )}
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalLiveAumCr)}</TableCell>
       <PctCell value={totals.totalOneDayChangePct} />
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalReportedAumCr)}</TableCell>
@@ -224,6 +302,9 @@ export function AmcTable({
   distinctHoldingsCount,
   distinctDebtInstrumentCount,
   distinctLivePricedCount,
+  etfTotalsByAmc,
+  showGoldSilver,
+  onToggleGoldSilver,
 }: {
   amcs: AmcLiveAum[];
   allAmcs: AmcLiveAum[];
@@ -255,6 +336,16 @@ export function AmcTable({
   distinctHoldingsCount: number;
   distinctDebtInstrumentCount: number;
   distinctLivePricedCount: number;
+  // Each AMC's Total (Gold+Silver) Reported AUM, keyed by overviewName --
+  // from the Gold & Silver ETFs tab's own data (see
+  // getEtfReportedAumTotalsByAmc). An AMC absent from this map runs no
+  // Gold/Silver ETF and contributes 0.
+  etfTotalsByAmc: Record<string, number>;
+  // Lifted to AmcGrid (unlike showNetFlow below) because it also drives the
+  // "Average Industry AUM" summary card above this table, not just the
+  // table itself.
+  showGoldSilver: boolean;
+  onToggleGoldSilver: () => void;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("liveAumCr");
   const [sortDesc, setSortDesc] = useState(true);
@@ -274,15 +365,15 @@ export function AmcTable({
   const sorted = useMemo(() => {
     const list = [...limited];
     list.sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
+      const av = sortValue(a, sortKey, etfTotalsByAmc);
+      const bv = sortValue(b, sortKey, etfTotalsByAmc);
       if (av === null || av === undefined) return 1;
       if (bv === null || bv === undefined) return -1;
       const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
       return sortDesc ? -cmp : cmp;
     });
     return list;
-  }, [limited, sortKey, sortDesc]);
+  }, [limited, sortKey, sortDesc, etfTotalsByAmc]);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
@@ -305,6 +396,16 @@ export function AmcTable({
     });
   }
 
+  function handleToggleGoldSilver() {
+    // showGoldSilver is a prop (about to flip in the parent) -- its CURRENT
+    // value here is what's about to be hidden.
+    if (showGoldSilver && COMBINED_SORT_KEYS.includes(sortKey)) {
+      setSortKey("liveAumCr");
+      setSortDesc(true);
+    }
+    onToggleGoldSilver();
+  }
+
   const headProps = { sortKey, sortDesc, onToggle: toggleSort };
   const periodLabel = formatReportPeriodLabel(reportPeriod);
   const historical = asOfDate !== null;
@@ -314,31 +415,48 @@ export function AmcTable({
     fileName: `overview-${asOfDate ?? new Date().toISOString().slice(0, 10)}`,
     sheetName: "Overview",
     rows: [
-      ...sorted.map((amc) => ({
-        AMC: amc.overviewName,
-        [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: historical ? null : (amc.currentQuarterAvgLiveAumCr ?? null),
-        [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
-        "Avg AUM QoQ Change (%)": !historical && amc.avgAumQoQChangePct != null ? amc.avgAumQoQChangePct * 100 : null,
-        [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
-        "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
-        [`${reportedColumnLabel} ${reportedColumnSublabel} (Cr)`]: amc.reportedAumCr,
-        "Exit AUM QoQ Change (%)": amc.deltaPct * 100,
-        Holdings: historical ? null : amc.holdingsCount,
-        Debt: historical ? null : amc.debtInstrumentCount,
-        "Live Priced": historical ? null : amc.livePricedCount,
-        [`Est. Net Flow ${periodLabel} (Cr)`]: amc.netFlowCr,
-        [`Est. Net Flow ${periodLabel} (%)`]: amc.netFlowPct !== null ? amc.netFlowPct * 100 : null,
-      })),
+      ...sorted.map((amc) => {
+        const combined = combinedAvgFigures(amc, etfTotalsByAmc);
+        return {
+          AMC: amc.overviewName,
+          [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: historical ? null : (amc.currentQuarterAvgLiveAumCr ?? null),
+          [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
+          "Avg AUM QoQ Change (%)": !historical && amc.avgAumQoQChangePct != null ? amc.avgAumQoQChangePct * 100 : null,
+          // WYSIWYG: only exported while the toggle is on, unlike Est. Net
+          // Flow below (which always exports regardless of its own toggle) --
+          // a deliberate departure since this is an opt-in approximation.
+          ...(showGoldSilver && {
+            [`Avg Live AUM + Gold/Silver (${currentAvgWindowLabel}) (Cr)`]: historical ? null : combined.avgLiveAumCrCombined,
+            [`Avg AUM + Gold/Silver (${avgWindowLabel}) (Cr)`]: historical ? null : combined.avgAumCrCombined,
+            "Avg AUM QoQ Change + Gold/Silver (%)":
+              !historical && combined.avgAumQoQChangePctCombined != null ? combined.avgAumQoQChangePctCombined * 100 : null,
+          }),
+          [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
+          "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
+          [`${reportedColumnLabel} ${reportedColumnSublabel} (Cr)`]: amc.reportedAumCr,
+          "Exit AUM QoQ Change (%)": amc.deltaPct * 100,
+          Holdings: historical ? null : amc.holdingsCount,
+          Debt: historical ? null : amc.debtInstrumentCount,
+          "Live Priced": historical ? null : amc.livePricedCount,
+          [`Est. Net Flow ${periodLabel} (Cr)`]: amc.netFlowCr,
+          [`Est. Net Flow ${periodLabel} (%)`]: amc.netFlowPct !== null ? amc.netFlowPct * 100 : null,
+        };
+      }),
       // Benchmark index rows (Nifty 50/500/Midcap 150/Smallcap 250) --
       // already an empty array in historical mode (see amc-grid.tsx), so
       // no separate `historical` guard needed here. Holdings/Debt/Live
       // Priced/Net Flow never apply to an index, matching the "—" shown
-      // on-screen for these columns.
+      // on-screen for these columns -- same treatment for Gold/Silver.
       ...indexBenchmarkRows.map((row) => ({
         AMC: row.displayName,
         [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: row.avgLiveAumCr,
         [`Avg AUM (${avgWindowLabel}) (Cr)`]: row.avgAumCr,
         "Avg AUM QoQ Change (%)": row.avgAumQoQChangePct != null ? row.avgAumQoQChangePct * 100 : null,
+        ...(showGoldSilver && {
+          [`Avg Live AUM + Gold/Silver (${currentAvgWindowLabel}) (Cr)`]: null,
+          [`Avg AUM + Gold/Silver (${avgWindowLabel}) (Cr)`]: null,
+          "Avg AUM QoQ Change + Gold/Silver (%)": null,
+        }),
         [`${liveAumLabel} (Cr)`]: row.liveAumCr,
         "1D Change (%)": row.oneDayChangePct !== null ? row.oneDayChangePct * 100 : null,
         [`${reportedColumnLabel} ${reportedColumnSublabel} (Cr)`]: row.reportedAumCr,
@@ -352,8 +470,8 @@ export function AmcTable({
     ],
   }));
 
-  const subsetTotals = computeTotals(limited);
-  const industryTotals = computeTotals(allAmcs);
+  const subsetTotals = computeTotals(limited, etfTotalsByAmc);
+  const industryTotals = computeTotals(allAmcs, etfTotalsByAmc);
 
   const isRestricted = isSearchActive || topN !== "all";
   const subsetLabel = isSearchActive
@@ -369,13 +487,23 @@ export function AmcTable({
         <p className="text-xs text-muted-foreground">
           {isSearchActive && "Showing all matches — the Top-N selector above is ignored while searching"}
         </p>
-        <button
-          type="button"
-          onClick={toggleNetFlowColumns}
-          className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-        >
-          {showNetFlow ? "Hide Est. Net Flow columns" : "+ Show Est. Net Flow columns"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleToggleGoldSilver}
+            title={GOLD_SILVER_TITLE}
+            className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {showGoldSilver ? "Hide Gold/Silver-adjusted AUM columns" : "+ Show Gold/Silver-adjusted AUM columns"}
+          </button>
+          <button
+            type="button"
+            onClick={toggleNetFlowColumns}
+            className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {showNetFlow ? "Hide Est. Net Flow columns" : "+ Show Est. Net Flow columns"}
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border bg-card">
@@ -389,6 +517,15 @@ export function AmcTable({
               >
                 Avg AUM Growth
               </TableHead>
+              {showGoldSilver && (
+                <TableHead
+                  colSpan={3}
+                  title={GOLD_SILVER_TITLE}
+                  className={`text-center text-xs font-bold tracking-wide text-[var(--toolbar-accent)] uppercase ${GS_CELL_CLASS} ${GROUP_DIVIDER_CLASS}`}
+                >
+                  Avg AUM Growth + Gold/Silver
+                </TableHead>
+              )}
               <TableHead
                 colSpan={4}
                 className={`text-center text-xs font-bold tracking-wide text-blue-900 uppercase dark:text-blue-300 ${GROUP_DIVIDER_CLASS}`}
@@ -429,6 +566,35 @@ export function AmcTable({
                 {...headProps}
                 className={GROUP_DIVIDER_CLASS}
               />
+              {showGoldSilver && (
+                <>
+                  <SortableHead
+                    label="Avg Live AUM"
+                    sublabel={currentAvgWindowLabel}
+                    sk="avgLiveAumCrCombined"
+                    {...headProps}
+                    title={GOLD_SILVER_TITLE}
+                    className={GS_CELL_CLASS}
+                  />
+                  <SortableHead
+                    label="Avg AUM"
+                    sublabel={avgWindowLabel}
+                    sk="avgAumCrCombined"
+                    {...headProps}
+                    title={GOLD_SILVER_TITLE}
+                    className={GS_CELL_CLASS}
+                  />
+                  <SortableHead
+                    label="Avg AUM"
+                    sublabel="QoQ Change"
+                    sublabelAccent={false}
+                    sk="avgAumQoQChangePctCombined"
+                    {...headProps}
+                    title={GOLD_SILVER_TITLE}
+                    className={`${GS_CELL_CLASS} ${GROUP_DIVIDER_CLASS}`}
+                  />
+                </>
+              )}
               <SortableHead
                 label="Live AUM"
                 sublabel={asOfDate ? formatShortDate(asOfDate) : undefined}
@@ -469,7 +635,9 @@ export function AmcTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sorted.map((amc) => (
+            {sorted.map((amc) => {
+              const combined = combinedAvgFigures(amc, etfTotalsByAmc);
+              return (
               <TableRow key={amc.amcId}>
                 <TableCell className="font-serif font-medium">
                   <Link href={`/amc/${amc.slug}`} className="hover:underline">
@@ -483,6 +651,17 @@ export function AmcTable({
                   {amc.avgLiveAumCr !== null ? formatCr(amc.avgLiveAumCr) : "—"}
                 </TableCell>
                 <PctCell value={amc.avgAumQoQChangePct} className={GROUP_DIVIDER_CLASS} />
+                {showGoldSilver && (
+                  <>
+                    <TableCell className={`text-right tabular-nums ${GS_CELL_CLASS}`}>
+                      {combined.avgLiveAumCrCombined != null ? formatCr(combined.avgLiveAumCrCombined) : "—"}
+                    </TableCell>
+                    <TableCell className={`text-right tabular-nums ${GS_CELL_CLASS}`}>
+                      {combined.avgAumCrCombined != null ? formatCr(combined.avgAumCrCombined) : "—"}
+                    </TableCell>
+                    <PctCell value={combined.avgAumQoQChangePctCombined} className={`${GS_CELL_CLASS} ${GROUP_DIVIDER_CLASS}`} />
+                  </>
+                )}
                 <TableCell className="text-right tabular-nums">{formatCr(amc.liveAumCr)}</TableCell>
                 <PctCell value={amc.oneDayChangePct} />
                 <TableCell className="text-right tabular-nums text-muted-foreground">
@@ -501,7 +680,8 @@ export function AmcTable({
                   </>
                 )}
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
           <TableFooter>
             <TotalsRow
@@ -510,6 +690,7 @@ export function AmcTable({
               holdingsTitle={isRestricted ? subsetHoldingsTitle : undefined}
               historical={historical}
               showNetFlow={showNetFlow}
+              showGoldSilver={showGoldSilver}
             />
             {isRestricted && (
               <TableRow className="text-muted-foreground">
@@ -519,6 +700,20 @@ export function AmcTable({
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(industryTotals.totalAvgAumCr)}</TableCell>
                 <PctCell value={historical ? null : industryTotals.totalAvgAumQoQChangePct} className={GROUP_DIVIDER_CLASS} />
+                {showGoldSilver && (
+                  <>
+                    <TableCell className={`text-right tabular-nums ${GS_CELL_CLASS}`}>
+                      {historical ? "—" : formatCr(industryTotals.totalCurrentQuarterAvgAumCrCombined)}
+                    </TableCell>
+                    <TableCell className={`text-right tabular-nums ${GS_CELL_CLASS}`}>
+                      {historical ? "—" : formatCr(industryTotals.totalAvgAumCrCombined)}
+                    </TableCell>
+                    <PctCell
+                      value={historical ? null : industryTotals.totalAvgAumQoQChangePctCombined}
+                      className={`${GS_CELL_CLASS} ${GROUP_DIVIDER_CLASS}`}
+                    />
+                  </>
+                )}
                 <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalLiveAumCr)}</TableCell>
                 <PctCell value={industryTotals.totalOneDayChangePct} />
                 <TableCell className="text-right tabular-nums">{formatCr(industryTotals.totalReportedAumCr)}</TableCell>
@@ -550,6 +745,15 @@ export function AmcTable({
                   {row.avgAumCr !== null ? formatIndexLevel(row.avgAumCr) : "—"}
                 </TableCell>
                 <PctCell value={row.avgAumQoQChangePct} className={GROUP_DIVIDER_CLASS} />
+                {showGoldSilver && (
+                  <>
+                    <TableCell className={`text-right tabular-nums text-muted-foreground ${GS_CELL_CLASS}`}>—</TableCell>
+                    <TableCell className={`text-right tabular-nums text-muted-foreground ${GS_CELL_CLASS}`}>—</TableCell>
+                    <TableCell className={`text-right tabular-nums text-muted-foreground ${GS_CELL_CLASS} ${GROUP_DIVIDER_CLASS}`}>
+                      —
+                    </TableCell>
+                  </>
+                )}
                 <TableCell className="text-right tabular-nums">
                   {row.liveAumCr !== null ? formatIndexLevel(row.liveAumCr) : "—"}
                 </TableCell>
