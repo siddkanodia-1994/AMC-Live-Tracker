@@ -1,0 +1,1 @@
+DROP TABLE "mcx_period_avg" CASCADE;

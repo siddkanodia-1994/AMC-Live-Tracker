@@ -6,6 +6,7 @@ import { reclaimDhanOutages } from "@/lib/aum/outage-reclaim";
 import { reclaimStaleInstrumentMappings } from "@/lib/aum/stale-mapping-reclaim";
 import { detectShareAdjustments } from "@/lib/aum/split-detection";
 import { runEtfIngestion } from "@/lib/etf/ingest";
+import { runMcxIngestion } from "@/lib/mcx/ingest";
 import { getIstDateString } from "@/lib/utils/date";
 
 // Bumped from 30 -> 180: the outage-reclaim step below can fetch DHAN
@@ -124,6 +125,18 @@ export async function GET(request: Request) {
       await runEtfIngestion();
     } catch (err) {
       console.error("Failed to run ETF ingestion:", err);
+    }
+
+    // Best-effort, fully isolated from both the equity pipeline above and
+    // runEtfIngestion: the MCX Gold/Silver reference rows' own daily price
+    // pull. This DOES use DHAN (unlike the ETF ingestion above, which is
+    // deliberately DHAN-free) -- if DHAN is unavailable, this just leaves
+    // today's mcx_daily_price row unwritten and the reference rows show
+    // "—" for that day, with zero effect on ETF NAV/AAUM ingestion.
+    try {
+      await runMcxIngestion();
+    } catch (err) {
+      console.error("Failed to run MCX ingestion:", err);
     }
 
     return NextResponse.json({ ok: true, amcsSnapshotted: snapshot.amcs.length });

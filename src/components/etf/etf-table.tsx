@@ -4,9 +4,21 @@ import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRegisterExport } from "@/components/layout/export-context";
-import { formatCr, formatPct } from "@/lib/utils/format";
+import { formatPriceInr, formatCr, formatPct } from "@/lib/utils/format";
 import { useEtfLiveAum } from "@/hooks/use-etf-live-aum";
+import { useMcxReference } from "@/hooks/use-mcx-reference";
 import type { EtfLiveAum } from "@/lib/etf/compute-live-aum";
+
+// MCX Gold/Silver only trade as futures contracts (no true spot market),
+// so this uses the front-month contract's own daily closes, averaged
+// across each fiscal quarter -- a genuinely different calculation than
+// the ETF schemes' own point-to-point NAV return above (liveNav /
+// navAtPeriodEnd - 1). Treat this as a directional cross-check, not an
+// exactly matched comparison -- an avg-to-avg ratio can move a different
+// amount, or even a different direction, than a point-to-point one when
+// a quarter has a mid-quarter spike or dip (see src/lib/mcx/compute.ts).
+const MCX_TITLE =
+  "Front-month MCX futures contract (no true spot market exists for gold/silver), averaged over each fiscal quarter — previous quarter vs current quarter-to-date. This is a different calculation than the ETF schemes' own point-to-point NAV return above, so treat it as a directional cross-check, not an exact match.";
 
 interface AmcEtfRow {
   amc: string;
@@ -141,6 +153,7 @@ function SortHead({
 
 export function EtfTable() {
   const { data, error, isLoading } = useEtfLiveAum();
+  const { data: mcxData } = useMcxReference();
   const [sortKey, setSortKey] = useState<SortKey>("totalLiveAumCr");
   const [sortDesc, setSortDesc] = useState(true);
 
@@ -189,18 +202,38 @@ export function EtfTable() {
   useRegisterExport(() => ({
     fileName: `gold-silver-etfs-${new Date().toISOString().slice(0, 10)}`,
     sheetName: "Gold & Silver ETFs",
-    rows: sorted.map((r) => ({
-      AMC: r.amc,
-      "Gold Reported AUM (Cr)": r.gold?.reportedAumCr ?? null,
-      "Gold Live AUM (Cr)": r.gold?.liveAumCr ?? null,
-      "Gold Exit AUM QoQ Change (%)": r.gold?.deltaPct != null ? r.gold.deltaPct * 100 : null,
-      "Silver Reported AUM (Cr)": r.silver?.reportedAumCr ?? null,
-      "Silver Live AUM (Cr)": r.silver?.liveAumCr ?? null,
-      "Silver Exit AUM QoQ Change (%)": r.silver?.deltaPct != null ? r.silver.deltaPct * 100 : null,
-      "Total Reported AUM (Cr)": r.totalReportedAumCr,
-      "Total Live AUM (Cr)": r.totalLiveAumCr,
-      "Total Exit AUM QoQ Change (%)": r.totalDeltaPct != null ? r.totalDeltaPct * 100 : null,
-    })),
+    rows: [
+      ...sorted.map((r) => ({
+        AMC: r.amc,
+        "Gold Reported AUM (Cr)": r.gold?.reportedAumCr ?? null,
+        "Gold Live AUM (Cr)": r.gold?.liveAumCr ?? null,
+        "Gold Exit AUM QoQ Change (%)": r.gold?.deltaPct != null ? r.gold.deltaPct * 100 : null,
+        "Silver Reported AUM (Cr)": r.silver?.reportedAumCr ?? null,
+        "Silver Live AUM (Cr)": r.silver?.liveAumCr ?? null,
+        "Silver Exit AUM QoQ Change (%)": r.silver?.deltaPct != null ? r.silver.deltaPct * 100 : null,
+        "Total Reported AUM (Cr)": r.totalReportedAumCr,
+        "Total Live AUM (Cr)": r.totalLiveAumCr,
+        "Total Exit AUM QoQ Change (%)": r.totalDeltaPct != null ? r.totalDeltaPct * 100 : null,
+      })),
+      // MCX Gold/Silver reference rows -- own dedicated price columns
+      // (not the AUM-in-Cr ones above, which would misleadingly imply
+      // these are crore figures rather than a per-unit price).
+      ...(mcxData?.rows ?? []).map((row) => ({
+        AMC: row.displayName,
+        "Gold Reported AUM (Cr)": null,
+        "Gold Live AUM (Cr)": null,
+        "Gold Exit AUM QoQ Change (%)": null,
+        "Silver Reported AUM (Cr)": null,
+        "Silver Live AUM (Cr)": null,
+        "Silver Exit AUM QoQ Change (%)": null,
+        "Total Reported AUM (Cr)": null,
+        "Total Live AUM (Cr)": null,
+        "Total Exit AUM QoQ Change (%)": null,
+        [`MCX Price Previous Qtr Avg (₹/${row.unit})`]: row.prevQuarterAvgPriceInr,
+        [`MCX Price Current Qtr Avg (₹/${row.unit})`]: row.currentQuarterAvgPriceInr,
+        "MCX QoQ Change (%)": row.deltaPct != null ? row.deltaPct * 100 : null,
+      })),
+    ],
   }));
 
   if (error) {
@@ -220,7 +253,8 @@ export function EtfTable() {
         live using each scheme&apos;s own daily NAV movement since then (assumes units outstanding held roughly
         constant since that disclosure — the same assumption the equity Overview tab makes for share counts). An AMC
         without a fund in one asset class shows &quot;—&quot; in that half; Total still reflects whichever class it
-        does have.
+        does have. The MCX Gold/Silver rows at the bottom cross-check these returns against the underlying
+        metal&apos;s own price move (hover the row name for how that&apos;s calculated).
       </p>
       <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>
@@ -280,6 +314,43 @@ export function EtfTable() {
               <AumCell value={grandLive} className="font-medium" />
               <PctCell value={grandDeltaPct} />
             </TableRow>
+            {mcxData?.rows.map((row) => (
+              <TableRow key={row.metal} className="bg-muted/30">
+                <TableCell className="font-medium" title={MCX_TITLE}>
+                  {row.displayName}
+                </TableCell>
+                {row.metal === "gold" ? (
+                  <>
+                    <TableCell className="text-right tabular-nums">
+                      {row.prevQuarterAvgPriceInr != null ? `${formatPriceInr(row.prevQuarterAvgPriceInr)}/${row.unit}` : "—"}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {row.currentQuarterAvgPriceInr != null ? `${formatPriceInr(row.currentQuarterAvgPriceInr)}/${row.unit}` : "—"}
+                    </TableCell>
+                    <PctCell value={row.deltaPct} className={GROUP_DIVIDER_CLASS} />
+                    <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                  </>
+                ) : (
+                  <>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                    <TableCell className={`text-right tabular-nums text-muted-foreground ${GROUP_DIVIDER_CLASS}`}>—</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {row.prevQuarterAvgPriceInr != null ? `${formatPriceInr(row.prevQuarterAvgPriceInr)}/${row.unit}` : "—"}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {row.currentQuarterAvgPriceInr != null ? `${formatPriceInr(row.currentQuarterAvgPriceInr)}/${row.unit}` : "—"}
+                    </TableCell>
+                    <PctCell value={row.deltaPct} className={GROUP_DIVIDER_CLASS} />
+                  </>
+                )}
+                <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
+              </TableRow>
+            ))}
           </TableFooter>
         </Table>
       </div>

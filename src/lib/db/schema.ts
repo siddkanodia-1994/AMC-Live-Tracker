@@ -550,3 +550,51 @@ export const etfDailyNav = pgTable(
   },
   (t) => [uniqueIndex("etf_daily_nav_scheme_date_idx").on(t.schemeId, t.snapshotDate)]
 );
+
+// Which MCX futures contract currently stands in for "the price of gold/
+// silver" -- one row per metal, hand-maintained via scripts/seed-mcx-
+// contracts.ts (same reviewable-script convention as seed-etf-schemes.ts)
+// rather than auto-detected, since choosing a contract (front-month vs a
+// longer-dated one) is a judgment call, not something to silently
+// auto-switch. Ingestion warns in logs when expiryDate is near, but never
+// rewrites this table itself.
+export const mcxTrackedContract = pgTable(
+  "mcx_tracked_contract",
+  {
+    id: serial("id").primaryKey(),
+    metal: text("metal").notNull(), // 'gold' | 'silver'
+    securityId: text("security_id").notNull(), // DHAN's MCX_COMM security ID
+    tradingSymbol: text("trading_symbol").notNull(), // e.g. "GOLD-05Oct2026-FUT", for readability in logs/admin
+    expiryDate: date("expiry_date").notNull(),
+  },
+  (t) => [uniqueIndex("mcx_tracked_contract_metal_idx").on(t.metal)]
+);
+
+// Daily close price for whichever contract mcxTrackedContract currently
+// points at, for that metal -- this feature's own price history, entirely
+// separate from isinDailyPrice/etfDailyNav. securityId is stored per row
+// (not just looked up from mcxTrackedContract) so a past row still shows
+// which contract actually produced it even after a later reseed.
+//
+// No separate "period baseline" table alongside this one (unlike
+// etfDailyNav+etfPeriodAum): the user chose a TRUE quarterly average for
+// both the baseline and current-quarter MCX figures, and since that
+// average is entirely self-computed (not an external authority's own
+// disclosed figure the way AMFI's AAUM is), it's cheaper and always-fresh
+// to compute both quarters' averages on the fly from this table --
+// exactly how the equity Overview's own avgLiveAumCr/
+// currentQuarterAvgLiveAumCr and the index benchmark rows'
+// getAverageIndexLevelForRange already work (see src/lib/aum/history.ts,
+// src/lib/aum/index-benchmarks.ts). See src/lib/mcx/compute.ts.
+export const mcxDailyPrice = pgTable(
+  "mcx_daily_price",
+  {
+    id: serial("id").primaryKey(),
+    metal: text("metal").notNull(), // 'gold' | 'silver'
+    snapshotDate: date("snapshot_date").notNull(),
+    priceInr: numeric("price_inr", { precision: 18, scale: 4 }).notNull(), // per 10g (gold) / per kg (silver)
+    securityId: text("security_id").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("mcx_daily_price_metal_date_idx").on(t.metal, t.snapshotDate)]
+);

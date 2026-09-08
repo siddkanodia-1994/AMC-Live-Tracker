@@ -120,6 +120,20 @@
       "when": 1788854621744,
       "tag": "0016_quiet_manta",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1788866291103,
+      "tag": "0017_clear_risque",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788866384719,
+      "tag": "0018_perpetual_thanos",
+      "breakpoints": true
     }
   ]
 }
