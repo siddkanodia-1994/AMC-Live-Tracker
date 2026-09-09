@@ -10,15 +10,17 @@ import { useMcxReference } from "@/hooks/use-mcx-reference";
 import type { EtfLiveAum } from "@/lib/etf/compute-live-aum";
 
 // MCX Gold/Silver only trade as futures contracts (no true spot market),
-// so this uses the front-month contract's own daily closes, averaged
-// across each fiscal quarter -- a genuinely different calculation than
-// the ETF schemes' own point-to-point NAV return above (liveNav /
-// navAtPeriodEnd - 1). Treat this as a directional cross-check, not an
-// exactly matched comparison -- an avg-to-avg ratio can move a different
-// amount, or even a different direction, than a point-to-point one when
-// a quarter has a mid-quarter spike or dip (see src/lib/mcx/compute.ts).
+// so this uses the front-month contract's own price as of the same
+// quarter-end date the ETF schemes' navAtPeriodEnd is anchored to, vs its
+// latest available price -- the same point-to-point shape as the ETF
+// schemes' own return above (liveNav / navAtPeriodEnd - 1), just sourced
+// independently from MCX instead of NAV. An earlier version averaged
+// daily closes across each quarter instead; real data showed that could
+// diverge sharply, even in sign, from this point-to-point figure
+// whenever a quarter had a volatility spike or was still partial (see
+// src/lib/mcx/compute.ts) -- switched after that surfaced.
 const MCX_TITLE =
-  "Front-month MCX futures contract (no true spot market exists for gold/silver), averaged over each fiscal quarter — previous quarter vs current quarter-to-date. This is a different calculation than the ETF schemes' own point-to-point NAV return above, so treat it as a directional cross-check, not an exact match.";
+  "Front-month MCX futures contract (no true spot market exists for gold/silver) — price as of the same quarter-end date the ETF schemes' Reported AUM is anchored to, vs its latest available price. Same point-to-point calculation as the ETF returns above, just independently sourced from MCX instead of NAV.";
 
 interface AmcEtfRow {
   amc: string;
@@ -229,8 +231,8 @@ export function EtfTable() {
         "Total Reported AUM (Cr)": null,
         "Total Live AUM (Cr)": null,
         "Total Exit AUM QoQ Change (%)": null,
-        [`MCX Price Previous Qtr Avg (₹/${row.unit})`]: row.prevQuarterAvgPriceInr,
-        [`MCX Price Current Qtr Avg (₹/${row.unit})`]: row.currentQuarterAvgPriceInr,
+        [`MCX Price Quarter-End (₹/${row.unit})`]: row.quarterEndPriceInr,
+        [`MCX Price Live (₹/${row.unit})`]: row.livePriceInr,
         "MCX QoQ Change (%)": row.deltaPct != null ? row.deltaPct * 100 : null,
       })),
     ],
@@ -322,10 +324,10 @@ export function EtfTable() {
                 {row.metal === "gold" ? (
                   <>
                     <TableCell className="text-right tabular-nums">
-                      {row.prevQuarterAvgPriceInr != null ? `${formatPriceInr(row.prevQuarterAvgPriceInr)}/${row.unit}` : "—"}
+                      {row.quarterEndPriceInr != null ? `${formatPriceInr(row.quarterEndPriceInr)}/${row.unit}` : "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {row.currentQuarterAvgPriceInr != null ? `${formatPriceInr(row.currentQuarterAvgPriceInr)}/${row.unit}` : "—"}
+                      {row.livePriceInr != null ? `${formatPriceInr(row.livePriceInr)}/${row.unit}` : "—"}
                     </TableCell>
                     <PctCell value={row.deltaPct} className={GROUP_DIVIDER_CLASS} />
                     <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
@@ -338,10 +340,10 @@ export function EtfTable() {
                     <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>
                     <TableCell className={`text-right tabular-nums text-muted-foreground ${GROUP_DIVIDER_CLASS}`}>—</TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {row.prevQuarterAvgPriceInr != null ? `${formatPriceInr(row.prevQuarterAvgPriceInr)}/${row.unit}` : "—"}
+                      {row.quarterEndPriceInr != null ? `${formatPriceInr(row.quarterEndPriceInr)}/${row.unit}` : "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {row.currentQuarterAvgPriceInr != null ? `${formatPriceInr(row.currentQuarterAvgPriceInr)}/${row.unit}` : "—"}
+                      {row.livePriceInr != null ? `${formatPriceInr(row.livePriceInr)}/${row.unit}` : "—"}
                     </TableCell>
                     <PctCell value={row.deltaPct} className={GROUP_DIVIDER_CLASS} />
                   </>
