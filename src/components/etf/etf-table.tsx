@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRegisterExport } from "@/components/layout/export-context";
-import { formatPriceInr, formatCr, formatPct } from "@/lib/utils/format";
+import { formatPriceInr, formatCr, formatPct, formatReportPeriodLabel } from "@/lib/utils/format";
 import { useEtfLiveAum } from "@/hooks/use-etf-live-aum";
 import { useMcxReference } from "@/hooks/use-mcx-reference";
 import type { EtfLiveAum } from "@/lib/etf/compute-live-aum";
@@ -221,7 +221,9 @@ export function EtfTable() {
       // (not the AUM-in-Cr ones above, which would misleadingly imply
       // these are crore figures rather than a per-unit price).
       ...(mcxData?.rows ?? []).map((row) => ({
-        AMC: row.displayName,
+        AMC: row.contractExpiryDate
+          ? `${row.displayName} (${formatReportPeriodLabel(row.contractExpiryDate.slice(0, 7))})`
+          : row.displayName,
         "Gold Reported AUM (Cr)": null,
         "Gold Live AUM (Cr)": null,
         "Gold Exit AUM QoQ Change (%)": null,
@@ -320,6 +322,12 @@ export function EtfTable() {
               <TableRow key={row.metal} className="bg-muted/30">
                 <TableCell className="font-medium" title={MCX_TITLE}>
                   {row.displayName}
+                  {row.contractExpiryDate && (
+                    <span className="font-normal text-muted-foreground">
+                      {" "}
+                      ({formatReportPeriodLabel(row.contractExpiryDate.slice(0, 7))})
+                    </span>
+                  )}
                 </TableCell>
                 {row.metal === "gold" ? (
                   <>

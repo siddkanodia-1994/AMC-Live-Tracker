@@ -1,6 +1,6 @@
 import { and, desc, eq, lte } from "drizzle-orm";
 import { db } from "../db/client";
-import { mcxDailyPrice } from "../db/schema";
+import { mcxDailyPrice, mcxTrackedContract } from "../db/schema";
 import { getPreviousFiscalQuarterBounds } from "../aum/report-period";
 import { getIstDateString } from "../utils/date";
 
@@ -11,6 +11,12 @@ export interface McxReferenceRow {
   quarterEndPriceInr: number | null;
   livePriceInr: number | null;
   deltaPct: number | null;
+  // The tracked contract's own expiry date ("YYYY-MM-DD"), so the UI can
+  // show which specific futures contract this return reflects (e.g.
+  // "MCX Gold (Oct 2026)") -- material to interpreting the return, since
+  // different contracts can carry a different futures basis (see the
+  // 2026-09-10 audit of the MCX Silver vs Silver ETF return gap).
+  contractExpiryDate: string | null;
 }
 
 const METALS: { metal: "gold" | "silver"; displayName: string; unit: string }[] = [
@@ -49,6 +55,8 @@ async function getMcxPriceAsOf(metal: string, date: string): Promise<number | nu
 export async function getMcxReferenceRows(): Promise<McxReferenceRow[]> {
   const today = getIstDateString();
   const { end: quarterEndDate } = getPreviousFiscalQuarterBounds(today);
+  const contracts = await db.select().from(mcxTrackedContract);
+  const expiryByMetal = new Map(contracts.map((c) => [c.metal, c.expiryDate]));
 
   const rows: McxReferenceRow[] = [];
   for (const { metal, displayName, unit } of METALS) {
@@ -58,7 +66,7 @@ export async function getMcxReferenceRows(): Promise<McxReferenceRow[]> {
       quarterEndPriceInr !== null && livePriceInr !== null && quarterEndPriceInr !== 0
         ? livePriceInr / quarterEndPriceInr - 1
         : null;
-    rows.push({ metal, displayName, unit, quarterEndPriceInr, livePriceInr, deltaPct });
+    rows.push({ metal, displayName, unit, quarterEndPriceInr, livePriceInr, deltaPct, contractExpiryDate: expiryByMetal.get(metal) ?? null });
   }
   return rows;
 }
