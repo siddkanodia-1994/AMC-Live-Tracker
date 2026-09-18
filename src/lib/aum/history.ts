@@ -104,6 +104,71 @@ export async function getAmcListedStockPriceHistory(isin: string, fromDate: stri
   return rows.map((r) => ({ date: r.snapshotDate, priceInr: Number(r.priceInr) }));
 }
 
+/**
+ * Batched sibling of getAmcAumHistory for the Stock Correlation tab, which
+ * needs all 8 listed-stock AMCs' history at once -- one query with
+ * inArray(amcId) instead of 8 round trips. `fromDates` lets each AMC use
+ * its own listed-stock backfillFromDate as a floor (skip pre-listing
+ * history that has no share price to correlate against anyway); omit an
+ * amcId from the map to fetch its whole history instead.
+ */
+export async function getAumHistoryForAmcIds(
+  amcIds: number[],
+  fromDates?: Map<number, string>
+): Promise<Map<number, AumHistoryPoint[]>> {
+  const map = new Map<number, AumHistoryPoint[]>();
+  if (amcIds.length === 0) return map;
+
+  const rows = await db
+    .select()
+    .from(liveAumDailySnapshot)
+    .where(and(inArray(liveAumDailySnapshot.amcId, amcIds), eq(liveAumDailySnapshot.isCanonical, true)))
+    .orderBy(asc(liveAumDailySnapshot.snapshotDate));
+
+  for (const r of rows) {
+    const floor = fromDates?.get(r.amcId);
+    if (floor && r.snapshotDate < floor) continue;
+    const list = map.get(r.amcId) ?? [];
+    list.push({
+      date: r.snapshotDate,
+      liveAumCr: Number(r.liveAumCr),
+      reportedAumCr: Number(r.reportedAumCr),
+      reportPeriod: r.reportPeriod,
+    });
+    map.set(r.amcId, list);
+  }
+  return map;
+}
+
+/**
+ * Batched sibling of getAmcListedStockPriceHistory -- all 8 listed-stock
+ * AMCs' own share-price history in one inArray(isin) query instead of 8
+ * separate calls. `fromDates` is keyed by ISIN, mirroring each row's own
+ * amc_listed_stock.backfillFromDate.
+ */
+export async function getAmcListedStockPriceHistoryForIsins(
+  isins: string[],
+  fromDates: Map<string, string>
+): Promise<Map<string, AmcStockPricePoint[]>> {
+  const map = new Map<string, AmcStockPricePoint[]>();
+  if (isins.length === 0) return map;
+
+  const rows = await db
+    .select()
+    .from(isinDailyPrice)
+    .where(inArray(isinDailyPrice.isin, isins))
+    .orderBy(asc(isinDailyPrice.snapshotDate));
+
+  for (const r of rows) {
+    const floor = fromDates.get(r.isin);
+    if (floor && r.snapshotDate < floor) continue;
+    const list = map.get(r.isin) ?? [];
+    list.push({ date: r.snapshotDate, priceInr: Number(r.priceInr) });
+    map.set(r.isin, list);
+  }
+  return map;
+}
+
 export interface AverageAumSinceReport {
   avgLiveAumCr: number;
   daysCount: number;

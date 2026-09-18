@@ -4,6 +4,12 @@ import { useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
+import {
+  trimToLastContinuousRun,
+  computeMovingAverage,
+  computeCorrelationStats,
+  type DatedValue,
+} from "@/lib/aum/series-math";
 
 // Padding added above/below the combined (live + reported) data range, as a
 // fraction of that range, so the line doesn't sit flush against the plot
@@ -107,113 +113,6 @@ function computeStockPriceYAxisDomain(series: AmcStockPricePoint[]): [number, nu
       ? range * DOMAIN_PADDING_RATIO
       : Math.max(Math.abs(max) * FLAT_DOMAIN_PADDING_RATIO, MIN_ABSOLUTE_PADDING_CR);
   return [Math.max(0, min - padding), max + padding];
-}
-
-// Trailing moving average with an expanding window for the first
-// (windowDays - 1) points, so a smoothed series still covers the same date
-// range as its raw input -- no leading gap. windowDays === 1 is the
-// identity transform (each point is its own 1-value "average"), which is
-// what "off" (the default) uses, so no separate on/off branch is needed
-// anywhere else in this file.
-function computeMovingAverage(values: number[], windowDays: number): number[] {
-  const result: number[] = [];
-  let windowSum = 0;
-  for (let i = 0; i < values.length; i++) {
-    windowSum += values[i];
-    if (i >= windowDays) windowSum -= values[i - windowDays];
-    result.push(windowSum / Math.min(i + 1, windowDays));
-  }
-  return result;
-}
-
-interface DatedValue {
-  date: string;
-  value: number;
-}
-
-// Day-over-day % change, keyed by the LATER date of each pair -- computed
-// over the series' own consecutive entries (whatever gaps it has), so a
-// return always reflects that series' actual trading-day-to-trading-day
-// move rather than an interval borrowed from the other series once the two
-// are intersected by date in computeCorrelationStats.
-function computeReturnsByDate(points: DatedValue[]): Map<string, number> {
-  const map = new Map<string, number>();
-  for (let i = 1; i < points.length; i++) {
-    const prev = points[i - 1].value;
-    if (prev !== 0) map.set(points[i].date, (points[i].value - prev) / prev);
-  }
-  return map;
-}
-
-function pearsonCorrelation(xs: number[], ys: number[]): number | null {
-  const n = xs.length;
-  if (n < 2) return null;
-  const meanX = xs.reduce((a, b) => a + b, 0) / n;
-  const meanY = ys.reduce((a, b) => a + b, 0) / n;
-  let covariance = 0;
-  let varianceX = 0;
-  let varianceY = 0;
-  for (let i = 0; i < n; i++) {
-    const dx = xs[i] - meanX;
-    const dy = ys[i] - meanY;
-    covariance += dx * dy;
-    varianceX += dx * dx;
-    varianceY += dy * dy;
-  }
-  if (varianceX === 0 || varianceY === 0) return null;
-  return covariance / Math.sqrt(varianceX * varianceY);
-}
-
-interface CorrelationStats {
-  r: number;
-  r2: number;
-  n: number;
-}
-
-// Correlates day-over-day RETURNS (not raw ₹-crore/₹-share levels) of
-// whatever's currently displayed for each series -- two series that both
-// trend upward for months would otherwise show spuriously high
-// level-correlation regardless of whether they actually move together day
-// to day. R² = r² exactly, since this is a single-predictor (bivariate)
-// case -- no separate regression needed. Returns null when there aren't at
-// least two overlapping return-days (e.g. a newly-listed stock with almost
-// no price history yet).
-function computeCorrelationStats(seriesA: DatedValue[], seriesB: DatedValue[]): CorrelationStats | null {
-  const returnsA = computeReturnsByDate(seriesA);
-  const returnsB = computeReturnsByDate(seriesB);
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (const [date, valueA] of returnsA) {
-    const valueB = returnsB.get(date);
-    if (valueB !== undefined) {
-      xs.push(valueA);
-      ys.push(valueB);
-    }
-  }
-  const r = pearsonCorrelation(xs, ys);
-  if (r === null) return null;
-  return { r, r2: r * r, n: xs.length };
-}
-
-// Real NSE/BSE holiday clusters top out around 3-4 calendar days (a holiday
-// adjacent to a weekend); anything larger is a genuine coverage break in the
-// underlying data (e.g. a historical backfill that was only ever run for a
-// couple of days and never completed), not a holiday.
-const MAX_CONTINUOUS_GAP_DAYS = 5;
-
-// Keeps only the LAST unbroken run of dates -- resets the start index every
-// time a gap larger than the threshold is found, so any earlier orphaned
-// data is dropped while ordinary holiday-sized gaps within the real
-// continuous history are left alone. Purely a display filter; the
-// underlying live_aum_daily_snapshot rows are untouched.
-function trimToLastContinuousRun(data: AumHistoryPoint[]): AumHistoryPoint[] {
-  if (data.length === 0) return data;
-  let startIdx = 0;
-  for (let i = 1; i < data.length; i++) {
-    const gapDays = (Date.parse(data[i].date) - Date.parse(data[i - 1].date)) / 86_400_000;
-    if (gapDays > MAX_CONTINUOUS_GAP_DAYS) startIdx = i;
-  }
-  return data.slice(startIdx);
 }
 
 interface DailyChangePoint {

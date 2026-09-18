@@ -15,6 +15,7 @@ import { TotalAumGrowthTable } from "./total-aum-growth-table";
 import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-table";
 import { SectoralHoldingsTable } from "./sectoral-holdings-table";
 import { EtfTable } from "@/components/etf/etf-table";
+import { StockCorrelationTable } from "./stock-correlation-table";
 import { StockTab } from "@/components/stock/stock-tab";
 import { DailyDataTable } from "./daily-data-table";
 import { CorrectionsLog } from "./corrections-log";
@@ -855,6 +856,9 @@ export function AmcGrid({
               <TabsTrigger value="gold-silver-etfs" className="after:bg-[var(--toolbar-accent)]">
                 Gold &amp; Silver ETFs
               </TabsTrigger>
+              <TabsTrigger value="amc-stock-correlation" className="after:bg-[var(--toolbar-accent)]">
+                Stock Correlation
+              </TabsTrigger>
               <TabsTrigger value="stock" className="after:bg-[var(--toolbar-accent)]">
                 Stock
               </TabsTrigger>
@@ -867,7 +871,7 @@ export function AmcGrid({
             </TabsList>
             <div className="flex items-center gap-3 text-sm">
               {activeTab === "overview" && <SearchBar value={query} onChange={setQuery} />}
-              {activeTab !== "stock" && (
+              {activeTab !== "stock" && activeTab !== "amc-stock-correlation" && (
                 <div className="flex items-center gap-1">
                   <span className="text-muted-foreground">Show:</span>
                   {TOP_N_OPTIONS.map((option) => (
@@ -1208,6 +1212,9 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="gold-silver-etfs">
           <EtfTable />
+        </TabsContent>
+        <TabsContent value="amc-stock-correlation">
+          <StockCorrelationTable />
         </TabsContent>
         <TabsContent value="stock">
           <StockTab />
