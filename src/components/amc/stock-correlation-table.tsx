@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatCr, formatPct, formatPriceInr } from "@/lib/utils/format";
+import { formatCr, formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
 import { useAmcStockCorrelations } from "@/hooks/use-amc-stock-correlations";
 import {
   trimToLastContinuousRun,
@@ -11,7 +11,8 @@ import {
   computeCorrelationStats,
   linearRegression,
   alignSeriesByDate,
-  type DatedValue,
+  toDatedValues,
+  firstDefinedIndex,
 } from "@/lib/aum/series-math";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 
@@ -24,6 +25,8 @@ interface ComputedRow {
   r2: number | null;
   fairValuePriceInr: number | null;
   levelFitR2: number | null;
+  aumTruncatedFromDate: string | null;
+  priceTruncatedFromDate: string | null;
 }
 
 // Mirrors aum-trend-chart.tsx's own per-AMC computation exactly (same
@@ -31,7 +34,10 @@ interface ComputedRow {
 // own AUM Trend chart shows for the same moving-average setting. The
 // regression fair-value price is the one number NOT shared with the chart
 // -- it needs a LEVEL-based fit (Price ~ AUM) to predict a price, whereas
-// Corr/R² deliberately use returns (see series-math.ts).
+// Corr/R² deliberately use returns (see series-math.ts). A moving average
+// longer than an AMC's own history leaves every value undefined -- that
+// row's cells fall through to "—" the same way any other missing figure
+// already does in this table, rather than a special-cased message.
 function computeRow(entry: AmcStockCorrelationEntry, maDays: number): ComputedRow {
   const data = trimToLastContinuousRun(entry.aumHistory);
   const aumDisplay = computeMovingAverage(
@@ -43,16 +49,22 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number): ComputedRo
     maDays
   );
 
-  const aumDated: DatedValue[] = data.map((d, i) => ({ date: d.date, value: aumDisplay[i] }));
-  const priceDated: DatedValue[] = entry.stockPriceSeries.map((p, i) => ({ date: p.date, value: priceDisplay[i] }));
+  const aumDated = toDatedValues(data.map((d) => d.date), aumDisplay);
+  const priceDated = toDatedValues(
+    entry.stockPriceSeries.map((p) => p.date),
+    priceDisplay
+  );
 
   const corrStats = computeCorrelationStats(aumDated, priceDated);
   const { xs, ys } = alignSeriesByDate(aumDated, priceDated);
   const reg = linearRegression(xs, ys);
 
-  const latestAumCr = aumDisplay.length > 0 ? aumDisplay[aumDisplay.length - 1] : null;
-  const latestPriceInr = priceDisplay.length > 0 ? priceDisplay[priceDisplay.length - 1] : null;
+  const latestAumCr = aumDisplay.length > 0 ? aumDisplay[aumDisplay.length - 1] ?? null : null;
+  const latestPriceInr = priceDisplay.length > 0 ? priceDisplay[priceDisplay.length - 1] ?? null : null;
   const fairValuePriceInr = reg && latestAumCr !== null ? reg.intercept + reg.slope * latestAumCr : null;
+
+  const aumFirstIdx = maDays > 1 ? firstDefinedIndex(aumDisplay) : 0;
+  const priceFirstIdx = maDays > 1 ? firstDefinedIndex(priceDisplay) : 0;
 
   return {
     slug: entry.slug,
@@ -63,6 +75,8 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number): ComputedRo
     r2: corrStats?.r2 ?? null,
     fairValuePriceInr,
     levelFitR2: reg?.r2 ?? null,
+    aumTruncatedFromDate: aumFirstIdx > 0 ? data[aumFirstIdx].date : null,
+    priceTruncatedFromDate: priceFirstIdx > 0 ? entry.stockPriceSeries[priceFirstIdx].date : null,
   };
 }
 
@@ -90,6 +104,19 @@ export function StockCorrelationTable() {
     if (!data) return [];
     return data.amcs.map((entry) => computeRow(entry, maDays));
   }, [data, maDays]);
+
+  // The LATEST (most conservative) of every row's own AUM/price truncation
+  // date -- from this date onward every row is guaranteed to have a value,
+  // so one shared caption is accurate for the whole table instead of
+  // repeating a possibly-different note per row.
+  const truncatedFromDate = useMemo(() => {
+    if (maDays <= 1) return null;
+    const dates = rows
+      .flatMap((r) => [r.aumTruncatedFromDate, r.priceTruncatedFromDate])
+      .filter((d): d is string => d !== null);
+    if (dates.length === 0) return null;
+    return dates.reduce((max, d) => (d > max ? d : max));
+  }, [rows, maDays]);
 
   if (error) {
     return <p className="text-sm text-destructive">Failed to load stock correlation data: {error.message}</p>;
@@ -138,6 +165,13 @@ export function StockCorrelationTable() {
           />
         </div>
       </div>
+      {truncatedFromDate && (
+        <p className="text-xs text-muted-foreground">
+          Showing values from {formatShortDate(truncatedFromDate)} ({maDays}D avg) — a full {maDays}-day window
+          doesn&apos;t exist before then. An AMC with less history than that shows &quot;—&quot; until enough
+          accumulates.
+        </p>
+      )}
 
       <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>

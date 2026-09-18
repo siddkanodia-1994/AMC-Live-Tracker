@@ -24,19 +24,23 @@ export function trimToLastContinuousRun(data: AumHistoryPoint[]): AumHistoryPoin
   return data.slice(startIdx);
 }
 
-// Trailing moving average with an expanding window for the first
-// (windowDays - 1) points, so a smoothed series still covers the same date
-// range as its raw input -- no leading gap. windowDays === 1 is the
-// identity transform (each point is its own 1-value "average"), which is
-// what "off" (the default everywhere this is used) relies on, so no
-// separate on/off branch is needed anywhere else.
-export function computeMovingAverage(values: number[], windowDays: number): number[] {
-  const result: number[] = [];
+// Trailing moving average that requires a genuine full window -- a real
+// N-day average can't exist until N real days have accumulated, so the
+// first (windowDays - 1) points are `undefined` rather than a partial/
+// expanding-window average (a true 7-day average starting on data from
+// 1 Jan only first exists on 7 Jan; 5 Jan only has 5 days behind it).
+// Every defined point still counts strictly BACKWARD from its own date
+// through the preceding (windowDays - 1) entries -- a plain trailing sum,
+// never forward-looking or centered. windowDays === 1 is still the
+// identity transform (every index already satisfies i >= windowDays - 1),
+// which is what "off" (the default everywhere this is used) relies on.
+export function computeMovingAverage(values: number[], windowDays: number): (number | undefined)[] {
+  const result: (number | undefined)[] = [];
   let windowSum = 0;
   for (let i = 0; i < values.length; i++) {
     windowSum += values[i];
     if (i >= windowDays) windowSum -= values[i - windowDays];
-    result.push(windowSum / Math.min(i + 1, windowDays));
+    result.push(i >= windowDays - 1 ? windowSum / windowDays : undefined);
   }
   return result;
 }
@@ -44,6 +48,30 @@ export function computeMovingAverage(values: number[], windowDays: number): numb
 export interface DatedValue {
   date: string;
   value: number;
+}
+
+// Index of the first defined entry in a computeMovingAverage result, or -1
+// if every entry is undefined (the requested window is longer than the
+// whole series) -- used to render a "showing from <date>" caption when a
+// moving average trims off leading days, and to detect the "not enough
+// history at all" case (decision: show nothing for that line/row rather
+// than falling back to raw values).
+export function firstDefinedIndex(values: (number | undefined)[]): number {
+  return values.findIndex((v) => v !== undefined);
+}
+
+// Drops the undefined-prefix entries a moving average leaves before its
+// first full window, pairing each remaining value with its date -- the
+// shared "build a DatedValue[] from a possibly-partial moving-average
+// result" step every consumer (chart correlation, regression, summary
+// table) needs before feeding dates/values into anything else in this file.
+export function toDatedValues(dates: string[], values: (number | undefined)[]): DatedValue[] {
+  const result: DatedValue[] = [];
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    if (value !== undefined) result.push({ date: dates[i], value });
+  }
+  return result;
 }
 
 // Left-joins two DatedValue[] series by date, keeping only dates present in

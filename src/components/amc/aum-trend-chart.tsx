@@ -8,7 +8,8 @@ import {
   trimToLastContinuousRun,
   computeMovingAverage,
   computeCorrelationStats,
-  type DatedValue,
+  firstDefinedIndex,
+  toDatedValues,
 } from "@/lib/aum/series-math";
 
 // Padding added above/below the combined (live + reported) data range, as a
@@ -65,27 +66,34 @@ function computeYAxisDomain(data: AumHistoryPoint[]): [number, number] {
 interface ChartPoint extends AumHistoryPoint {
   // Whatever's currently displayed for Live AUM -- identical to liveAumCr
   // when no moving average is applied (computeMovingAverage's windowDays=1
-  // is the identity transform), the smoothed value otherwise.
-  liveAumDisplay: number;
+  // is the identity transform), the smoothed value otherwise. undefined for
+  // the leading days a moving average hasn't accumulated a full window for
+  // yet -- Recharts leaves that contiguous prefix undrawn, same mechanism
+  // that already makes stockPriceInr start late when it's missing.
+  liveAumDisplay: number | undefined;
   stockPriceInr?: number;
 }
 
 // Builds the chart's per-date rows from the (already AUM-trimmed) data plus
 // each series' own DISPLAY values (raw or moving-averaged, computed by the
 // caller) -- a date with no stock price (a weekend/holiday the stock didn't
-// trade, or before/after the price history's own range) simply has no
-// point there, same as any normal stock chart. reportedAumCr passes
-// through unchanged (spread from `point`) -- it's never smoothed, since
-// it's a monthly step function, not a daily series.
+// trade, before/after the price history's own range, or before a moving
+// average's first full window) simply has no point there, same as any
+// normal stock chart. reportedAumCr passes through unchanged (spread from
+// `point`) -- it's never smoothed, since it's a monthly step function, not
+// a daily series.
 function buildChartData(
   data: AumHistoryPoint[],
-  liveAumDisplayValues: number[],
+  liveAumDisplayValues: (number | undefined)[],
   stockPriceSeries: AmcStockPricePoint[] | undefined,
-  stockPriceDisplayValues: number[] | undefined
+  stockPriceDisplayValues: (number | undefined)[] | undefined
 ): ChartPoint[] {
   const priceByDate = new Map<string, number>();
   if (stockPriceSeries && stockPriceDisplayValues) {
-    stockPriceSeries.forEach((p, i) => priceByDate.set(p.date, stockPriceDisplayValues[i]));
+    stockPriceSeries.forEach((p, i) => {
+      const value = stockPriceDisplayValues[i];
+      if (value !== undefined) priceByDate.set(p.date, value);
+    });
   }
   return data.map((point, i) => ({
     ...point,
@@ -215,13 +223,24 @@ export function AumTrendChart({
   // than gating it behind showStockPrice too.
   const correlationStats = useMemo(() => {
     if (!stockPriceSeries || !stockPriceDisplayValues) return null;
-    const liveAumDisplayDated: DatedValue[] = data.map((d, i) => ({ date: d.date, value: liveAumDisplayValues[i] }));
-    const stockPriceDisplayDated: DatedValue[] = stockPriceSeries.map((p, i) => ({
-      date: p.date,
-      value: stockPriceDisplayValues[i],
-    }));
+    const liveAumDisplayDated = toDatedValues(data.map((d) => d.date), liveAumDisplayValues);
+    const stockPriceDisplayDated = toDatedValues(stockPriceSeries.map((p) => p.date), stockPriceDisplayValues);
     return computeCorrelationStats(liveAumDisplayDated, stockPriceDisplayDated);
   }, [stockPriceSeries, stockPriceDisplayValues, data, liveAumDisplayValues]);
+  // Whenever the moving average trims off leading days, note where the
+  // line actually starts instead of leaving the shorter line unexplained --
+  // Live AUM and the share price can each start on a different date, since
+  // they're independent series with their own history.
+  const liveAumTruncatedFromDate = useMemo(() => {
+    if (maDays <= 1) return null;
+    const idx = firstDefinedIndex(liveAumDisplayValues);
+    return idx > 0 ? data[idx].date : null;
+  }, [maDays, liveAumDisplayValues, data]);
+  const stockPriceTruncatedFromDate = useMemo(() => {
+    if (maDays <= 1 || !stockPriceSeries || !stockPriceDisplayValues) return null;
+    const idx = firstDefinedIndex(stockPriceDisplayValues);
+    return idx > 0 ? stockPriceSeries[idx].date : null;
+  }, [maDays, stockPriceSeries, stockPriceDisplayValues]);
 
   if (data.length === 0) {
     return (
@@ -274,9 +293,15 @@ export function AumTrendChart({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="font-mono text-xs text-muted-foreground">
+        <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+          {liveAumTruncatedFromDate && <span>Showing Live AUM from {formatShortDate(liveAumTruncatedFromDate)} ({maDays}D avg)</span>}
+          {hasStockPrice && showStockPrice && stockPriceTruncatedFromDate && (
+            <span>
+              Showing {stockLabel ?? "Share Price"} from {formatShortDate(stockPriceTruncatedFromDate)} ({maDays}D avg)
+            </span>
+          )}
           {hasStockPrice && showStockPrice && correlationStats && (
-            <>
+            <span className="font-mono">
               Corr{" "}
               <span
                 className={
@@ -287,9 +312,9 @@ export function AumTrendChart({
               </span>{" "}
               · R² {formatPct(correlationStats.r2)} · {correlationStats.n} trading days
               {maDays > 1 ? `, ${maDays}D avg` : ""}
-            </>
+            </span>
           )}
-        </span>
+        </div>
         <div className="flex items-center gap-2">
           <label htmlFor="ma-days" className="text-xs text-muted-foreground">
             Moving avg (days)
