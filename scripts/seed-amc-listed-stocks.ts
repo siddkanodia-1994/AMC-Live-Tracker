@@ -28,6 +28,14 @@ const LISTED_STOCKS: SeedRow[] = [
   { amcSlug: "uti-mutual-fund", isin: "INE094J01016", securityId: "527", tradingSymbol: "UTIAMC", backfillFromDate: "2026-01-01" },
   { amcSlug: "sbi-mutual-fund", isin: "INE640G01020", securityId: "764173", tradingSymbol: "SBIFUNDS", backfillFromDate: "2026-01-01" },
   { amcSlug: "icici-prudential-mutual-fund", isin: "INE346A01027", securityId: "760407", tradingSymbol: "ICICIAMC", backfillFromDate: "2026-01-01" },
+  // Motilal Oswal has no separately-listed pure-play AMC -- the only listed
+  // entity is Motilal Oswal Financial Services Ltd (MOFSL), a diversified
+  // conglomerate (broking, investment banking, wealth management, housing
+  // finance, and a large proprietary book, with asset management as one
+  // segment among several). Added anyway per explicit user decision
+  // (2026-09-18) to match the other 7's mechanism/convention exactly, with
+  // no special-casing -- the caveat is documented, not enforced in code.
+  { amcSlug: "motilal-oswal-mutual-fund", isin: "INE338I01027", securityId: "14947", tradingSymbol: "MOTILALOFS", backfillFromDate: "2026-01-01" },
 ];
 
 async function main() {
