@@ -3,7 +3,14 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db/client";
 import { amcListedStock } from "@/lib/db/schema";
 import { computeLiveAumForAmc, NoDataImportedError } from "@/lib/aum/compute-live-aum";
-import { getAmcAumHistory, getAmcListedStockPriceHistory, type AumHistoryPoint, type AmcStockPricePoint } from "@/lib/aum/history";
+import {
+  getAmcAumHistory,
+  getAmcListedStockPriceHistory,
+  getAmcSwitcherList,
+  type AmcSwitcherEntry,
+  type AumHistoryPoint,
+  type AmcStockPricePoint,
+} from "@/lib/aum/history";
 import { AmcDetailView } from "@/components/amc/amc-detail-view";
 import type { AmcDetailResponse } from "@/hooks/use-live-aum-detail";
 
@@ -16,6 +23,7 @@ export default async function AmcDetailPage({ params }: { params: Promise<{ slug
   let history: AumHistoryPoint[] = [];
   let stockPriceSeries: AmcStockPricePoint[] | undefined;
   let stockLabel: string | undefined;
+  const switcherAmcs: AmcSwitcherEntry[] = await getAmcSwitcherList().catch(() => []);
   try {
     const result = await computeLiveAumForAmc(slug);
     if (!result) notFound();
@@ -46,6 +54,7 @@ export default async function AmcDetailPage({ params }: { params: Promise<{ slug
           history={history}
           stockPriceSeries={stockPriceSeries}
           stockLabel={stockLabel}
+          switcherAmcs={switcherAmcs}
         />
       ) : (
         <p className="text-center text-muted-foreground">

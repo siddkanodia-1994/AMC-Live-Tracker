@@ -543,3 +543,35 @@ export async function getIndustryAumHistory(): Promise<AumHistoryPoint[]> {
 
   return rows;
 }
+
+export interface AmcSwitcherEntry {
+  slug: string;
+  overviewName: string;
+  liveAumCr: number | null;
+}
+
+/**
+ * Every AMC's slug + name for the detail page's header switcher (dropdown +
+ * Prev/Next), alongside its most recent canonical Live AUM for rank
+ * ordering -- deliberately reads only liveAumDailySnapshot (at most a day
+ * stale) rather than computeLiveAumForAmc's live-price pipeline, so opening
+ * an AMC detail page never triggers a full 57-AMC recomputation just to
+ * populate a nav control. An AMC with no canonical snapshot yet (e.g.
+ * newly added, cron hasn't run) gets liveAumCr: null and sorts last.
+ */
+export async function getAmcSwitcherList(): Promise<AmcSwitcherEntry[]> {
+  const [amcRows, { maxDate }] = await Promise.all([
+    db.select({ slug: amcs.slug, overviewName: amcs.overviewName, id: amcs.id }).from(amcs),
+    getCanonicalSnapshotDateBounds(),
+  ]);
+
+  const liveAumByAmcId = maxDate ? await getAllAmcsLiveAumAsOf(maxDate) : new Map<number, LiveAumAsOf>();
+
+  return amcRows
+    .map((r) => ({
+      slug: r.slug,
+      overviewName: r.overviewName,
+      liveAumCr: liveAumByAmcId.get(r.id)?.liveAumCr ?? null,
+    }))
+    .sort((a, b) => a.overviewName.localeCompare(b.overviewName));
+}

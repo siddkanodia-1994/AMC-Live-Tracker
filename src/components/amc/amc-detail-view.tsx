@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { useLiveAumDetail, type AmcDetailResponse } from "@/hooks/use-live-aum-detail";
 import { AumDeltaBadge } from "./aum-delta-badge";
+import { AmcSwitcher } from "./amc-switcher";
 import { AumTrendChart } from "./aum-trend-chart";
 import { HoldingsTable } from "./holdings-table";
 import { PeriodComparisonTable } from "./period-comparison-table";
@@ -12,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { formatCr, formatDeltaCr, formatPct, formatShortDate } from "@/lib/utils/format";
-import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
+import type { AumHistoryPoint, AmcStockPricePoint, AmcSwitcherEntry } from "@/lib/aum/history";
 
 const dateInputClass =
   "w-full min-w-0 rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
@@ -23,6 +24,7 @@ export function AmcDetailView({
   history,
   stockPriceSeries,
   stockLabel,
+  switcherAmcs,
 }: {
   slug: string;
   initialData?: AmcDetailResponse;
@@ -32,6 +34,7 @@ export function AmcDetailView({
   // renders no toggle at all in that case.
   stockPriceSeries?: AmcStockPricePoint[];
   stockLabel?: string;
+  switcherAmcs: AmcSwitcherEntry[];
 }) {
   // null = live mode; a date = the whole page (cards + Holdings table, and
   // Sector Allocation for free since it derives from the same holdings
@@ -65,7 +68,10 @@ export function AmcDetailView({
     <div className="amc-detail-darker-text space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">{amc.overviewName}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold">{amc.overviewName}</h1>
+            <AmcSwitcher amcs={switcherAmcs} currentSlug={slug} />
+          </div>
           <p className="text-sm text-muted-foreground">
             {data.pricesAreLive ? (
               <>
