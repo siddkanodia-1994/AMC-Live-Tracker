@@ -156,38 +156,39 @@ export function computeCorrelationStats(seriesA: DatedValue[], seriesB: DatedVal
   return { r, r2: r * r, n: xs.length };
 }
 
-export interface LinearRegression {
-  slope: number;
-  intercept: number;
-  r2: number;
+export interface RatioStats {
+  meanRatio: number;
+  // Coefficient of variation of the historical (price ÷ AUM) ratio --
+  // stdDev / |mean| -- how stable that multiple has been. Lower means
+  // today's mean-based fair value is a better anchor.
+  cv: number;
   n: number;
 }
 
-// Simple least-squares fit of ys on xs (LEVELS, not returns) -- used only
-// for the Stock Correlation tab's "regression fair value price", a
-// distinct statistic from computeCorrelationStats' returns-based Corr/R²
-// (that one matches the AUM Trend chart's headline number; this one exists
-// solely to turn a Live AUM level into a predicted share-price level, which
-// a returns-based fit can't do). Returns null below 2 points, same as
-// computeCorrelationStats.
-export function linearRegression(xs: number[], ys: number[]): LinearRegression | null {
-  const n = xs.length;
-  if (n < 2) return null;
-  const meanX = xs.reduce((a, b) => a + b, 0) / n;
-  const meanY = ys.reduce((a, b) => a + b, 0) / n;
-  let sxy = 0;
-  let sxx = 0;
-  let syy = 0;
+// The Stock Correlation tab's fair-value basis: each aligned day's own
+// (price ÷ AUM) ratio, and that ratio's own mean + stability. Deliberately
+// NOT a regression of one trending level on another (see
+// computeCorrelationStats' comment on why Corr/R² use returns instead) --
+// fitting a straight line through two non-stationary upward trends is a
+// textbook spurious-regression risk (Granger & Newbold): the R² and slope
+// mostly reflect a shared time trend, not a real economic link. Tracking a
+// ratio's own mean-reversion sidesteps that entirely, and mirrors how
+// equity research actually prices an AMC-adjacent stock off an AUM-based
+// multiple (same "units outstanding held roughly constant" simplification
+// the Gold & Silver ETF tab's own methodology note already relies on).
+// aumValues/priceValues must already be date-aligned (see
+// alignSeriesByDate) -- a day with AUM of exactly 0 is skipped, not
+// divided by. Returns null below 2 valid ratios.
+export function priceToAumRatioStats(aumValues: number[], priceValues: number[]): RatioStats | null {
+  const n = Math.min(aumValues.length, priceValues.length);
+  const ratios: number[] = [];
   for (let i = 0; i < n; i++) {
-    const dx = xs[i] - meanX;
-    const dy = ys[i] - meanY;
-    sxy += dx * dy;
-    sxx += dx * dx;
-    syy += dy * dy;
+    if (aumValues[i] !== 0) ratios.push(priceValues[i] / aumValues[i]);
   }
-  if (sxx === 0 || syy === 0) return null;
-  const slope = sxy / sxx;
-  const intercept = meanY - slope * meanX;
-  const r = sxy / Math.sqrt(sxx * syy);
-  return { slope, intercept, r2: r * r, n };
+  if (ratios.length < 2) return null;
+  const meanRatio = ratios.reduce((a, b) => a + b, 0) / ratios.length;
+  if (meanRatio === 0) return null;
+  const variance = ratios.reduce((sum, r) => sum + (r - meanRatio) ** 2, 0) / ratios.length;
+  const cv = Math.sqrt(variance) / Math.abs(meanRatio);
+  return { meanRatio, cv, n: ratios.length };
 }
