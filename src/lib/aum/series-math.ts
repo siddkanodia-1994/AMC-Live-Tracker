@@ -158,6 +158,7 @@ export function computeCorrelationStats(seriesA: DatedValue[], seriesB: DatedVal
 
 export interface RatioStats {
   meanRatio: number;
+  stdDev: number;
   // Coefficient of variation of the historical (price ÷ AUM) ratio --
   // stdDev / |mean| -- how stable that multiple has been. Lower means
   // today's mean-based fair value is a better anchor.
@@ -189,6 +190,28 @@ export function priceToAumRatioStats(aumValues: number[], priceValues: number[])
   const meanRatio = ratios.reduce((a, b) => a + b, 0) / ratios.length;
   if (meanRatio === 0) return null;
   const variance = ratios.reduce((sum, r) => sum + (r - meanRatio) ** 2, 0) / ratios.length;
-  const cv = Math.sqrt(variance) / Math.abs(meanRatio);
-  return { meanRatio, cv, n: ratios.length };
+  const stdDev = Math.sqrt(variance);
+  const cv = stdDev / Math.abs(meanRatio);
+  return { meanRatio, stdDev, cv, n: ratios.length };
+}
+
+export type RatioBasis = "mean" | "+1sd" | "+2sd" | "-1sd" | "-2sd";
+
+// The 5 points on the historical ratio's own distribution the Stock
+// Correlation tab lets you evaluate fair value at -- "mean" (the default)
+// is the plain historical average; the ±SD options answer "what would fair
+// value be if the multiple were a standard deviation richer/cheaper than
+// its own history," using the same mean/stdDev priceToAumRatioStats
+// already computes (no separate stat needed).
+export const RATIO_BASIS_OPTIONS: { value: RatioBasis; label: string; multiplier: number }[] = [
+  { value: "mean", label: "Mean", multiplier: 0 },
+  { value: "+1sd", label: "+1 SD", multiplier: 1 },
+  { value: "+2sd", label: "+2 SD", multiplier: 2 },
+  { value: "-1sd", label: "-1 SD", multiplier: -1 },
+  { value: "-2sd", label: "-2 SD", multiplier: -2 },
+];
+
+export function ratioAtBasis(stats: RatioStats, basis: RatioBasis): number {
+  const option = RATIO_BASIS_OPTIONS.find((o) => o.value === basis) ?? RATIO_BASIS_OPTIONS[0];
+  return stats.meanRatio + option.multiplier * stats.stdDev;
 }

@@ -10,11 +10,19 @@ import {
   computeMovingAverage,
   computeCorrelationStats,
   priceToAumRatioStats,
+  ratioAtBasis,
   alignSeriesByDate,
   toDatedValues,
   firstDefinedIndex,
+  RATIO_BASIS_OPTIONS,
+  type RatioBasis,
 } from "@/lib/aum/series-math";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
+import { FairValueExplainer } from "./fair-value-explainer";
+
+// The AMC used as the worked example below the table -- HDFC specifically
+// requested, not user-selectable (yet).
+const EXPLAINER_AMC_SLUG = "hdfc-mutual-fund";
 
 interface ComputedRow {
   slug: string;
@@ -45,7 +53,7 @@ interface ComputedRow {
 // A moving average longer than an AMC's own history leaves every value
 // undefined -- that row's cells fall through to "—" the same way any
 // other missing figure already does in this table.
-function computeRow(entry: AmcStockCorrelationEntry, maDays: number): ComputedRow {
+function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis: RatioBasis): ComputedRow {
   const data = trimToLastContinuousRun(entry.aumHistory);
   const aumDisplay = computeMovingAverage(
     data.map((d) => d.liveAumCr),
@@ -68,7 +76,8 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number): ComputedRo
 
   const latestAumCr = aumDisplay.length > 0 ? aumDisplay[aumDisplay.length - 1] ?? null : null;
   const latestPriceInr = priceDisplay.length > 0 ? priceDisplay[priceDisplay.length - 1] ?? null : null;
-  const fairValuePriceInr = ratioStats && latestAumCr !== null ? ratioStats.meanRatio * latestAumCr : null;
+  const selectedRatio = ratioStats ? ratioAtBasis(ratioStats, ratioBasis) : null;
+  const fairValuePriceInr = selectedRatio !== null && latestAumCr !== null ? selectedRatio * latestAumCr : null;
   const upsidePct =
     fairValuePriceInr !== null && latestPriceInr !== null && latestPriceInr !== 0
       ? (fairValuePriceInr - latestPriceInr) / latestPriceInr
@@ -100,17 +109,23 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number): ComputedRo
 
 const maInputClass =
   "w-16 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
+const ratioBasisSelectClass =
+  "w-20 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 const groupHeadClass = "border-l text-center text-xs font-bold tracking-wide uppercase text-muted-foreground";
 
 export function StockCorrelationTable() {
   const { data, error, isLoading } = useAmcStockCorrelations();
   const [maDaysInput, setMaDaysInput] = useState("");
   const maDays = Math.max(1, Math.min(250, parseInt(maDaysInput, 10) || 1));
+  const [ratioBasis, setRatioBasis] = useState<RatioBasis>("mean");
+  const activeBasis = RATIO_BASIS_OPTIONS.find((o) => o.value === ratioBasis) ?? RATIO_BASIS_OPTIONS[0];
 
   const rows = useMemo(() => {
     if (!data) return [];
-    return data.amcs.map((entry) => computeRow(entry, maDays));
-  }, [data, maDays]);
+    return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis));
+  }, [data, maDays, ratioBasis]);
+
+  const explainerEntry = useMemo(() => data?.amcs.find((a) => a.slug === EXPLAINER_AMC_SLUG) ?? null, [data]);
 
   // Groups rows by their own truncatedFromDate and picks the date shared by
   // the MOST rows as the one general caption, calling out any row whose
@@ -150,24 +165,43 @@ export function StockCorrelationTable() {
         <p className="max-w-2xl text-sm text-muted-foreground">
           All 8 AMCs with their own listed share price. Corr/R² use day-over-day % changes (matches each
           AMC&apos;s own AUM Trend chart), recalculated for every row from the single moving-average input here.
-          Fair value price comes from each day&apos;s own (share price ÷ Live AUM) ratio — its historical average
-          times today&apos;s AUM — rather than a level-vs-level regression, which would spuriously overstate the fit
-          since both series trend upward over time.
+          Fair value price comes from each day&apos;s own (share price ÷ Live AUM) ratio — its historical mean (or,
+          via Ratio basis, mean ± 1/2 standard deviations) times today&apos;s AUM — rather than a level-vs-level
+          regression, which would spuriously overstate the fit since both series trend upward over time.
         </p>
-        <div className="flex items-center gap-2">
-          <label htmlFor="summary-ma-days" className="text-xs text-muted-foreground">
-            Moving avg (days)
-          </label>
-          <input
-            id="summary-ma-days"
-            type="number"
-            min={0}
-            max={250}
-            value={maDaysInput}
-            onChange={(e) => setMaDaysInput(e.target.value)}
-            placeholder="0"
-            className={maInputClass}
-          />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label htmlFor="summary-ratio-basis" className="text-xs text-muted-foreground">
+              Ratio basis
+            </label>
+            <select
+              id="summary-ratio-basis"
+              value={ratioBasis}
+              onChange={(e) => setRatioBasis(e.target.value as RatioBasis)}
+              className={ratioBasisSelectClass}
+            >
+              {RATIO_BASIS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="summary-ma-days" className="text-xs text-muted-foreground">
+              Moving avg (days)
+            </label>
+            <input
+              id="summary-ma-days"
+              type="number"
+              min={0}
+              max={250}
+              value={maDaysInput}
+              onChange={(e) => setMaDaysInput(e.target.value)}
+              placeholder="0"
+              className={maInputClass}
+            />
+          </div>
         </div>
       </div>
       {truncation && (
@@ -206,7 +240,9 @@ export function StockCorrelationTable() {
               <TableHead className="text-right align-bottom">Share Price</TableHead>
               <TableHead className="border-l text-right align-bottom">Corr</TableHead>
               <TableHead className="text-right align-bottom">R²</TableHead>
-              <TableHead className="border-l text-right align-bottom">Fair value price</TableHead>
+              <TableHead className="border-l text-right align-bottom">
+                Fair value price{activeBasis.value !== "mean" ? ` (${activeBasis.label})` : ""}
+              </TableHead>
               <TableHead className="text-right align-bottom">Upside %</TableHead>
             </TableRow>
           </TableHeader>
@@ -262,6 +298,8 @@ export function StockCorrelationTable() {
           </TableBody>
         </Table>
       </div>
+
+      {explainerEntry && <FairValueExplainer entry={explainerEntry} maDays={maDays} ratioBasis={ratioBasis} />}
     </div>
   );
 }
