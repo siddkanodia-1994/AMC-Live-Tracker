@@ -283,5 +283,10 @@
     "overviewName": "Edelweiss Altiva SIF",
     "sheetName": "Altiva SIF",
     "slug": "edelweiss-altiva-sif"
+  },
+  {
+    "overviewName": "AlphaGrep Mutual Fund",
+    "sheetName": "AlphaGrep MF",
+    "slug": "alphagrep-mutual-fund"
   }
 ]
