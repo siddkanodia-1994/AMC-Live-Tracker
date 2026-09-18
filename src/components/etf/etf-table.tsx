@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRegisterExport } from "@/components/layout/export-context";
-import { formatPriceInr, formatCr, formatPct, formatReportPeriodLabel } from "@/lib/utils/format";
+import { formatPriceInr, formatCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import { useEtfLiveAum } from "@/hooks/use-etf-live-aum";
 import { useMcxReference } from "@/hooks/use-mcx-reference";
 import type { EtfLiveAum } from "@/lib/etf/compute-live-aum";
@@ -29,6 +29,21 @@ interface AmcEtfRow {
   totalReportedAumCr: number | null;
   totalLiveAumCr: number | null;
   totalDeltaPct: number | null;
+  // Older (more conservative) of gold's/silver's own liveNavDate -- the
+  // combined Total is only as fresh as its stalest half.
+  totalLiveNavDate: string | null;
+}
+
+function olderDate(a: string | null | undefined, b: string | null | undefined): string | null {
+  if (a && b) return a < b ? a : b;
+  return a ?? b ?? null;
+}
+
+// Oldest liveNavDate across a set of rows -- used for the footer's
+// multi-AMC totals, which are only as fresh as the stalest scheme feeding
+// into them.
+function oldestDate(dates: (string | null | undefined)[]): string | null {
+  return dates.reduce<string | null>((min, d) => olderDate(min, d), null);
 }
 
 type SortKey =
@@ -65,7 +80,8 @@ function groupByAmc(schemes: EtfLiveAum[]): AmcEtfRow[] {
       totalReportedAumCr !== null && totalLiveAumCr !== null && totalReportedAumCr !== 0
         ? (totalLiveAumCr - totalReportedAumCr) / totalReportedAumCr
         : null;
-    return { amc, gold, silver, totalReportedAumCr, totalLiveAumCr, totalDeltaPct };
+    const totalLiveNavDate = hasLive ? olderDate(gold?.liveNavDate, silver?.liveNavDate) : null;
+    return { amc, gold, silver, totalReportedAumCr, totalLiveAumCr, totalDeltaPct, totalLiveNavDate };
   });
 }
 
@@ -100,9 +116,29 @@ function computeGroupTotal(rows: AmcEtfRow[], pick: (r: AmcEtfRow) => number | n
   return values.reduce((sum, v) => sum + v, 0);
 }
 
-function AumCell({ value, className = "" }: { value: number | null | undefined; className?: string }) {
+function AumCell({
+  value,
+  dateIso,
+  className = "",
+}: {
+  value: number | null | undefined;
+  // Only meaningful for a LIVE figure (repriced daily) -- Reported AUM
+  // callers simply omit this, since its freshness is already implied by
+  // the report period shown elsewhere in the row.
+  dateIso?: string | null;
+  className?: string;
+}) {
   return (
-    <TableCell className={`text-right tabular-nums ${className}`}>{value != null ? formatCr(value) : "—"}</TableCell>
+    <TableCell className={`text-right tabular-nums ${className}`}>
+      {value != null ? (
+        <div className="leading-tight">
+          <div>{formatCr(value)}</div>
+          {dateIso && <div className="text-[10px] font-normal text-muted-foreground">{formatShortDate(dateIso)}</div>}
+        </div>
+      ) : (
+        "—"
+      )}
+    </TableCell>
   );
 }
 
@@ -200,6 +236,9 @@ export function EtfTable() {
   const grandLive = computeGroupTotal(rows, (r) => r.totalLiveAumCr);
   const grandDeltaPct =
     grandReported !== null && grandLive !== null && grandReported !== 0 ? (grandLive - grandReported) / grandReported : null;
+  const totalGoldLiveDate = oldestDate(rows.map((r) => r.gold?.liveNavDate));
+  const totalSilverLiveDate = oldestDate(rows.map((r) => r.silver?.liveNavDate));
+  const grandLiveDate = oldestDate(rows.map((r) => r.totalLiveNavDate));
 
   useRegisterExport(() => ({
     fileName: `gold-silver-etfs-${new Date().toISOString().slice(0, 10)}`,
@@ -292,13 +331,13 @@ export function EtfTable() {
               <TableRow key={r.amc}>
                 <TableCell className="font-medium">{r.amc}</TableCell>
                 <AumCell value={r.gold?.reportedAumCr} />
-                <AumCell value={r.gold?.liveAumCr} />
+                <AumCell value={r.gold?.liveAumCr} dateIso={r.gold?.liveNavDate} />
                 <PctCell value={r.gold?.deltaPct} className={GROUP_DIVIDER_CLASS} />
                 <AumCell value={r.silver?.reportedAumCr} />
-                <AumCell value={r.silver?.liveAumCr} />
+                <AumCell value={r.silver?.liveAumCr} dateIso={r.silver?.liveNavDate} />
                 <PctCell value={r.silver?.deltaPct} className={GROUP_DIVIDER_CLASS} />
                 <AumCell value={r.totalReportedAumCr} className="font-medium" />
-                <AumCell value={r.totalLiveAumCr} className="font-medium" />
+                <AumCell value={r.totalLiveAumCr} dateIso={r.totalLiveNavDate} className="font-medium" />
                 <PctCell value={r.totalDeltaPct} />
               </TableRow>
             ))}
@@ -309,13 +348,13 @@ export function EtfTable() {
                 Total ({goldCount} Gold / {silverCount} Silver AMCs)
               </TableCell>
               <AumCell value={totalGoldReported} className="font-medium" />
-              <AumCell value={totalGoldLive} className="font-medium" />
+              <AumCell value={totalGoldLive} dateIso={totalGoldLiveDate} className="font-medium" />
               <PctCell value={totalGoldDeltaPct} className={GROUP_DIVIDER_CLASS} />
               <AumCell value={totalSilverReported} className="font-medium" />
-              <AumCell value={totalSilverLive} className="font-medium" />
+              <AumCell value={totalSilverLive} dateIso={totalSilverLiveDate} className="font-medium" />
               <PctCell value={totalSilverDeltaPct} className={GROUP_DIVIDER_CLASS} />
               <AumCell value={grandReported} className="font-medium" />
-              <AumCell value={grandLive} className="font-medium" />
+              <AumCell value={grandLive} dateIso={grandLiveDate} className="font-medium" />
               <PctCell value={grandDeltaPct} />
             </TableRow>
             {mcxData?.rows.map((row) => (
