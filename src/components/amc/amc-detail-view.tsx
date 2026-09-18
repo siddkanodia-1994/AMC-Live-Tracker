@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { formatCr, formatDeltaCr, formatPct, formatShortDate } from "@/lib/utils/format";
-import type { AumHistoryPoint } from "@/lib/aum/history";
+import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
 
 const dateInputClass =
   "w-full min-w-0 rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
@@ -21,10 +21,17 @@ export function AmcDetailView({
   slug,
   initialData,
   history,
+  stockPriceSeries,
+  stockLabel,
 }: {
   slug: string;
   initialData?: AmcDetailResponse;
   history: AumHistoryPoint[];
+  // Only set for the ~7 AMCs whose own asset-management business is a
+  // separately-listed stock -- undefined for everyone else, so the chart
+  // renders no toggle at all in that case.
+  stockPriceSeries?: AmcStockPricePoint[];
+  stockLabel?: string;
 }) {
   // null = live mode; a date = the whole page (cards + Holdings table, and
   // Sector Allocation for free since it derives from the same holdings
@@ -160,7 +167,7 @@ export function AmcDetailView({
           <CardTitle>AUM Trend</CardTitle>
         </CardHeader>
         <CardContent>
-          <AumTrendChart data={history} />
+          <AumTrendChart data={history} stockPriceSeries={stockPriceSeries} stockLabel={stockLabel} />
         </CardContent>
       </Card>
 

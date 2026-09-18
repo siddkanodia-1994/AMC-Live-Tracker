@@ -7,6 +7,7 @@ import { reclaimStaleInstrumentMappings } from "@/lib/aum/stale-mapping-reclaim"
 import { detectShareAdjustments } from "@/lib/aum/split-detection";
 import { runEtfIngestion } from "@/lib/etf/ingest";
 import { runMcxIngestion } from "@/lib/mcx/ingest";
+import { runAmcStockIngestion } from "@/lib/amc-stock/ingest";
 import { getIstDateString } from "@/lib/utils/date";
 
 // Bumped from 30 -> 180: the outage-reclaim step below can fetch DHAN
@@ -137,6 +138,16 @@ export async function GET(request: Request) {
       await runMcxIngestion();
     } catch (err) {
       console.error("Failed to run MCX ingestion:", err);
+    }
+
+    // Best-effort, fully isolated: the AMC detail page's own listed-stock
+    // share-price overlay (see amc_listed_stock). These ISINs are never
+    // anyone's holding, so a failure here has zero effect on the equity/
+    // ETF/MCX pipelines above, and vice versa.
+    try {
+      await runAmcStockIngestion();
+    } catch (err) {
+      console.error("Failed to run AMC listed-stock ingestion:", err);
     }
 
     return NextResponse.json({ ok: true, amcsSnapshotted: snapshot.amcs.length });

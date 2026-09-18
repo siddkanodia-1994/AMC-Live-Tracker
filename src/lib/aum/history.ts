@@ -81,6 +81,29 @@ export async function getAmcAumHistory(amcId: number): Promise<AumHistoryPoint[]
   }));
 }
 
+export interface AmcStockPricePoint {
+  date: string;
+  priceInr: number;
+}
+
+/**
+ * Daily closing price history for an AMC's OWN listed stock (see
+ * amc_listed_stock / runAmcStockIngestion), from `fromDate` through
+ * whatever's most recently stored -- feeds the AUM Trend chart's
+ * optional share-price overlay. Plain read off isin_daily_price, same
+ * table every other equity price already lives in (see the plan's audit
+ * of amc-stock ingestion for why reusing it here is schema/logic-safe).
+ */
+export async function getAmcListedStockPriceHistory(isin: string, fromDate: string): Promise<AmcStockPricePoint[]> {
+  const rows = await db
+    .select()
+    .from(isinDailyPrice)
+    .where(and(eq(isinDailyPrice.isin, isin), gte(isinDailyPrice.snapshotDate, fromDate)))
+    .orderBy(asc(isinDailyPrice.snapshotDate));
+
+  return rows.map((r) => ({ date: r.snapshotDate, priceInr: Number(r.priceInr) }));
+}
+
 export interface AverageAumSinceReport {
   avgLiveAumCr: number;
   daysCount: number;

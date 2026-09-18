@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { formatCr, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
-import type { AumHistoryPoint } from "@/lib/aum/history";
+import { formatCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
+import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
 
 // Padding added above/below the combined (live + reported) data range, as a
 // fraction of that range, so the line doesn't sit flush against the plot
@@ -53,6 +53,41 @@ function computeYAxisDomain(data: AumHistoryPoint[]): [number, number] {
       ? range * DOMAIN_PADDING_RATIO
       : Math.max(Math.abs(max) * FLAT_DOMAIN_PADDING_RATIO, MIN_ABSOLUTE_PADDING_CR);
 
+  return [Math.max(0, min - padding), max + padding];
+}
+
+interface ChartPoint extends AumHistoryPoint {
+  stockPriceInr?: number;
+}
+
+// Left-joins the AMC's own listed-stock price onto the (already AUM-
+// trimmed) chart data by date -- a date with no stock price (a weekend/
+// holiday the stock didn't trade, or before/after the price history's own
+// range) simply has no point there, same as any normal stock chart.
+function mergeStockPrice(data: AumHistoryPoint[], stockPriceSeries: AmcStockPricePoint[] | undefined): ChartPoint[] {
+  if (!stockPriceSeries || stockPriceSeries.length === 0) return data;
+  const priceByDate = new Map(stockPriceSeries.map((p) => [p.date, p.priceInr]));
+  return data.map((point) => ({ ...point, stockPriceInr: priceByDate.get(point.date) }));
+}
+
+// Same shape as computeYAxisDomain, just over the one stock-price series --
+// kept separate since it needs its own independent right-side axis/domain,
+// entirely unrelated to the AUM (₹ crore) scale on the left.
+function computeStockPriceYAxisDomain(series: AmcStockPricePoint[]): [number, number] {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const p of series) {
+    if (Number.isFinite(p.priceInr)) {
+      if (p.priceInr < min) min = p.priceInr;
+      if (p.priceInr > max) max = p.priceInr;
+    }
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+  const range = max - min;
+  const padding =
+    range > 0
+      ? range * DOMAIN_PADDING_RATIO
+      : Math.max(Math.abs(max) * FLAT_DOMAIN_PADDING_RATIO, MIN_ABSOLUTE_PADDING_CR);
   return [Math.max(0, min - padding), max + padding];
 }
 
@@ -126,12 +161,33 @@ function computePctYAxisDomain(points: DailyChangePoint[]): [number, number] {
   return [min - padding, max + padding];
 }
 
-export function AumTrendChart({ data: rawData, mode = "absolute" }: { data: AumHistoryPoint[]; mode?: "absolute" | "change" }) {
+export function AumTrendChart({
+  data: rawData,
+  mode = "absolute",
+  stockPriceSeries,
+  stockLabel,
+}: {
+  data: AumHistoryPoint[];
+  mode?: "absolute" | "change";
+  // Only set for the handful of AMCs whose own asset-management business
+  // is itself a separately-listed stock -- undefined everywhere else, so
+  // no toggle renders at all in that case.
+  stockPriceSeries?: AmcStockPricePoint[];
+  stockLabel?: string;
+}) {
+  const [showStockPrice, setShowStockPrice] = useState(false);
   const data = useMemo(() => trimToLastContinuousRun(rawData), [rawData]);
+  const chartData = useMemo(() => mergeStockPrice(data, stockPriceSeries), [data, stockPriceSeries]);
   const yDomain = useMemo(() => computeYAxisDomain(data), [data]);
   const tickDecimals = useMemo(() => computeTickDecimals(yDomain), [yDomain]);
   const changeSeries = useMemo(() => computeDailyChangeSeries(data), [data]);
   const pctYDomain = useMemo(() => computePctYAxisDomain(changeSeries), [changeSeries]);
+  const hasStockPrice = !!stockPriceSeries && stockPriceSeries.length > 0;
+  const stockYDomain = useMemo(
+    () => (stockPriceSeries ? computeStockPriceYAxisDomain(stockPriceSeries) : ([0, 1] as [number, number])),
+    [stockPriceSeries]
+  );
+  const stockSeriesName = stockLabel ? `${stockLabel} Share Price` : "Share Price";
 
   if (data.length === 0) {
     return (
@@ -182,57 +238,94 @@ export function AumTrendChart({ data: rawData, mode = "absolute" }: { data: AumH
   }
 
   return (
-    <div className="h-80 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-          <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 12 }} />
-          <YAxis
-            domain={yDomain}
-            tick={{ fontSize: 12 }}
-            tickFormatter={(v: number) => `${(v / 1000).toFixed(tickDecimals)}k`}
-            width={50}
-          />
-          <Tooltip
-            labelFormatter={(label) => (typeof label === "string" ? formatShortDate(label) : String(label ?? ""))}
-            formatter={(value, name, item) => {
-              const formatted = typeof value === "number" ? formatCr(value) : String(value);
-              // Reported AUM only steps once a month (when a new workbook is
-              // imported) -- show which report period it reflects alongside
-              // the value, since the chart's X axis is daily.
-              const reportPeriod = (item?.payload as AumHistoryPoint | undefined)?.reportPeriod;
-              if (name === "Reported AUM" && reportPeriod) {
-                return `${formatted} (${formatReportPeriodLabel(reportPeriod)})`;
-              }
-              return formatted;
-            }}
-            contentStyle={{
-              backgroundColor: "var(--color-popover)",
-              borderColor: "var(--color-border)",
-              color: "var(--color-popover-foreground)",
-              fontSize: 12,
-            }}
-          />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Line
-            type="monotone"
-            dataKey="liveAumCr"
-            name="Live AUM"
-            stroke="var(--color-primary)"
-            strokeWidth={2}
-            dot={{ r: 3 }}
-          />
-          <Line
-            type="monotone"
-            dataKey="reportedAumCr"
-            name="Reported AUM"
-            stroke="var(--color-muted-foreground)"
-            strokeWidth={1.5}
-            strokeDasharray="4 4"
-            dot={{ r: 2 }}
-          />
-        </LineChart>
-      </ResponsiveContainer>
+    <div className="space-y-2">
+      {hasStockPrice && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setShowStockPrice((v) => !v)}
+            className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {showStockPrice ? `Hide ${stockLabel} share price` : `+ Show ${stockLabel} share price`}
+          </button>
+        </div>
+      )}
+      <div className="h-80 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+            <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 12 }} />
+            <YAxis
+              domain={yDomain}
+              tick={{ fontSize: 12 }}
+              tickFormatter={(v: number) => `${(v / 1000).toFixed(tickDecimals)}k`}
+              width={50}
+            />
+            {showStockPrice && (
+              <YAxis
+                yAxisId="stock"
+                orientation="right"
+                domain={stockYDomain}
+                tick={{ fontSize: 12 }}
+                tickFormatter={(v: number) => formatPriceInr(v)}
+                width={70}
+              />
+            )}
+            <Tooltip
+              labelFormatter={(label) => (typeof label === "string" ? formatShortDate(label) : String(label ?? ""))}
+              formatter={(value, name, item) => {
+                if (name === stockSeriesName) {
+                  return typeof value === "number" ? formatPriceInr(value) : String(value);
+                }
+                const formatted = typeof value === "number" ? formatCr(value) : String(value);
+                // Reported AUM only steps once a month (when a new workbook is
+                // imported) -- show which report period it reflects alongside
+                // the value, since the chart's X axis is daily.
+                const reportPeriod = (item?.payload as AumHistoryPoint | undefined)?.reportPeriod;
+                if (name === "Reported AUM" && reportPeriod) {
+                  return `${formatted} (${formatReportPeriodLabel(reportPeriod)})`;
+                }
+                return formatted;
+              }}
+              contentStyle={{
+                backgroundColor: "var(--color-popover)",
+                borderColor: "var(--color-border)",
+                color: "var(--color-popover-foreground)",
+                fontSize: 12,
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Line
+              type="monotone"
+              dataKey="liveAumCr"
+              name="Live AUM"
+              stroke="var(--color-primary)"
+              strokeWidth={2}
+              dot={{ r: 3 }}
+            />
+            <Line
+              type="monotone"
+              dataKey="reportedAumCr"
+              name="Reported AUM"
+              stroke="var(--color-muted-foreground)"
+              strokeWidth={1.5}
+              strokeDasharray="4 4"
+              dot={{ r: 2 }}
+            />
+            {showStockPrice && (
+              <Line
+                yAxisId="stock"
+                type="monotone"
+                dataKey="stockPriceInr"
+                name={stockSeriesName}
+                stroke="var(--color-violet-500)"
+                strokeWidth={1.5}
+                dot={{ r: 2 }}
+              />
+            )}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }

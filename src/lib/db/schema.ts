@@ -629,3 +629,30 @@ export const mcxDailyPrice = pgTable(
   },
   (t) => [uniqueIndex("mcx_daily_price_metal_date_idx").on(t.metal, t.snapshotDate)]
 );
+
+// AMCs whose asset-management BUSINESS is itself a separately-listed
+// company (e.g. HDFC Mutual Fund's manager, HDFC Asset Management
+// Company, trades on NSE as HDFCAMC) -- not every AMC has one of these,
+// so this is a sparse one-row-per-AMC table, not a column on `amcs`.
+// Drives the AMC detail page's AUM Trend chart's optional share-price
+// overlay (src/components/amc/aum-trend-chart.tsx). Price history itself
+// lives in the existing isinDailyPrice table (see runAmcStockIngestion,
+// src/lib/amc-stock/ingest.ts) -- this table is purely the amcId->ISIN
+// mapping + each one's own backfill start date, seeded via
+// scripts/seed-amc-listed-stocks.ts.
+export const amcListedStock = pgTable(
+  "amc_listed_stock",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    isin: text("isin").notNull(),
+    tradingSymbol: text("trading_symbol").notNull(),
+    // A column (not a hardcoded constant) so a future AMC can start from
+    // its own listing date without a code change -- "2026-01-01" for the
+    // first 7, per the user's explicit request.
+    backfillFromDate: date("backfill_from_date").notNull(),
+  },
+  (t) => [uniqueIndex("amc_listed_stock_amc_id_idx").on(t.amcId)]
+);
