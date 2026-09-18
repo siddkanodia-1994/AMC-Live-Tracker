@@ -134,6 +134,13 @@
       "when": 1788866384719,
       "tag": "0018_perpetual_thanos",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789211329905,
+      "tag": "0019_tiny_jackal",
+      "breakpoints": true
     }
   ]
 }

@@ -269,7 +269,21 @@ export interface LiveAumSnapshot {
     companyName: string;
     oldSecurityId: string | null;
     newSecurityId: string;
+    // null for rows predating this column (genuinely unrecorded, not
+    // zero) -- see the schema comment on staleMappingCorrectionLog.
+    backfillDatesCount: number | null;
     correctedAt: string;
+  }[];
+  // Stale-mapping candidates where DHAN's own instrument master has no
+  // entry at all, so reclaimStaleInstrumentMappings can't self-heal them
+  // (see stale-mapping-reclaim.ts) -- unlike the other disclosures on
+  // this type, this one genuinely needs a human look, not just FYI.
+  unresolvedStaleMappings?: {
+    isin: string;
+    companyName: string;
+    oldSecurityId: string | null;
+    firstCheckedAt: string;
+    lastCheckedAt: string;
   }[];
 }
 

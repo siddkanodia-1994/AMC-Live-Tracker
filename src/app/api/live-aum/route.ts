@@ -4,7 +4,7 @@ import { computeOverviewAsOf } from "@/lib/aum/overview-as-of";
 import { getCanonicalSnapshotDateBounds } from "@/lib/aum/history";
 import { getDailyDataQualityAlerts } from "@/lib/aum/daily-data-quality";
 import { getRecentOutageReclaims } from "@/lib/aum/outage-reclaim-log";
-import { getRecentStaleMappingCorrections } from "@/lib/aum/stale-mapping-reclaim";
+import { getRecentStaleMappingCorrections, getUnresolvedStaleMappings } from "@/lib/aum/stale-mapping-reclaim";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -21,12 +21,13 @@ export async function GET(request: Request) {
     // DHAN LTP batch (see compute-live-aum.ts) -- no second, independent
     // DHAN call to coordinate here anymore, safe to run everything
     // concurrently.
-    const [snapshot, bounds, dailyDataQualityAlert, outageReclaims, staleMappingCorrections] = await Promise.all([
+    const [snapshot, bounds, dailyDataQualityAlert, outageReclaims, staleMappingCorrections, unresolvedStaleMappings] = await Promise.all([
       computeLiveAum({ forceRefresh }),
       getCanonicalSnapshotDateBounds(),
       getDailyDataQualityAlerts().catch(() => null),
       getRecentOutageReclaims().catch(() => []),
       getRecentStaleMappingCorrections().catch(() => []),
+      getUnresolvedStaleMappings().catch(() => []),
     ]);
     return NextResponse.json({
       ...snapshot,
@@ -36,6 +37,7 @@ export async function GET(request: Request) {
       dailyDataQualityAlert,
       outageReclaims,
       staleMappingCorrections,
+      unresolvedStaleMappings,
     });
   } catch (err) {
     if (err instanceof NoDataImportedError) {

@@ -285,7 +285,38 @@ export const staleMappingCorrectionLog = pgTable("stale_mapping_correction_log",
   newSecurityId: text("new_security_id").notNull(),
   newExchangeSegment: text("new_exchange_segment").notNull(),
   correctedAt: timestamp("corrected_at", { withTimezone: true }).notNull().defaultNow(),
+  // How many trading days backfillIsinPriceHistory actually found/wrote for
+  // this ISIN's new security ID -- null for rows predating this column
+  // (genuinely unrecorded, not zero), a real count (0 or more) for every
+  // row going forward. 0 means the correction itself succeeded but DHAN's
+  // historical API returned no usable closes for the new ID, which the UI
+  // surfaces distinctly rather than unconditionally claiming success.
+  backfillDatesCount: integer("backfill_dates_count"),
 });
+
+// One row PER ISIN (not per daily check) for a stale-mapping candidate
+// where DHAN's own instrument master has no entry at all -- there's
+// nothing to correct against, so reclaimStaleInstrumentMappings can't
+// self-heal it. Upserted on `isin` rather than appended, since an
+// unresolved ISIN would otherwise re-trigger every single day it stays a
+// candidate and flood this log with duplicates. firstCheckedAt is never
+// updated after first insert (answers "how long has this been stuck");
+// lastCheckedAt advances on every re-check, so a row that stops being a
+// candidate (resolved some other way) naturally ages out of any
+// "recent" query without needing an explicit delete.
+export const staleMappingUnresolvedLog = pgTable(
+  "stale_mapping_unresolved_log",
+  {
+    id: serial("id").primaryKey(),
+    isin: text("isin").notNull(),
+    companyName: text("company_name").notNull(),
+    oldSecurityId: text("old_security_id"),
+    oldExchangeSegment: text("old_exchange_segment"),
+    firstCheckedAt: timestamp("first_checked_at", { withTimezone: true }).notNull().defaultNow(),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("stale_mapping_unresolved_log_isin_idx").on(t.isin)]
+);
 
 // One row per (ISIN, trading date) where that ISIN was classified
 // priceSource === "last_close" that day -- written once daily by the 4:05pm

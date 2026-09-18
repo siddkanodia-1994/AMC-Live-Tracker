@@ -1220,6 +1220,7 @@ export function AmcGrid({
             shareAdjustments={data.shareAdjustments}
             outageReclaims={data.outageReclaims}
             staleMappingCorrections={data.staleMappingCorrections}
+            unresolvedStaleMappings={data.unresolvedStaleMappings}
           />
         </TabsContent>
       </Tabs>
