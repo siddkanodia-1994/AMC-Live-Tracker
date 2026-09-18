@@ -57,17 +57,35 @@ function computeYAxisDomain(data: AumHistoryPoint[]): [number, number] {
 }
 
 interface ChartPoint extends AumHistoryPoint {
+  // Whatever's currently displayed for Live AUM -- identical to liveAumCr
+  // when no moving average is applied (computeMovingAverage's windowDays=1
+  // is the identity transform), the smoothed value otherwise.
+  liveAumDisplay: number;
   stockPriceInr?: number;
 }
 
-// Left-joins the AMC's own listed-stock price onto the (already AUM-
-// trimmed) chart data by date -- a date with no stock price (a weekend/
-// holiday the stock didn't trade, or before/after the price history's own
-// range) simply has no point there, same as any normal stock chart.
-function mergeStockPrice(data: AumHistoryPoint[], stockPriceSeries: AmcStockPricePoint[] | undefined): ChartPoint[] {
-  if (!stockPriceSeries || stockPriceSeries.length === 0) return data;
-  const priceByDate = new Map(stockPriceSeries.map((p) => [p.date, p.priceInr]));
-  return data.map((point) => ({ ...point, stockPriceInr: priceByDate.get(point.date) }));
+// Builds the chart's per-date rows from the (already AUM-trimmed) data plus
+// each series' own DISPLAY values (raw or moving-averaged, computed by the
+// caller) -- a date with no stock price (a weekend/holiday the stock didn't
+// trade, or before/after the price history's own range) simply has no
+// point there, same as any normal stock chart. reportedAumCr passes
+// through unchanged (spread from `point`) -- it's never smoothed, since
+// it's a monthly step function, not a daily series.
+function buildChartData(
+  data: AumHistoryPoint[],
+  liveAumDisplayValues: number[],
+  stockPriceSeries: AmcStockPricePoint[] | undefined,
+  stockPriceDisplayValues: number[] | undefined
+): ChartPoint[] {
+  const priceByDate = new Map<string, number>();
+  if (stockPriceSeries && stockPriceDisplayValues) {
+    stockPriceSeries.forEach((p, i) => priceByDate.set(p.date, stockPriceDisplayValues[i]));
+  }
+  return data.map((point, i) => ({
+    ...point,
+    liveAumDisplay: liveAumDisplayValues[i],
+    stockPriceInr: priceByDate.get(point.date),
+  }));
 }
 
 // Same shape as computeYAxisDomain, just over the one stock-price series --
@@ -89,6 +107,92 @@ function computeStockPriceYAxisDomain(series: AmcStockPricePoint[]): [number, nu
       ? range * DOMAIN_PADDING_RATIO
       : Math.max(Math.abs(max) * FLAT_DOMAIN_PADDING_RATIO, MIN_ABSOLUTE_PADDING_CR);
   return [Math.max(0, min - padding), max + padding];
+}
+
+// Trailing moving average with an expanding window for the first
+// (windowDays - 1) points, so a smoothed series still covers the same date
+// range as its raw input -- no leading gap. windowDays === 1 is the
+// identity transform (each point is its own 1-value "average"), which is
+// what "off" (the default) uses, so no separate on/off branch is needed
+// anywhere else in this file.
+function computeMovingAverage(values: number[], windowDays: number): number[] {
+  const result: number[] = [];
+  let windowSum = 0;
+  for (let i = 0; i < values.length; i++) {
+    windowSum += values[i];
+    if (i >= windowDays) windowSum -= values[i - windowDays];
+    result.push(windowSum / Math.min(i + 1, windowDays));
+  }
+  return result;
+}
+
+interface DatedValue {
+  date: string;
+  value: number;
+}
+
+// Day-over-day % change, keyed by the LATER date of each pair -- computed
+// over the series' own consecutive entries (whatever gaps it has), so a
+// return always reflects that series' actual trading-day-to-trading-day
+// move rather than an interval borrowed from the other series once the two
+// are intersected by date in computeCorrelationStats.
+function computeReturnsByDate(points: DatedValue[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1].value;
+    if (prev !== 0) map.set(points[i].date, (points[i].value - prev) / prev);
+  }
+  return map;
+}
+
+function pearsonCorrelation(xs: number[], ys: number[]): number | null {
+  const n = xs.length;
+  if (n < 2) return null;
+  const meanX = xs.reduce((a, b) => a + b, 0) / n;
+  const meanY = ys.reduce((a, b) => a + b, 0) / n;
+  let covariance = 0;
+  let varianceX = 0;
+  let varianceY = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - meanX;
+    const dy = ys[i] - meanY;
+    covariance += dx * dy;
+    varianceX += dx * dx;
+    varianceY += dy * dy;
+  }
+  if (varianceX === 0 || varianceY === 0) return null;
+  return covariance / Math.sqrt(varianceX * varianceY);
+}
+
+interface CorrelationStats {
+  r: number;
+  r2: number;
+  n: number;
+}
+
+// Correlates day-over-day RETURNS (not raw ₹-crore/₹-share levels) of
+// whatever's currently displayed for each series -- two series that both
+// trend upward for months would otherwise show spuriously high
+// level-correlation regardless of whether they actually move together day
+// to day. R² = r² exactly, since this is a single-predictor (bivariate)
+// case -- no separate regression needed. Returns null when there aren't at
+// least two overlapping return-days (e.g. a newly-listed stock with almost
+// no price history yet).
+function computeCorrelationStats(seriesA: DatedValue[], seriesB: DatedValue[]): CorrelationStats | null {
+  const returnsA = computeReturnsByDate(seriesA);
+  const returnsB = computeReturnsByDate(seriesB);
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const [date, valueA] of returnsA) {
+    const valueB = returnsB.get(date);
+    if (valueB !== undefined) {
+      xs.push(valueA);
+      ys.push(valueB);
+    }
+  }
+  const r = pearsonCorrelation(xs, ys);
+  if (r === null) return null;
+  return { r, r2: r * r, n: xs.length };
 }
 
 // Real NSE/BSE holiday clusters top out around 3-4 calendar days (a holiday
@@ -176,8 +280,24 @@ export function AumTrendChart({
   stockLabel?: string;
 }) {
   const [showStockPrice, setShowStockPrice] = useState(false);
+  const [maDaysInput, setMaDaysInput] = useState("");
+  // Any blank/invalid/out-of-range entry clamps to 1 -- the identity
+  // window, i.e. today's raw-daily default -- rather than crashing or
+  // silently doing nothing.
+  const maDays = Math.max(1, Math.min(250, parseInt(maDaysInput, 10) || 1));
   const data = useMemo(() => trimToLastContinuousRun(rawData), [rawData]);
-  const chartData = useMemo(() => mergeStockPrice(data, stockPriceSeries), [data, stockPriceSeries]);
+  const liveAumDisplayValues = useMemo(
+    () => computeMovingAverage(data.map((d) => d.liveAumCr), maDays),
+    [data, maDays]
+  );
+  const stockPriceDisplayValues = useMemo(
+    () => (stockPriceSeries ? computeMovingAverage(stockPriceSeries.map((p) => p.priceInr), maDays) : undefined),
+    [stockPriceSeries, maDays]
+  );
+  const chartData = useMemo(
+    () => buildChartData(data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues),
+    [data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues]
+  );
   const yDomain = useMemo(() => computeYAxisDomain(data), [data]);
   const tickDecimals = useMemo(() => computeTickDecimals(yDomain), [yDomain]);
   const changeSeries = useMemo(() => computeDailyChangeSeries(data), [data]);
@@ -187,7 +307,22 @@ export function AumTrendChart({
     () => (stockPriceSeries ? computeStockPriceYAxisDomain(stockPriceSeries) : ([0, 1] as [number, number])),
     [stockPriceSeries]
   );
-  const stockSeriesName = stockLabel ? `${stockLabel} Share Price` : "Share Price";
+  const maSuffix = maDays > 1 ? ` (${maDays}D avg)` : "";
+  const liveAumSeriesName = `Live AUM${maSuffix}`;
+  const stockSeriesName = `${stockLabel ? `${stockLabel} Share Price` : "Share Price"}${maSuffix}`;
+  // Correlates day-over-day returns of whichever series is currently
+  // displayed (raw or smoothed) -- only meaningful with a share price to
+  // compare against. Cheap enough (~200 points) to always compute rather
+  // than gating it behind showStockPrice too.
+  const correlationStats = useMemo(() => {
+    if (!stockPriceSeries || !stockPriceDisplayValues) return null;
+    const liveAumDisplayDated: DatedValue[] = data.map((d, i) => ({ date: d.date, value: liveAumDisplayValues[i] }));
+    const stockPriceDisplayDated: DatedValue[] = stockPriceSeries.map((p, i) => ({
+      date: p.date,
+      value: stockPriceDisplayValues[i],
+    }));
+    return computeCorrelationStats(liveAumDisplayDated, stockPriceDisplayDated);
+  }, [stockPriceSeries, stockPriceDisplayValues, data, liveAumDisplayValues]);
 
   if (data.length === 0) {
     return (
@@ -239,17 +374,48 @@ export function AumTrendChart({
 
   return (
     <div className="space-y-2">
-      {hasStockPrice && (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={() => setShowStockPrice((v) => !v)}
-            className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            {showStockPrice ? `Hide ${stockLabel} share price` : `+ Show ${stockLabel} share price`}
-          </button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-mono text-xs text-muted-foreground">
+          {hasStockPrice && showStockPrice && correlationStats && (
+            <>
+              Corr{" "}
+              <span
+                className={
+                  correlationStats.r >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
+                }
+              >
+                {formatPct(correlationStats.r, { alwaysSign: true })}
+              </span>{" "}
+              · R² {formatPct(correlationStats.r2)} · {correlationStats.n} trading days
+              {maDays > 1 ? `, ${maDays}D avg` : ""}
+            </>
+          )}
+        </span>
+        <div className="flex items-center gap-2">
+          <label htmlFor="ma-days" className="text-xs text-muted-foreground">
+            Moving avg (days)
+          </label>
+          <input
+            id="ma-days"
+            type="number"
+            min={1}
+            max={250}
+            value={maDaysInput}
+            onChange={(e) => setMaDaysInput(e.target.value)}
+            placeholder="Off"
+            className="w-16 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40"
+          />
+          {hasStockPrice && (
+            <button
+              type="button"
+              onClick={() => setShowStockPrice((v) => !v)}
+              className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              {showStockPrice ? `Hide ${stockLabel} share price` : `+ Show ${stockLabel} share price`}
+            </button>
+          )}
         </div>
-      )}
+      </div>
       <div className="h-80 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
@@ -297,8 +463,8 @@ export function AumTrendChart({
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Line
               type="monotone"
-              dataKey="liveAumCr"
-              name="Live AUM"
+              dataKey="liveAumDisplay"
+              name={liveAumSeriesName}
               stroke="var(--color-primary)"
               strokeWidth={2}
               dot={{ r: 3 }}
