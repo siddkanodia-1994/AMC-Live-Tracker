@@ -26,8 +26,12 @@ interface ComputedRow {
   fairValuePriceInr: number | null;
   ratioCv: number | null;
   upsidePct: number | null;
-  aumTruncatedFromDate: string | null;
-  priceTruncatedFromDate: string | null;
+  // The LATER (more conservative) of this row's own AUM/price truncation --
+  // this row's own numbers are only valid from this date onward. Kept
+  // per-row (not just aggregated across all 8) so an outlier AMC -- e.g.
+  // one whose stock listed months after the others -- doesn't get silently
+  // averaged away into a shared caption that's wrong for every other row.
+  truncatedFromDate: string | null;
 }
 
 // Mirrors aum-trend-chart.tsx's own per-AMC computation exactly (same
@@ -72,6 +76,8 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number): ComputedRo
 
   const aumFirstIdx = maDays > 1 ? firstDefinedIndex(aumDisplay) : 0;
   const priceFirstIdx = maDays > 1 ? firstDefinedIndex(priceDisplay) : 0;
+  const aumTruncatedFromDate = aumFirstIdx > 0 ? data[aumFirstIdx].date : null;
+  const priceTruncatedFromDate = priceFirstIdx > 0 ? entry.stockPriceSeries[priceFirstIdx].date : null;
 
   return {
     slug: entry.slug,
@@ -83,8 +89,12 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number): ComputedRo
     fairValuePriceInr,
     ratioCv: ratioStats?.cv ?? null,
     upsidePct,
-    aumTruncatedFromDate: aumFirstIdx > 0 ? data[aumFirstIdx].date : null,
-    priceTruncatedFromDate: priceFirstIdx > 0 ? entry.stockPriceSeries[priceFirstIdx].date : null,
+    truncatedFromDate:
+      aumTruncatedFromDate && priceTruncatedFromDate
+        ? aumTruncatedFromDate > priceTruncatedFromDate
+          ? aumTruncatedFromDate
+          : priceTruncatedFromDate
+        : aumTruncatedFromDate ?? priceTruncatedFromDate,
   };
 }
 
@@ -102,17 +112,29 @@ export function StockCorrelationTable() {
     return data.amcs.map((entry) => computeRow(entry, maDays));
   }, [data, maDays]);
 
-  // The LATEST (most conservative) of every row's own AUM/price truncation
-  // date -- from this date onward every row is guaranteed to have a value,
-  // so one shared caption is accurate for the whole table instead of
-  // repeating a possibly-different note per row.
-  const truncatedFromDate = useMemo(() => {
+  // Groups rows by their own truncatedFromDate and picks the date shared by
+  // the MOST rows as the one general caption, calling out any row whose
+  // own date differs separately -- a single AMC with much less history
+  // (e.g. a stock that only listed months after the others) shouldn't drag
+  // one shared caption to a date that's wrong for every other row, the way
+  // taking the max/latest across all 8 rows would.
+  const truncation = useMemo(() => {
     if (maDays <= 1) return null;
-    const dates = rows
-      .flatMap((r) => [r.aumTruncatedFromDate, r.priceTruncatedFromDate])
-      .filter((d): d is string => d !== null);
-    if (dates.length === 0) return null;
-    return dates.reduce((max, d) => (d > max ? d : max));
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      if (r.truncatedFromDate) counts.set(r.truncatedFromDate, (counts.get(r.truncatedFromDate) ?? 0) + 1);
+    }
+    if (counts.size === 0) return null;
+    let commonDate = "";
+    let commonCount = 0;
+    for (const [date, count] of counts) {
+      if (count > commonCount) {
+        commonDate = date;
+        commonCount = count;
+      }
+    }
+    const exceptions = rows.filter((r) => r.truncatedFromDate && r.truncatedFromDate !== commonDate);
+    return { commonDate, commonCount, exceptions };
   }, [rows, maDays]);
 
   if (error) {
@@ -148,12 +170,19 @@ export function StockCorrelationTable() {
           />
         </div>
       </div>
-      {truncatedFromDate && (
-        <p className="text-xs text-muted-foreground">
-          Showing values from {formatShortDate(truncatedFromDate)} ({maDays}D avg) — a full {maDays}-day window
-          doesn&apos;t exist before then. An AMC with less history than that shows &quot;—&quot; until enough
-          accumulates.
-        </p>
+      {truncation && (
+        <div className="space-y-0.5 text-xs text-muted-foreground">
+          <p>
+            Showing values from {formatShortDate(truncation.commonDate)} ({maDays}D avg) for {truncation.commonCount}{" "}
+            of {rows.length} AMCs — a full {maDays}-day window doesn&apos;t exist before then.
+          </p>
+          {truncation.exceptions.map((r) => (
+            <p key={r.slug}>
+              {r.overviewName}: from {formatShortDate(r.truncatedFromDate!)} — shorter history available (own AUM
+              and/or share-price data starts later than the others).
+            </p>
+          ))}
+        </div>
       )}
 
       <div className="overflow-x-auto rounded-lg border bg-card">
