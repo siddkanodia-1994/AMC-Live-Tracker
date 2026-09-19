@@ -34,6 +34,14 @@ interface ComputedRow {
   fairValuePriceInr: number | null;
   ratioCv: number | null;
   upsidePct: number | null;
+  // How many standard deviations today's own (price ÷ AUM) ratio sits from
+  // its historical mean -- independent of the selected ratio basis, so it
+  // still reads "how rich/cheap is this AMC right now" even when the basis
+  // dropdown is set to +2 SD. Same sign convention as Upside %: positive =
+  // today's ratio is above its own mean (price rich relative to AUM, so
+  // fair value at the mean basis sits below the current price) = red;
+  // negative = cheap = green.
+  zScore: number | null;
   // The LATER (more conservative) of this row's own AUM/price truncation --
   // this row's own numbers are only valid from this date onward. Kept
   // per-row (not just aggregated across all 8) so an outlier AMC -- e.g.
@@ -82,6 +90,12 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis:
     fairValuePriceInr !== null && latestPriceInr !== null && latestPriceInr !== 0
       ? (fairValuePriceInr - latestPriceInr) / latestPriceInr
       : null;
+  const currentRatio =
+    latestAumCr !== null && latestAumCr !== 0 && latestPriceInr !== null ? latestPriceInr / latestAumCr : null;
+  const zScore =
+    currentRatio !== null && ratioStats && ratioStats.stdDev !== 0
+      ? (currentRatio - ratioStats.meanRatio) / ratioStats.stdDev
+      : null;
 
   const aumFirstIdx = maDays > 1 ? firstDefinedIndex(aumDisplay) : 0;
   const priceFirstIdx = maDays > 1 ? firstDefinedIndex(priceDisplay) : 0;
@@ -98,6 +112,7 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis:
     fairValuePriceInr,
     ratioCv: ratioStats?.cv ?? null,
     upsidePct,
+    zScore,
     truncatedFromDate:
       aumTruncatedFromDate && priceTruncatedFromDate
         ? aumTruncatedFromDate > priceTruncatedFromDate
@@ -112,6 +127,26 @@ const maInputClass =
 const ratioBasisSelectClass =
   "w-20 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 const groupHeadClass = "border-l text-center text-xs font-bold tracking-wide uppercase text-muted-foreground";
+
+function formatZScore(z: number): string {
+  return `${z >= 0 ? "+" : "−"}${Math.abs(z).toFixed(2)}σ`;
+}
+
+// Sign coloring matches Upside %'s (green = cheap/opportunity, red =
+// rich/overextended); |z| >= 2 additionally gets a background pill since
+// that's the threshold worth calling out at a glance in a scan of 8 rows.
+function zScoreClass(z: number): string {
+  const rich = z > 0;
+  if (Math.abs(z) >= 2) {
+    return rich
+      ? "rounded px-1.5 py-0.5 font-semibold bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+      : "rounded px-1.5 py-0.5 font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300";
+  }
+  if (Math.abs(z) >= 1) {
+    return rich ? "font-medium text-red-600 dark:text-red-400" : "font-medium text-emerald-600 dark:text-emerald-400";
+  }
+  return "text-muted-foreground";
+}
 
 export function StockCorrelationTable() {
   const { data, error, isLoading } = useAmcStockCorrelations();
@@ -167,7 +202,9 @@ export function StockCorrelationTable() {
           AMC&apos;s own AUM Trend chart), recalculated for every row from the single moving-average input here.
           Fair value price comes from each day&apos;s own (share price ÷ Live AUM) ratio — its historical mean (or,
           via Ratio basis, mean ± 1/2 standard deviations) times today&apos;s AUM — rather than a level-vs-level
-          regression, which would spuriously overstate the fit since both series trend upward over time.
+          regression, which would spuriously overstate the fit since both series trend upward over time. Z-score is
+          how many standard deviations today&apos;s own ratio sits from that historical mean, highlighted when
+          |z| ≥ 1 (and more strongly at ≥ 2) as notably rich or cheap relative to the AMC&apos;s own history.
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
@@ -230,7 +267,7 @@ export function StockCorrelationTable() {
               <TableHead colSpan={2} className={groupHeadClass}>
                 Actual (returns)
               </TableHead>
-              <TableHead colSpan={2} className={groupHeadClass}>
+              <TableHead colSpan={3} className={groupHeadClass}>
                 Fair value
               </TableHead>
             </TableRow>
@@ -244,6 +281,7 @@ export function StockCorrelationTable() {
                 Fair value price{activeBasis.value !== "mean" ? ` (${activeBasis.label})` : ""}
               </TableHead>
               <TableHead className="text-right align-bottom">Upside %</TableHead>
+              <TableHead className="text-right align-bottom">Z-score</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -289,6 +327,13 @@ export function StockCorrelationTable() {
                     >
                       {formatPct(row.upsidePct, { alwaysSign: true })}
                     </span>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {row.zScore !== null ? (
+                    <span className={zScoreClass(row.zScore)}>{formatZScore(row.zScore)}</span>
                   ) : (
                     "—"
                   )}
