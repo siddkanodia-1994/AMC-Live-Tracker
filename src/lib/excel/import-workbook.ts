@@ -28,6 +28,9 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
   const cashHoldings = parseCashHoldingsSheet(wb);
   allWarnings.push(...cashHoldings.warnings);
 
+  let importLogId = 0;
+  let advancedToNewPeriod = false;
+
   await transactionalDb.transaction(async (tx) => {
     for (const entry of getAmcMap()) {
       const overviewRow = overviewByName.get(entry.overviewName);
@@ -180,6 +183,12 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
       .from(appSettings)
       .where(eq(appSettings.key, CURRENT_REPORT_PERIOD_KEY));
 
+    // Strictly greater, not >= -- a same-period re-upload also satisfies
+    // >= (see the pointer-advance branch just below, which correctly still
+    // updates the pointer for that case) but is NOT a "genuine new period"
+    // for the caller's purposes: there's no new forward gap to reclaim.
+    advancedToNewPeriod = !existing || reportPeriod > existing.value;
+
     if (!existing || reportPeriod >= existing.value) {
       await tx
         .insert(appSettings)
@@ -194,13 +203,17 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
       );
     }
 
-    await tx.insert(importLog).values({
-      fileName,
-      reportPeriod,
-      amcsImported,
-      holdingsImported,
-      warnings: allWarnings,
-    });
+    const [logRow] = await tx
+      .insert(importLog)
+      .values({
+        fileName,
+        reportPeriod,
+        amcsImported,
+        holdingsImported,
+        warnings: allWarnings,
+      })
+      .returning({ id: importLog.id });
+    importLogId = logRow.id;
   });
 
   return {
@@ -209,5 +222,7 @@ export async function importWorkbook(fileBuffer: Buffer, fileName: string): Prom
     holdingsImported,
     cceRowsImported,
     warnings: allWarnings,
+    importLogId,
+    advancedToNewPeriod,
   };
 }

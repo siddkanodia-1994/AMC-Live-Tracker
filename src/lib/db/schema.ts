@@ -513,7 +513,13 @@ export const isinShareAdjustmentLog = pgTable(
   (t) => [uniqueIndex("isin_share_adjustment_log_isin_period_date_idx").on(t.isin, t.reportPeriod, t.detectedOn)]
 );
 
-// Audit trail for imports.
+// Audit trail for imports. The reclaim* columns are null whenever this
+// import did NOT advance current_report_period to a genuinely new period
+// (a same/older-period re-upload has no forward gap to reclaim) -- only an
+// import that did advance it gets 'pending' set right away, then 'success'/
+// 'failed' once the background instrument-sync + reclaimForwardGap() run
+// (see /api/admin/upload/route.ts) finishes. Surfaced on the Admin page so
+// a background failure is never silently missed.
 export const importLog = pgTable("import_log", {
   id: serial("id").primaryKey(),
   fileName: text("file_name").notNull(),
@@ -522,6 +528,9 @@ export const importLog = pgTable("import_log", {
   holdingsImported: integer("holdings_imported").notNull(),
   warnings: jsonb("warnings").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  reclaimStatus: text("reclaim_status"), // null | 'pending' | 'success' | 'failed'
+  reclaimError: text("reclaim_error"),
+  reclaimCompletedAt: timestamp("reclaim_completed_at", { withTimezone: true }),
 });
 
 // Gold/Silver ETF scheme registry -- one row per scheme, ever. Deliberately

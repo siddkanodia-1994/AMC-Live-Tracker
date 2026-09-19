@@ -47,4 +47,13 @@ export interface ImportResult {
   holdingsImported: number;
   cceRowsImported: number;
   warnings: string[];
+  // The id of the importLog row this call inserted -- callers that need to
+  // later record a follow-up outcome (e.g. the auto-reclaim after a genuine
+  // period advance) update this exact row rather than guessing which is latest.
+  importLogId: number;
+  // True only when this import advanced current_report_period to a period
+  // STRICTLY newer than whatever it was before (not just >=, which a same-
+  // period re-upload also satisfies) -- see import-workbook.ts's own
+  // forward-only-advance logic, computed at the same point so it can't drift.
+  advancedToNewPeriod: boolean;
 }

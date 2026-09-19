@@ -12,6 +12,16 @@ interface ImportResult {
   holdingsImported: number;
   cceRowsImported: number;
   warnings: string[];
+  importLogId: number;
+  advancedToNewPeriod: boolean;
+}
+
+interface LatestImportStatus {
+  id: number;
+  reportPeriod: string;
+  reclaimStatus: "pending" | "success" | "failed" | null;
+  reclaimError: string | null;
+  reclaimCompletedAt: string | null;
 }
 
 interface SyncResult {
@@ -71,6 +81,27 @@ export function SyncActions({ secret }: { secret: string }) {
   const [dismissReason, setDismissReason] = useState("");
   const [isDismissingAdjustment, setIsDismissingAdjustment] = useState(false);
 
+  const [latestImport, setLatestImport] = useState<LatestImportStatus | null>(null);
+
+  function refreshLatestImport() {
+    adminFetch("/api/admin/latest-import", secret)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: LatestImportStatus | null) => setLatestImport(body))
+      .catch(() => {});
+  }
+
+  // While a background auto-reclaim (triggered by an upload that advanced
+  // to a new period) is still running, keep polling until it resolves --
+  // this is the only state on this page fetched from the server rather than
+  // held in a click-triggered useState, since the outcome can arrive well
+  // after the upload's own response already returned.
+  useEffect(() => {
+    if (latestImport?.reclaimStatus !== "pending") return;
+    const interval = setInterval(refreshLatestImport, 8000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestImport?.reclaimStatus]);
+
   function refreshShareAdjustments() {
     adminFetch("/api/admin/share-adjustments", secret)
       .then((res) => (res.ok ? res.json() : null))
@@ -88,6 +119,7 @@ export function SyncActions({ secret }: { secret: string }) {
       })
       .catch(() => {});
     refreshShareAdjustments();
+    refreshLatestImport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -200,6 +232,10 @@ export function SyncActions({ secret }: { secret: string }) {
       const result: ImportResult = await res.json();
       setImportResult(result);
       toast.success(`Imported ${result.amcsImported} AMCs for ${result.reportPeriod}`);
+      if (result.advancedToNewPeriod) {
+        toast.info(`New period detected — instrument sync + forward-gap reclaim starting in the background for ${result.reportPeriod}.`);
+      }
+      refreshLatestImport();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -224,6 +260,7 @@ export function SyncActions({ secret }: { secret: string }) {
       } else {
         toast.success(`Recalculated ${result.fromDate} to ${result.toDate} for ${result.reportPeriod}`);
       }
+      refreshLatestImport();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Recalculation failed");
     } finally {
@@ -252,11 +289,42 @@ export function SyncActions({ secret }: { secret: string }) {
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <Card>
-        <CardHeader>
-          <CardTitle>DHAN instrument master</CardTitle>
-        </CardHeader>
+    <div className="space-y-4">
+      {latestImport?.reclaimStatus && (
+        <div
+          className={`rounded-lg border p-3 text-sm ${
+            latestImport.reclaimStatus === "failed"
+              ? "border-red-500/40 bg-red-500/5 text-red-700 dark:text-red-400"
+              : latestImport.reclaimStatus === "pending"
+                ? "border-border bg-muted/30 text-muted-foreground"
+                : "border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400"
+          }`}
+        >
+          {latestImport.reclaimStatus === "pending" && (
+            <p>
+              Auto-reclaim running for {latestImport.reportPeriod} (instrument sync + backfill through
+              today) — this can take a minute or two. Checking again automatically...
+            </p>
+          )}
+          {latestImport.reclaimStatus === "success" && (
+            <p>
+              ✓ Auto-reclaim for {latestImport.reportPeriod} completed
+              {latestImport.reclaimCompletedAt && ` at ${new Date(latestImport.reclaimCompletedAt).toLocaleString()}`}.
+            </p>
+          )}
+          {latestImport.reclaimStatus === "failed" && (
+            <p>
+              ⚠ Auto-reclaim for {latestImport.reportPeriod} failed: {latestImport.reclaimError}. Retry with
+              the &quot;Recalculate live AUM through today&quot; button below.
+            </p>
+          )}
+        </div>
+      )}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <CardTitle>DHAN instrument master</CardTitle>
+          </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
             Re-download DHAN&apos;s instrument list and refresh ISIN → security ID mappings for every
@@ -508,6 +576,7 @@ export function SyncActions({ secret }: { secret: string }) {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

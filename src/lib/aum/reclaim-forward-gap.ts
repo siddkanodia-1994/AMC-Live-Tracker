@@ -1,6 +1,6 @@
-import { and, eq, gte, lte, ne } from "drizzle-orm";
+import { and, desc, eq, gte, lte, ne } from "drizzle-orm";
 import { db } from "../db/client";
-import { appSettings, liveAumDailySnapshot } from "../db/schema";
+import { appSettings, importLog, liveAumDailySnapshot } from "../db/schema";
 import { syncInstrumentMap, type SyncInstrumentMapResult } from "../dhan/instrument-master";
 import { backfillDailySnapshots, yesterdayIst, type BackfillResult } from "./backfill";
 import { invalidateLiveAumCache } from "./cache";
@@ -104,4 +104,64 @@ export async function reclaimForwardGap(): Promise<ReclaimForwardGapResult> {
     dailyDataQualityDatesProcessed,
     warnings: backfill.warnings,
   };
+}
+
+// Finds the most recent importLog row for a report period and applies a
+// reclaim outcome to it -- shared by the automatic post-import trigger
+// (runPostImportReclaim, which already has an exact row id) and the manual
+// "Recalculate live AUM" button (which only learns the period after
+// reclaimForwardGap() itself resolves), so a manual re-run after an
+// automatic failure correctly clears the banner instead of leaving a stale
+// 'failed' status showing forever.
+export async function setReclaimStatusForPeriod(
+  reportPeriod: string,
+  status: "success" | "failed",
+  error: string | null
+): Promise<void> {
+  const [latest] = await db
+    .select({ id: importLog.id })
+    .from(importLog)
+    .where(eq(importLog.reportPeriod, reportPeriod))
+    .orderBy(desc(importLog.id))
+    .limit(1);
+  if (!latest) return;
+  await db
+    .update(importLog)
+    .set({ reclaimStatus: status, reclaimError: error, reclaimCompletedAt: new Date() })
+    .where(eq(importLog.id, latest.id));
+}
+
+export interface PostImportReclaimOutcome {
+  status: "success" | "failed";
+  error?: string;
+  result?: ReclaimForwardGapResult;
+}
+
+/**
+ * Runs reclaimForwardGap() as a tracked follow-up to a specific import,
+ * recording its outcome on that same importLog row ('pending' immediately,
+ * then 'success'/'failed') so a failure is visible on the Admin page rather
+ * than silently lost -- shared by both entry points that can trigger a
+ * genuine new-period import (the Admin upload route, via Next's `after()`,
+ * and the CLI script `scripts/import-excel.ts`, run inline) so neither one
+ * can reintroduce the "forgot to reclaim" gap this was built to close.
+ * Never throws -- both callers just inspect the returned status.
+ */
+export async function runPostImportReclaim(importLogId: number): Promise<PostImportReclaimOutcome> {
+  await db.update(importLog).set({ reclaimStatus: "pending" }).where(eq(importLog.id, importLogId));
+  try {
+    const result = await reclaimForwardGap();
+    await db
+      .update(importLog)
+      .set({ reclaimStatus: "success", reclaimError: null, reclaimCompletedAt: new Date() })
+      .where(eq(importLog.id, importLogId));
+    return { status: "success", result };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await db
+      .update(importLog)
+      .set({ reclaimStatus: "failed", reclaimError: message, reclaimCompletedAt: new Date() })
+      .where(eq(importLog.id, importLogId));
+    return { status: "failed", error: message };
+  }
 }
