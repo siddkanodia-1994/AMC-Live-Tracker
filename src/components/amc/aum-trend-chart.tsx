@@ -4,13 +4,8 @@ import { useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShortDateWithYear } from "@/lib/utils/format";
 import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
-import {
-  trimToLastContinuousRun,
-  computeMovingAverage,
-  computeCorrelationStats,
-  firstDefinedIndex,
-  toDatedValues,
-} from "@/lib/aum/series-math";
+import { trimToLastContinuousRun, computeMovingAverage, computeCorrelationStats } from "@/lib/aum/series-math";
+import { RANGE_OPTIONS, filterByRange, type RangeOption } from "@/lib/aum/date-range";
 
 // Padding added above/below the combined (live + reported) data range, as a
 // fraction of that range, so the line doesn't sit flush against the plot
@@ -181,22 +176,6 @@ function ChangeDot(props: { cx?: number; cy?: number; payload?: DailyChangePoint
   return <circle cx={cx} cy={cy} r={3} fill={color} stroke={color} />;
 }
 
-type RangeOption = "6m" | "1y" | "2y" | "3y" | "all";
-
-const RANGE_OPTIONS: { value: RangeOption; label: string; months: number | null }[] = [
-  { value: "6m", label: "6M", months: 6 },
-  { value: "1y", label: "1Y", months: 12 },
-  { value: "2y", label: "2Y", months: 24 },
-  { value: "3y", label: "3Y", months: 36 },
-  { value: "all", label: "All", months: null },
-];
-
-function subtractMonths(dateStr: string, months: number): string {
-  const d = new Date(`${dateStr}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() - months);
-  return d.toISOString().slice(0, 10);
-}
-
 function computePctYAxisDomain(points: DailyChangePoint[]): [number, number] {
   let min = Infinity;
   let max = -Infinity;
@@ -217,6 +196,10 @@ export function AumTrendChart({
   mode = "absolute",
   stockPriceSeries,
   stockLabel,
+  range: controlledRange,
+  onRangeChange,
+  maDaysInput: controlledMaDaysInput,
+  onMaDaysInputChange,
 }: {
   data: AumHistoryPoint[];
   mode?: "absolute" | "change";
@@ -225,10 +208,23 @@ export function AumTrendChart({
   // no toggle renders at all in that case.
   stockPriceSeries?: AmcStockPricePoint[];
   stockLabel?: string;
+  // Controlled range/moving-avg, for the one caller (the Stock Correlation
+  // table) that needs this chart's selection linked to its own controls.
+  // Omit both of a pair to let the chart manage that piece of state
+  // internally, as every other usage (each AMC's own detail page, the
+  // homepage's industry-wide chart) does.
+  range?: RangeOption;
+  onRangeChange?: (range: RangeOption) => void;
+  maDaysInput?: string;
+  onMaDaysInputChange?: (value: string) => void;
 }) {
   const [showStockPrice, setShowStockPrice] = useState(true);
-  const [maDaysInput, setMaDaysInput] = useState("");
-  const [range, setRange] = useState<RangeOption>("3y");
+  const [internalMaDaysInput, setInternalMaDaysInput] = useState("");
+  const [internalRange, setInternalRange] = useState<RangeOption>("3y");
+  const maDaysInput = controlledMaDaysInput ?? internalMaDaysInput;
+  const setMaDaysInput = onMaDaysInputChange ?? setInternalMaDaysInput;
+  const range = controlledRange ?? internalRange;
+  const setRange = onRangeChange ?? setInternalRange;
   // Any blank/invalid/out-of-range entry clamps to 1 -- the identity
   // window, i.e. today's raw-daily default -- rather than crashing or
   // silently doing nothing.
@@ -238,44 +234,43 @@ export function AumTrendChart({
   // flickering in and out if a narrow range happens to have zero price
   // points (e.g. a just-listed AMC with "6M" selected).
   const hasStockPrice = !!stockPriceSeries && stockPriceSeries.length > 0;
-  // Cutoff computed from the series' OWN latest date, not `new Date()`, so
-  // this stays deterministic and doesn't depend on when the page happens
-  // to be viewed relative to the data's own freshness.
-  const rangeCutoffDate = useMemo(() => {
-    const option = RANGE_OPTIONS.find((o) => o.value === range);
-    if (!option || option.months === null || rawData.length === 0) return null;
-    return subtractMonths(rawData[rawData.length - 1].date, option.months);
-  }, [range, rawData]);
-  const rangedRawData = useMemo(
-    () => (rangeCutoffDate ? rawData.filter((d) => d.date >= rangeCutoffDate) : rawData),
-    [rawData, rangeCutoffDate]
-  );
-  const rangedStockPriceSeries = useMemo(
-    () => (stockPriceSeries && rangeCutoffDate ? stockPriceSeries.filter((p) => p.date >= rangeCutoffDate) : stockPriceSeries),
-    [stockPriceSeries, rangeCutoffDate]
-  );
-  const data = useMemo(() => trimToLastContinuousRun(rangedRawData), [rangedRawData]);
+  // Moving average computed over the FULL (unranged) history first, so a
+  // day near the start of a narrow selected range still gets a real N-day
+  // trailing average using data from just before the range boundary,
+  // instead of an artificial warm-up gap right where the user's view
+  // begins. The range filter is applied AFTER, to the already-smoothed
+  // series -- exactly mirroring stock-correlation-table.tsx's computeRow,
+  // so the table and this chart show identical numbers for the same
+  // range/moving-avg selection when the two are linked.
+  const data = useMemo(() => trimToLastContinuousRun(rawData), [rawData]);
   const liveAumDisplayValues = useMemo(
     () => computeMovingAverage(data.map((d) => d.liveAumCr), maDays),
     [data, maDays]
   );
   const stockPriceDisplayValues = useMemo(
-    () =>
-      rangedStockPriceSeries ? computeMovingAverage(rangedStockPriceSeries.map((p) => p.priceInr), maDays) : undefined,
-    [rangedStockPriceSeries, maDays]
+    () => (stockPriceSeries ? computeMovingAverage(stockPriceSeries.map((p) => p.priceInr), maDays) : undefined),
+    [stockPriceSeries, maDays]
   );
-  const chartData = useMemo(
-    () => buildChartData(data, liveAumDisplayValues, rangedStockPriceSeries, stockPriceDisplayValues),
-    [data, liveAumDisplayValues, rangedStockPriceSeries, stockPriceDisplayValues]
+  const fullChartData = useMemo(
+    () => buildChartData(data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues),
+    [data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues]
   );
-  const yDomain = useMemo(() => computeYAxisDomain(data), [data]);
+  const chartData = useMemo(() => filterByRange(fullChartData, range), [fullChartData, range]);
+  const yDomain = useMemo(() => computeYAxisDomain(chartData), [chartData]);
   const yTicks = useMemo(() => computeNiceTicks(yDomain, 5), [yDomain]);
   const tickDecimals = useMemo(() => computeTickDecimals(yDomain), [yDomain]);
-  const changeSeries = useMemo(() => computeDailyChangeSeries(data), [data]);
+  const changeSeries = useMemo(() => computeDailyChangeSeries(chartData), [chartData]);
   const pctYDomain = useMemo(() => computePctYAxisDomain(changeSeries), [changeSeries]);
+  const rangedStockPricePoints = useMemo(
+    () =>
+      chartData
+        .filter((p) => p.stockPriceInr !== undefined)
+        .map((p) => ({ date: p.date, priceInr: p.stockPriceInr as number })),
+    [chartData]
+  );
   const stockYDomain = useMemo(
-    () => (rangedStockPriceSeries ? computeStockPriceYAxisDomain(rangedStockPriceSeries) : ([0, 1] as [number, number])),
-    [rangedStockPriceSeries]
+    () => (hasStockPrice ? computeStockPriceYAxisDomain(rangedStockPricePoints) : ([0, 1] as [number, number])),
+    [hasStockPrice, rangedStockPricePoints]
   );
   const stockYTicks = useMemo(() => computeNiceTicks(stockYDomain, 5), [stockYDomain]);
   const rangeSelector = (
@@ -304,25 +299,32 @@ export function AumTrendChart({
   // compare against. Cheap enough (~200 points) to always compute rather
   // than gating it behind showStockPrice too.
   const correlationStats = useMemo(() => {
-    if (!rangedStockPriceSeries || !stockPriceDisplayValues) return null;
-    const liveAumDisplayDated = toDatedValues(data.map((d) => d.date), liveAumDisplayValues);
-    const stockPriceDisplayDated = toDatedValues(rangedStockPriceSeries.map((p) => p.date), stockPriceDisplayValues);
+    if (!hasStockPrice) return null;
+    const liveAumDisplayDated = chartData
+      .filter((p) => p.liveAumDisplay !== undefined)
+      .map((p) => ({ date: p.date, value: p.liveAumDisplay as number }));
+    const stockPriceDisplayDated = chartData
+      .filter((p) => p.stockPriceInr !== undefined)
+      .map((p) => ({ date: p.date, value: p.stockPriceInr as number }));
     return computeCorrelationStats(liveAumDisplayDated, stockPriceDisplayDated);
-  }, [rangedStockPriceSeries, stockPriceDisplayValues, data, liveAumDisplayValues]);
-  // Whenever the moving average trims off leading days, note where the
-  // line actually starts instead of leaving the shorter line unexplained --
-  // Live AUM and the share price can each start on a different date, since
-  // they're independent series with their own history.
+  }, [chartData, hasStockPrice]);
+  // Whenever the moving average's warm-up gap extends INTO the currently
+  // selected range's visible window, note where the line actually starts
+  // instead of leaving the shorter line unexplained -- Live AUM and the
+  // share price can each start on a different date, since they're
+  // independent series with their own history. A gap that falls entirely
+  // before the range's own start (already warmed up by the time the
+  // visible window begins) correctly shows nothing here.
   const liveAumTruncatedFromDate = useMemo(() => {
     if (maDays <= 1) return null;
-    const idx = firstDefinedIndex(liveAumDisplayValues);
-    return idx > 0 ? data[idx].date : null;
-  }, [maDays, liveAumDisplayValues, data]);
+    const idx = chartData.findIndex((p) => p.liveAumDisplay !== undefined);
+    return idx > 0 ? chartData[idx].date : null;
+  }, [maDays, chartData]);
   const stockPriceTruncatedFromDate = useMemo(() => {
-    if (maDays <= 1 || !rangedStockPriceSeries || !stockPriceDisplayValues) return null;
-    const idx = firstDefinedIndex(stockPriceDisplayValues);
-    return idx > 0 ? rangedStockPriceSeries[idx].date : null;
-  }, [maDays, rangedStockPriceSeries, stockPriceDisplayValues]);
+    if (maDays <= 1 || !hasStockPrice) return null;
+    const idx = chartData.findIndex((p) => p.stockPriceInr !== undefined);
+    return idx > 0 ? chartData[idx].date : null;
+  }, [maDays, hasStockPrice, chartData]);
 
   if (rawData.length === 0) {
     return (
@@ -335,7 +337,7 @@ export function AumTrendChart({
   // Real history exists, but the selected range (e.g. "6M" on an AMC whose
   // real history ends further back than that) has none of it -- still show
   // the selector so the user can widen it back, rather than a dead end.
-  if (data.length === 0) {
+  if (chartData.length === 0) {
     return (
       <div className="space-y-2">
         <div className="flex justify-end">{rangeSelector}</div>

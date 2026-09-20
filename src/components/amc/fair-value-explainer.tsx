@@ -9,6 +9,7 @@ import {
   RATIO_BASIS_OPTIONS,
   type RatioBasis,
 } from "@/lib/aum/series-math";
+import { computeRangeCutoffDate, filterByCutoff, type RangeOption } from "@/lib/aum/date-range";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 
 interface AlignedDay {
@@ -58,17 +59,41 @@ export function FairValueExplainer({
   entry,
   maDays,
   ratioBasis,
+  range,
 }: {
   entry: AmcStockCorrelationEntry;
   maDays: number;
   ratioBasis: RatioBasis;
+  range: RangeOption;
 }) {
   const aligned = useMemo(() => {
-    const data = trimToLastContinuousRun(entry.aumHistory);
-    const aumDisplay = computeMovingAverage(data.map((d) => d.liveAumCr), maDays);
-    const priceDisplay = computeMovingAverage(entry.stockPriceSeries.map((p) => p.priceInr), maDays);
-    return alignForDisplay(data.map((d) => d.date), aumDisplay, entry.stockPriceSeries, priceDisplay);
-  }, [entry, maDays]);
+    // Moving average computed over the FULL history first (avoids an
+    // artificial warm-up gap right at the start of a narrow range), then
+    // ONE cutoff -- anchored to the AUM series' own latest date, since AUM
+    // and price histories don't always share the exact same latest date --
+    // applied to both series afterward. Mirrors stock-correlation-table.tsx's
+    // computeRow exactly, so the table and this walkthrough never disagree.
+    const fullData = trimToLastContinuousRun(entry.aumHistory);
+    const fullAumDisplay = computeMovingAverage(fullData.map((d) => d.liveAumCr), maDays);
+    const fullPriceDisplay = computeMovingAverage(entry.stockPriceSeries.map((p) => p.priceInr), maDays);
+    const cutoffDate = computeRangeCutoffDate(fullData, range);
+
+    const rangedAum = filterByCutoff(
+      fullData.map((d, i) => ({ date: d.date, value: fullAumDisplay[i] })),
+      cutoffDate
+    );
+    const rangedPrice = filterByCutoff(
+      entry.stockPriceSeries.map((p, i) => ({ date: p.date, priceInr: p.priceInr, value: fullPriceDisplay[i] })),
+      cutoffDate
+    );
+
+    return alignForDisplay(
+      rangedAum.map((d) => d.date),
+      rangedAum.map((d) => d.value),
+      rangedPrice,
+      rangedPrice.map((d) => d.value)
+    );
+  }, [entry, maDays, range]);
 
   const basis = RATIO_BASIS_OPTIONS.find((o) => o.value === ratioBasis) ?? RATIO_BASIS_OPTIONS[0];
 

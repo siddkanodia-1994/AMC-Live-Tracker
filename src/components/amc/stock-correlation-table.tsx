@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCr, formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
@@ -12,11 +13,10 @@ import {
   priceToAumRatioStats,
   ratioAtBasis,
   alignSeriesByDate,
-  toDatedValues,
-  firstDefinedIndex,
   RATIO_BASIS_OPTIONS,
   type RatioBasis,
 } from "@/lib/aum/series-math";
+import { RANGE_OPTIONS, computeRangeCutoffDate, filterByCutoff, type RangeOption } from "@/lib/aum/date-range";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { FairValueExplainer } from "./fair-value-explainer";
 import { AumTrendChart } from "./aum-trend-chart";
@@ -30,6 +30,13 @@ interface ComputedRow {
   overviewName: string;
   latestAumCr: number | null;
   latestPriceInr: number | null;
+  // Mean of the (already moving-average-smoothed) daily values within the
+  // selected period -- unlike latestAumCr/latestPriceInr (today's value,
+  // unaffected by the period selector), these two exist specifically to
+  // answer "what's this AMC's period-average AUM/price", so they DO move
+  // when the period changes.
+  avgAumCr: number | null;
+  avgPriceInr: number | null;
   corr: number | null;
   r2: number | null;
   fairValuePriceInr: number | null;
@@ -62,8 +69,15 @@ interface ComputedRow {
 // A moving average longer than an AMC's own history leaves every value
 // undefined -- that row's cells fall through to "—" the same way any
 // other missing figure already does in this table.
-function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis: RatioBasis): ComputedRow {
+function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis: RatioBasis, range: RangeOption): ComputedRow {
   const data = trimToLastContinuousRun(entry.aumHistory);
+  // Moving average computed over the FULL history first, then the period
+  // filter applied to the resulting dated series -- so a day near the
+  // start of a narrow period still gets a real N-day trailing average
+  // using data from just before the period boundary, instead of an
+  // artificial warm-up gap right where the selected period begins. Exactly
+  // mirrors aum-trend-chart.tsx's own pipeline, so the two stay identical
+  // when linked.
   const aumDisplay = computeMovingAverage(
     data.map((d) => d.liveAumCr),
     maDays
@@ -73,11 +87,28 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis:
     maDays
   );
 
-  const aumDated = toDatedValues(data.map((d) => d.date), aumDisplay);
-  const priceDated = toDatedValues(
-    entry.stockPriceSeries.map((p) => p.date),
-    priceDisplay
-  );
+  // Keep the moving average's possible undefined gaps through the range
+  // filter (unlike toDatedValues, which would drop them immediately) so
+  // truncation below can tell "gap falls before the period" (invisible)
+  // apart from "gap extends into the period" (needs a caption).
+  const aumWithGapsFull = data.map((d, i) => ({ date: d.date, value: aumDisplay[i] }));
+  const priceWithGapsFull = entry.stockPriceSeries.map((p, i) => ({ date: p.date, value: priceDisplay[i] }));
+  // ONE cutoff, anchored to the AUM series' own latest date (the same
+  // reference aum-trend-chart.tsx implicitly uses, since its merged
+  // ChartPoint rows are keyed by the AUM series' dates) -- applied to BOTH
+  // series, rather than letting each independently derive its own cutoff
+  // from its own tail. AUM and price histories don't always share the
+  // exact same latest date (e.g. one can be a day fresher than the
+  // other), which would otherwise silently give the two series a
+  // slightly different window for "the same" selected period.
+  const cutoffDate = computeRangeCutoffDate(aumWithGapsFull, range);
+  const aumWithGaps = filterByCutoff(aumWithGapsFull, cutoffDate);
+  const priceWithGaps = filterByCutoff(priceWithGapsFull, cutoffDate);
+  // Corr/R²/ratio-stats/Z-score/the two Avg columns are all scoped to the
+  // selected period; latestAumCr/latestPriceInr (today's value) intentionally
+  // are NOT -- see the ComputedRow comment on avgAumCr/avgPriceInr.
+  const aumDated = aumWithGaps.filter((d): d is { date: string; value: number } => d.value !== undefined);
+  const priceDated = priceWithGaps.filter((d): d is { date: string; value: number } => d.value !== undefined);
 
   const corrStats = computeCorrelationStats(aumDated, priceDated);
   const { xs, ys } = alignSeriesByDate(aumDated, priceDated);
@@ -85,6 +116,8 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis:
 
   const latestAumCr = aumDisplay.length > 0 ? aumDisplay[aumDisplay.length - 1] ?? null : null;
   const latestPriceInr = priceDisplay.length > 0 ? priceDisplay[priceDisplay.length - 1] ?? null : null;
+  const avgAumCr = aumDated.length > 0 ? aumDated.reduce((sum, d) => sum + d.value, 0) / aumDated.length : null;
+  const avgPriceInr = priceDated.length > 0 ? priceDated.reduce((sum, d) => sum + d.value, 0) / priceDated.length : null;
   const selectedRatio = ratioStats ? ratioAtBasis(ratioStats, ratioBasis) : null;
   const fairValuePriceInr = selectedRatio !== null && latestAumCr !== null ? selectedRatio * latestAumCr : null;
   const upsidePct =
@@ -98,16 +131,24 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis:
       ? (currentRatio - ratioStats.meanRatio) / ratioStats.stdDev
       : null;
 
-  const aumFirstIdx = maDays > 1 ? firstDefinedIndex(aumDisplay) : 0;
-  const priceFirstIdx = maDays > 1 ? firstDefinedIndex(priceDisplay) : 0;
-  const aumTruncatedFromDate = aumFirstIdx > 0 ? data[aumFirstIdx].date : null;
-  const priceTruncatedFromDate = priceFirstIdx > 0 ? entry.stockPriceSeries[priceFirstIdx].date : null;
+  // Whenever the moving average's warm-up gap extends INTO the selected
+  // period's own window, note where the row's stats actually start --
+  // mirrors aum-trend-chart.tsx's own truncation-caption logic exactly, now
+  // over the period-filtered series rather than the full history. A gap
+  // that falls entirely before the period's own start (already warmed up
+  // by the time the window begins) correctly produces no caption.
+  const aumFirstIdx = maDays > 1 ? aumWithGaps.findIndex((d) => d.value !== undefined) : 0;
+  const priceFirstIdx = maDays > 1 ? priceWithGaps.findIndex((d) => d.value !== undefined) : 0;
+  const aumTruncatedFromDate = aumFirstIdx > 0 ? aumWithGaps[aumFirstIdx].date : null;
+  const priceTruncatedFromDate = priceFirstIdx > 0 ? priceWithGaps[priceFirstIdx].date : null;
 
   return {
     slug: entry.slug,
     overviewName: entry.overviewName,
     latestAumCr,
     latestPriceInr,
+    avgAumCr,
+    avgPriceInr,
     corr: corrStats?.r ?? null,
     r2: corrStats?.r2 ?? null,
     fairValuePriceInr,
@@ -155,11 +196,49 @@ export function StockCorrelationTable() {
   const maDays = Math.max(1, Math.min(250, parseInt(maDaysInput, 10) || 1));
   const [ratioBasis, setRatioBasis] = useState<RatioBasis>("mean");
   const activeBasis = RATIO_BASIS_OPTIONS.find((o) => o.value === ratioBasis) ?? RATIO_BASIS_OPTIONS[0];
+  // Shared with the chart section below (and the walkthrough) -- this is
+  // the single source of truth for "what period is currently selected",
+  // not just this table's own concern.
+  const [range, setRange] = useState<RangeOption>("3y");
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Applies the saved global default exactly once, the first time it
+  // arrives -- a ref (not a state flag) so this can't itself trigger a
+  // re-render loop, and so a later SWR revalidation of `data` can't
+  // clobber changes the user has since made in this session.
+  const defaultsAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!data?.defaults || defaultsAppliedRef.current) return;
+    defaultsAppliedRef.current = true;
+    setRange(data.defaults.range);
+    setMaDaysInput(data.defaults.maDays > 0 ? String(data.defaults.maDays) : "");
+    setRatioBasis(data.defaults.ratioBasis);
+  }, [data]);
+
+  async function handleSaveDefaults() {
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/stock-correlation-defaults", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ range, maDays: maDaysInput === "" ? 0 : maDays, ratioBasis }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Save failed");
+      }
+      toast.success("Saved as the default view for everyone");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   const rows = useMemo(() => {
     if (!data) return [];
-    return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis));
-  }, [data, maDays, ratioBasis]);
+    return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis, range));
+  }, [data, maDays, ratioBasis, range]);
 
   const explainerEntry = useMemo(() => data?.amcs.find((a) => a.slug === EXPLAINER_AMC_SLUG) ?? null, [data]);
 
@@ -202,15 +281,34 @@ export function StockCorrelationTable() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          All 8 AMCs with their own listed share price. Corr/R² use day-over-day % changes (matches each
-          AMC&apos;s own AUM Trend chart), recalculated for every row from the single moving-average input here.
-          Fair value price comes from each day&apos;s own (share price ÷ Live AUM) ratio — its historical mean (or,
-          via Ratio basis, mean ± 1/2 standard deviations) times today&apos;s AUM — rather than a level-vs-level
-          regression, which would spuriously overstate the fit since both series trend upward over time. Z-score is
-          how many standard deviations today&apos;s own ratio sits from that historical mean, highlighted when
-          |z| ≥ 1 (and more strongly at ≥ 2) as notably rich or cheap relative to the AMC&apos;s own history.
+          All 8 AMCs with their own listed share price. Avg AUM/Avg Share Price, Corr/R², Fair value, and Z-score are
+          all scoped to the selected period below (default 3 years) and moving-average — Live AUM/Share Price stay
+          today&apos;s value regardless. Corr/R² use day-over-day % changes (matches each AMC&apos;s own AUM Trend
+          chart). Fair value price comes from each day&apos;s own (share price ÷ Live AUM) ratio — its historical
+          mean (or, via Ratio basis, mean ± 1/2 standard deviations) times today&apos;s AUM — rather than a
+          level-vs-level regression, which would spuriously overstate the fit since both series trend upward over
+          time. Z-score is how many standard deviations today&apos;s own ratio sits from that historical mean,
+          highlighted when |z| ≥ 1 (and more strongly at ≥ 2) as notably rich or cheap relative to the AMC&apos;s own
+          history. The period/moving-average/ratio-basis selection here is shared with the chart below — changing
+          either updates both, and &quot;Save as default&quot; makes the current selection what every visitor sees.
         </p>
         <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1" role="group" aria-label="Date range">
+            {RANGE_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setRange(o.value)}
+                className={
+                  o.value === range
+                    ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
+                    : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                }
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
           <div className="flex items-center gap-2">
             <label htmlFor="summary-ratio-basis" className="text-xs text-muted-foreground">
               Ratio basis
@@ -243,6 +341,15 @@ export function StockCorrelationTable() {
               className={maInputClass}
             />
           </div>
+          <button
+            type="button"
+            onClick={handleSaveDefaults}
+            disabled={isSaving}
+            title="Save the current period, ratio basis, and moving average as the default every visitor sees"
+            className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            {isSaving ? "Saving…" : "Save as default"}
+          </button>
         </div>
       </div>
       {truncation && (
@@ -269,6 +376,9 @@ export function StockCorrelationTable() {
                 Latest (as shown)
               </TableHead>
               <TableHead colSpan={2} className={groupHeadClass}>
+                Avg ({RANGE_OPTIONS.find((o) => o.value === range)?.label ?? range})
+              </TableHead>
+              <TableHead colSpan={2} className={groupHeadClass}>
                 Actual (returns)
               </TableHead>
               <TableHead colSpan={3} className={groupHeadClass}>
@@ -279,6 +389,8 @@ export function StockCorrelationTable() {
               <TableHead className="align-bottom">AMC</TableHead>
               <TableHead className="text-right align-bottom">Live AUM</TableHead>
               <TableHead className="text-right align-bottom">Share Price</TableHead>
+              <TableHead className="border-l text-right align-bottom">Avg AUM</TableHead>
+              <TableHead className="text-right align-bottom">Avg Share Price</TableHead>
               <TableHead className="border-l text-right align-bottom">Corr</TableHead>
               <TableHead className="text-right align-bottom">R²</TableHead>
               <TableHead className="border-l text-right align-bottom">
@@ -297,6 +409,12 @@ export function StockCorrelationTable() {
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {row.latestPriceInr !== null ? formatPriceInr(row.latestPriceInr) : "—"}
+                </TableCell>
+                <TableCell className="border-l text-right tabular-nums">
+                  {row.avgAumCr !== null ? formatCr(row.avgAumCr) : "—"}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {row.avgPriceInr !== null ? formatPriceInr(row.avgPriceInr) : "—"}
                 </TableCell>
                 <TableCell className="border-l text-right tabular-nums">
                   {row.corr !== null ? (
@@ -374,11 +492,17 @@ export function StockCorrelationTable() {
             data={chartEntry.aumHistory}
             stockPriceSeries={chartEntry.stockPriceSeries}
             stockLabel={chartEntry.tradingSymbol}
+            range={range}
+            onRangeChange={setRange}
+            maDaysInput={maDaysInput}
+            onMaDaysInputChange={setMaDaysInput}
           />
         )}
       </div>
 
-      {explainerEntry && <FairValueExplainer entry={explainerEntry} maDays={maDays} ratioBasis={ratioBasis} />}
+      {explainerEntry && (
+        <FairValueExplainer entry={explainerEntry} maDays={maDays} ratioBasis={ratioBasis} range={range} />
+      )}
     </div>
   );
 }

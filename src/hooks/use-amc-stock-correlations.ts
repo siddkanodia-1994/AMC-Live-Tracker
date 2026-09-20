@@ -1,8 +1,10 @@
 import useSWR from "swr";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
+import type { StockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
 
 export interface AmcStockCorrelationsResponse {
   amcs: AmcStockCorrelationEntry[];
+  defaults: StockCorrelationDefaults;
   computedAt: string;
 }
 

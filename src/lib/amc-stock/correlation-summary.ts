@@ -7,6 +7,7 @@ import {
   type AmcStockPricePoint,
   type AumHistoryPoint,
 } from "../aum/history";
+import { getStockCorrelationDefaults, type StockCorrelationDefaults } from "./correlation-defaults";
 
 export interface AmcStockCorrelationEntry {
   slug: string;
@@ -14,6 +15,11 @@ export interface AmcStockCorrelationEntry {
   tradingSymbol: string;
   aumHistory: AumHistoryPoint[];
   stockPriceSeries: AmcStockPricePoint[];
+}
+
+export interface AmcStockCorrelationData {
+  amcs: AmcStockCorrelationEntry[];
+  defaults: StockCorrelationDefaults;
 }
 
 /**
@@ -25,7 +31,7 @@ export interface AmcStockCorrelationEntry {
  * share-price toggle) recomputes that client-side from a single shared
  * input, so there's nothing to recompute server-side per keystroke.
  */
-export async function getAmcStockCorrelationData(): Promise<AmcStockCorrelationEntry[]> {
+export async function getAmcStockCorrelationData(): Promise<AmcStockCorrelationData> {
   const mappings = await db
     .select({
       amcId: amcListedStock.amcId,
@@ -38,7 +44,8 @@ export async function getAmcStockCorrelationData(): Promise<AmcStockCorrelationE
     .from(amcListedStock)
     .innerJoin(amcs, eq(amcListedStock.amcId, amcs.id));
 
-  if (mappings.length === 0) return [];
+  const defaults = await getStockCorrelationDefaults();
+  if (mappings.length === 0) return { amcs: [], defaults };
 
   const amcIds = mappings.map((m) => m.amcId);
   const isins = mappings.map((m) => m.isin);
@@ -50,11 +57,14 @@ export async function getAmcStockCorrelationData(): Promise<AmcStockCorrelationE
     getAmcListedStockPriceHistoryForIsins(isins, priceFromDates),
   ]);
 
-  return mappings.map((m) => ({
-    slug: m.slug,
-    overviewName: m.overviewName,
-    tradingSymbol: m.tradingSymbol,
-    aumHistory: aumByAmcId.get(m.amcId) ?? [],
-    stockPriceSeries: priceByIsin.get(m.isin) ?? [],
-  }));
+  return {
+    amcs: mappings.map((m) => ({
+      slug: m.slug,
+      overviewName: m.overviewName,
+      tradingSymbol: m.tradingSymbol,
+      aumHistory: aumByAmcId.get(m.amcId) ?? [],
+      stockPriceSeries: priceByIsin.get(m.isin) ?? [],
+    })),
+    defaults,
+  };
 }
