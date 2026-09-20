@@ -53,6 +53,18 @@ export function formatShortDate(isoDate: string): string {
   });
 }
 
+// Same as formatShortDate, plus the year -- for the one chart (AumTrendChart)
+// whose date range can span multiple calendar years, where "9 Jun" alone is
+// ambiguous. Every other formatShortDate caller stays on the year-less form.
+export function formatShortDateWithYear(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 export function formatRelativeTime(isoTimestamp: string): string {
   const diffMs = Date.now() - new Date(isoTimestamp).getTime();
   const diffSec = Math.round(diffMs / 1000);

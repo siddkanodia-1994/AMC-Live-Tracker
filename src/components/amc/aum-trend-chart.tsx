@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { formatCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
+import { formatCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShortDateWithYear } from "@/lib/utils/format";
 import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
 import {
   trimToLastContinuousRun,
@@ -36,6 +36,30 @@ function computeTickDecimals([lower, upper]: [number, number]): number {
   if (spanInThousands >= 10) return 0;
   if (spanInThousands >= 1) return 1;
   return 2;
+}
+
+// Recharts' own default tick placement always includes the exact domain
+// boundary as a tick even when it doesn't fall on the same step as the
+// others (e.g. 87k, 237k, 387k, then a boundary tick at 491k instead of the
+// expected 537k) -- reads as "uneven"/inconsistent gridlines, especially on
+// a chart with two independently-scaled axes where it's easy to misjudge
+// which line a given height belongs to. This generates genuinely evenly
+// spaced ticks at a "nice" round step (1/2/5 x 10^n) instead, so every gap
+// between gridlines is identical; it does NOT change the plotted domain
+// (padding/min/max), only which values get gridlines/labels.
+function computeNiceTicks([lower, upper]: [number, number], count: number): number[] {
+  if (!Number.isFinite(lower) || !Number.isFinite(upper) || upper <= lower || count < 2) return [lower, upper];
+  const rawStep = (upper - lower) / (count - 1);
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const normalized = rawStep / magnitude;
+  const niceNormalized = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  const step = niceNormalized * magnitude;
+  const start = Math.ceil(lower / step) * step;
+  const ticks: number[] = [];
+  for (let v = start; v <= upper + step * 0.001; v += step) {
+    ticks.push(Math.round(v));
+  }
+  return ticks.length >= 2 ? ticks : [lower, upper];
 }
 
 function computeYAxisDomain(data: AumHistoryPoint[]): [number, number] {
@@ -157,6 +181,22 @@ function ChangeDot(props: { cx?: number; cy?: number; payload?: DailyChangePoint
   return <circle cx={cx} cy={cy} r={3} fill={color} stroke={color} />;
 }
 
+type RangeOption = "6m" | "1y" | "2y" | "3y" | "all";
+
+const RANGE_OPTIONS: { value: RangeOption; label: string; months: number | null }[] = [
+  { value: "6m", label: "6M", months: 6 },
+  { value: "1y", label: "1Y", months: 12 },
+  { value: "2y", label: "2Y", months: 24 },
+  { value: "3y", label: "3Y", months: 36 },
+  { value: "all", label: "All", months: null },
+];
+
+function subtractMonths(dateStr: string, months: number): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCMonth(d.getUTCMonth() - months);
+  return d.toISOString().slice(0, 10);
+}
+
 function computePctYAxisDomain(points: DailyChangePoint[]): [number, number] {
   let min = Infinity;
   let max = -Infinity;
@@ -188,31 +228,73 @@ export function AumTrendChart({
 }) {
   const [showStockPrice, setShowStockPrice] = useState(true);
   const [maDaysInput, setMaDaysInput] = useState("");
+  const [range, setRange] = useState<RangeOption>("3y");
   // Any blank/invalid/out-of-range entry clamps to 1 -- the identity
   // window, i.e. today's raw-daily default -- rather than crashing or
   // silently doing nothing.
   const maDays = Math.max(1, Math.min(250, parseInt(maDaysInput, 10) || 1));
-  const data = useMemo(() => trimToLastContinuousRun(rawData), [rawData]);
+  // Whether this AMC has share-price tracking AT ALL, independent of the
+  // selected date range -- keeps the show/hide toggle button from
+  // flickering in and out if a narrow range happens to have zero price
+  // points (e.g. a just-listed AMC with "6M" selected).
+  const hasStockPrice = !!stockPriceSeries && stockPriceSeries.length > 0;
+  // Cutoff computed from the series' OWN latest date, not `new Date()`, so
+  // this stays deterministic and doesn't depend on when the page happens
+  // to be viewed relative to the data's own freshness.
+  const rangeCutoffDate = useMemo(() => {
+    const option = RANGE_OPTIONS.find((o) => o.value === range);
+    if (!option || option.months === null || rawData.length === 0) return null;
+    return subtractMonths(rawData[rawData.length - 1].date, option.months);
+  }, [range, rawData]);
+  const rangedRawData = useMemo(
+    () => (rangeCutoffDate ? rawData.filter((d) => d.date >= rangeCutoffDate) : rawData),
+    [rawData, rangeCutoffDate]
+  );
+  const rangedStockPriceSeries = useMemo(
+    () => (stockPriceSeries && rangeCutoffDate ? stockPriceSeries.filter((p) => p.date >= rangeCutoffDate) : stockPriceSeries),
+    [stockPriceSeries, rangeCutoffDate]
+  );
+  const data = useMemo(() => trimToLastContinuousRun(rangedRawData), [rangedRawData]);
   const liveAumDisplayValues = useMemo(
     () => computeMovingAverage(data.map((d) => d.liveAumCr), maDays),
     [data, maDays]
   );
   const stockPriceDisplayValues = useMemo(
-    () => (stockPriceSeries ? computeMovingAverage(stockPriceSeries.map((p) => p.priceInr), maDays) : undefined),
-    [stockPriceSeries, maDays]
+    () =>
+      rangedStockPriceSeries ? computeMovingAverage(rangedStockPriceSeries.map((p) => p.priceInr), maDays) : undefined,
+    [rangedStockPriceSeries, maDays]
   );
   const chartData = useMemo(
-    () => buildChartData(data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues),
-    [data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues]
+    () => buildChartData(data, liveAumDisplayValues, rangedStockPriceSeries, stockPriceDisplayValues),
+    [data, liveAumDisplayValues, rangedStockPriceSeries, stockPriceDisplayValues]
   );
   const yDomain = useMemo(() => computeYAxisDomain(data), [data]);
+  const yTicks = useMemo(() => computeNiceTicks(yDomain, 5), [yDomain]);
   const tickDecimals = useMemo(() => computeTickDecimals(yDomain), [yDomain]);
   const changeSeries = useMemo(() => computeDailyChangeSeries(data), [data]);
   const pctYDomain = useMemo(() => computePctYAxisDomain(changeSeries), [changeSeries]);
-  const hasStockPrice = !!stockPriceSeries && stockPriceSeries.length > 0;
   const stockYDomain = useMemo(
-    () => (stockPriceSeries ? computeStockPriceYAxisDomain(stockPriceSeries) : ([0, 1] as [number, number])),
-    [stockPriceSeries]
+    () => (rangedStockPriceSeries ? computeStockPriceYAxisDomain(rangedStockPriceSeries) : ([0, 1] as [number, number])),
+    [rangedStockPriceSeries]
+  );
+  const stockYTicks = useMemo(() => computeNiceTicks(stockYDomain, 5), [stockYDomain]);
+  const rangeSelector = (
+    <div className="flex items-center gap-1" role="group" aria-label="Date range">
+      {RANGE_OPTIONS.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => setRange(o.value)}
+          className={
+            o.value === range
+              ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
+              : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          }
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
   );
   const maSuffix = maDays > 1 ? ` (${maDays}D avg)` : "";
   const liveAumSeriesName = `Live AUM${maSuffix}`;
@@ -222,11 +304,11 @@ export function AumTrendChart({
   // compare against. Cheap enough (~200 points) to always compute rather
   // than gating it behind showStockPrice too.
   const correlationStats = useMemo(() => {
-    if (!stockPriceSeries || !stockPriceDisplayValues) return null;
+    if (!rangedStockPriceSeries || !stockPriceDisplayValues) return null;
     const liveAumDisplayDated = toDatedValues(data.map((d) => d.date), liveAumDisplayValues);
-    const stockPriceDisplayDated = toDatedValues(stockPriceSeries.map((p) => p.date), stockPriceDisplayValues);
+    const stockPriceDisplayDated = toDatedValues(rangedStockPriceSeries.map((p) => p.date), stockPriceDisplayValues);
     return computeCorrelationStats(liveAumDisplayDated, stockPriceDisplayDated);
-  }, [stockPriceSeries, stockPriceDisplayValues, data, liveAumDisplayValues]);
+  }, [rangedStockPriceSeries, stockPriceDisplayValues, data, liveAumDisplayValues]);
   // Whenever the moving average trims off leading days, note where the
   // line actually starts instead of leaving the shorter line unexplained --
   // Live AUM and the share price can each start on a different date, since
@@ -237,12 +319,12 @@ export function AumTrendChart({
     return idx > 0 ? data[idx].date : null;
   }, [maDays, liveAumDisplayValues, data]);
   const stockPriceTruncatedFromDate = useMemo(() => {
-    if (maDays <= 1 || !stockPriceSeries || !stockPriceDisplayValues) return null;
+    if (maDays <= 1 || !rangedStockPriceSeries || !stockPriceDisplayValues) return null;
     const idx = firstDefinedIndex(stockPriceDisplayValues);
-    return idx > 0 ? stockPriceSeries[idx].date : null;
-  }, [maDays, stockPriceSeries, stockPriceDisplayValues]);
+    return idx > 0 ? rangedStockPriceSeries[idx].date : null;
+  }, [maDays, rangedStockPriceSeries, stockPriceDisplayValues]);
 
-  if (data.length === 0) {
+  if (rawData.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
         No history yet — a snapshot is captured once a day, check back tomorrow.
@@ -250,42 +332,57 @@ export function AumTrendChart({
     );
   }
 
+  // Real history exists, but the selected range (e.g. "6M" on an AMC whose
+  // real history ends further back than that) has none of it -- still show
+  // the selector so the user can widen it back, rather than a dead end.
+  if (data.length === 0) {
+    return (
+      <div className="space-y-2">
+        <div className="flex justify-end">{rangeSelector}</div>
+        <p className="text-sm text-muted-foreground">No data in the selected range.</p>
+      </div>
+    );
+  }
+
   if (mode === "change") {
     return (
-      <div className="h-80 w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={changeSeries} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-            <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 12 }} />
-            <YAxis
-              domain={pctYDomain}
-              tick={{ fontSize: 12 }}
-              tickFormatter={(v: number) => formatPct(v, { alwaysSign: true })}
-              width={60}
-            />
-            <ReferenceLine y={0} className="stroke-border" />
-            <Tooltip
-              labelFormatter={(label) => (typeof label === "string" ? formatShortDate(label) : String(label ?? ""))}
-              formatter={(value) => (typeof value === "number" ? formatPct(value, { alwaysSign: true }) : String(value))}
-              contentStyle={{
-                backgroundColor: "var(--color-popover)",
-                borderColor: "var(--color-border)",
-                color: "var(--color-popover-foreground)",
-                fontSize: 12,
-              }}
-            />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Line
-              type="monotone"
-              dataKey="changePct"
-              name="Live AUM % Change"
-              stroke="var(--color-primary)"
-              strokeWidth={2}
-              dot={<ChangeDot />}
-              connectNulls
-            />
-          </LineChart>
-        </ResponsiveContainer>
+      <div className="space-y-2">
+        <div className="flex justify-end">{rangeSelector}</div>
+        <div className="h-80 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={changeSeries} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+              <XAxis dataKey="date" tickFormatter={formatShortDateWithYear} tick={{ fontSize: 12 }} />
+              <YAxis
+                domain={pctYDomain}
+                tick={{ fontSize: 12 }}
+                tickFormatter={(v: number) => formatPct(v, { alwaysSign: true })}
+                width={60}
+              />
+              <ReferenceLine y={0} className="stroke-border" />
+              <Tooltip
+                labelFormatter={(label) => (typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? ""))}
+                formatter={(value) => (typeof value === "number" ? formatPct(value, { alwaysSign: true }) : String(value))}
+                contentStyle={{
+                  backgroundColor: "var(--color-popover)",
+                  borderColor: "var(--color-border)",
+                  color: "var(--color-popover-foreground)",
+                  fontSize: 12,
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Line
+                type="monotone"
+                dataKey="changePct"
+                name="Live AUM % Change"
+                stroke="var(--color-primary)"
+                strokeWidth={2}
+                dot={<ChangeDot />}
+                connectNulls
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </div>
     );
   }
@@ -294,10 +391,10 @@ export function AumTrendChart({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-          {liveAumTruncatedFromDate && <span>Showing Live AUM from {formatShortDate(liveAumTruncatedFromDate)} ({maDays}D avg)</span>}
+          {liveAumTruncatedFromDate && <span>Showing Live AUM from {formatShortDateWithYear(liveAumTruncatedFromDate)} ({maDays}D avg)</span>}
           {hasStockPrice && showStockPrice && stockPriceTruncatedFromDate && (
             <span>
-              Showing {stockLabel ?? "Share Price"} from {formatShortDate(stockPriceTruncatedFromDate)} ({maDays}D avg)
+              Showing {stockLabel ?? "Share Price"} from {formatShortDateWithYear(stockPriceTruncatedFromDate)} ({maDays}D avg)
             </span>
           )}
           {hasStockPrice && showStockPrice && correlationStats && (
@@ -316,6 +413,7 @@ export function AumTrendChart({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {rangeSelector}
           <label htmlFor="ma-days" className="text-xs text-muted-foreground">
             Moving avg (days)
           </label>
@@ -344,9 +442,10 @@ export function AumTrendChart({
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-            <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 12 }} />
+            <XAxis dataKey="date" tickFormatter={formatShortDateWithYear} tick={{ fontSize: 12 }} />
             <YAxis
               domain={yDomain}
+              ticks={yTicks}
               tick={{ fontSize: 12 }}
               tickFormatter={(v: number) => `${(v / 1000).toFixed(tickDecimals)}k`}
               width={50}
@@ -356,13 +455,14 @@ export function AumTrendChart({
                 yAxisId="stock"
                 orientation="right"
                 domain={stockYDomain}
+                ticks={stockYTicks}
                 tick={{ fontSize: 12 }}
                 tickFormatter={(v: number) => formatPriceInr(v)}
                 width={70}
               />
             )}
             <Tooltip
-              labelFormatter={(label) => (typeof label === "string" ? formatShortDate(label) : String(label ?? ""))}
+              labelFormatter={(label) => (typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? ""))}
               formatter={(value, name, item) => {
                 if (name === stockSeriesName) {
                   return typeof value === "number" ? formatPriceInr(value) : String(value);
