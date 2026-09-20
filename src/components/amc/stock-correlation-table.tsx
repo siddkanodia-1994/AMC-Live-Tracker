@@ -28,13 +28,20 @@ const EXPLAINER_AMC_SLUG = "hdfc-mutual-fund";
 interface ComputedRow {
   slug: string;
   overviewName: string;
+  // The strict raw, unsmoothed, single most-recent-day value -- NEVER
+  // passed through the moving average, and unaffected by either control
+  // (period selector or Moving avg (days)). What a user could actually see
+  // quoted "right now".
   latestAumCr: number | null;
   latestPriceInr: number | null;
-  // Mean of the (already moving-average-smoothed) daily values within the
-  // selected period -- unlike latestAumCr/latestPriceInr (today's value,
-  // unaffected by the period selector), these two exist specifically to
-  // answer "what's this AMC's period-average AUM/price", so they DO move
-  // when the period changes.
+  // The N-day trailing moving average ending TODAY (Moving avg (days) is
+  // the only thing that drives these) -- computed over the AMC's full
+  // history, independent of the period selector entirely. Identical to
+  // latestAumCr/latestPriceInr whenever Moving avg (days) is 0/blank (a
+  // 0-day average is just today's raw value); only visibly diverges once a
+  // moving-average window is actually entered. Feeds Fair value price and
+  // Z-score's "today's own ratio" (see computeRow) -- this is "the revised
+  // ratio" the user asked for.
   avgAumCr: number | null;
   avgPriceInr: number | null;
   corr: number | null;
@@ -104,9 +111,11 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis:
   const cutoffDate = computeRangeCutoffDate(aumWithGapsFull, range);
   const aumWithGaps = filterByCutoff(aumWithGapsFull, cutoffDate);
   const priceWithGaps = filterByCutoff(priceWithGapsFull, cutoffDate);
-  // Corr/R²/ratio-stats/Z-score/the two Avg columns are all scoped to the
-  // selected period; latestAumCr/latestPriceInr (today's value) intentionally
-  // are NOT -- see the ComputedRow comment on avgAumCr/avgPriceInr.
+  // Corr/R² and the historical ratio distribution (meanRatio/stdDev below,
+  // which Fair value's "selected ratio" and Z-score are measured against)
+  // are scoped to the selected period. avgAumCr/avgPriceInr and
+  // latestAumCr/latestPriceInr are NOT period-scoped -- see the ComputedRow
+  // comments on each.
   const aumDated = aumWithGaps.filter((d): d is { date: string; value: number } => d.value !== undefined);
   const priceDated = priceWithGaps.filter((d): d is { date: string; value: number } => d.value !== undefined);
 
@@ -114,18 +123,32 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis:
   const { xs, ys } = alignSeriesByDate(aumDated, priceDated);
   const ratioStats = priceToAumRatioStats(xs, ys);
 
-  const latestAumCr = aumDisplay.length > 0 ? aumDisplay[aumDisplay.length - 1] ?? null : null;
-  const latestPriceInr = priceDisplay.length > 0 ? priceDisplay[priceDisplay.length - 1] ?? null : null;
-  const avgAumCr = aumDated.length > 0 ? aumDated.reduce((sum, d) => sum + d.value, 0) / aumDated.length : null;
-  const avgPriceInr = priceDated.length > 0 ? priceDated.reduce((sum, d) => sum + d.value, 0) / priceDated.length : null;
+  // Raw, unsmoothed, single most-recent-day value -- never the moving
+  // average. `data` is already trimToLastContinuousRun'd; the price series
+  // is used as-is, matching the existing convention of never trimming it.
+  const latestAumCr = data.length > 0 ? data[data.length - 1].liveAumCr : null;
+  const latestPriceInr =
+    entry.stockPriceSeries.length > 0 ? entry.stockPriceSeries[entry.stockPriceSeries.length - 1].priceInr : null;
+  // The N-day moving average ending today -- period-independent (see
+  // ComputedRow comment). Equals latestAumCr/latestPriceInr exactly when
+  // maDays <= 1.
+  const avgAumCr = aumDisplay.length > 0 ? aumDisplay[aumDisplay.length - 1] ?? null : null;
+  const avgPriceInr = priceDisplay.length > 0 ? priceDisplay[priceDisplay.length - 1] ?? null : null;
   const selectedRatio = ratioStats ? ratioAtBasis(ratioStats, ratioBasis) : null;
-  const fairValuePriceInr = selectedRatio !== null && latestAumCr !== null ? selectedRatio * latestAumCr : null;
+  // Fair value uses the AVERAGED AUM (the "revised ratio") -- confirmed:
+  // reduces noise from a single volatile day's AUM.
+  const fairValuePriceInr = selectedRatio !== null && avgAumCr !== null ? selectedRatio * avgAumCr : null;
+  // Upside % always compares against the RAW current price -- confirmed:
+  // answers "upside from the price you could actually transact at today",
+  // never a smoothed historical average.
   const upsidePct =
     fairValuePriceInr !== null && latestPriceInr !== null && latestPriceInr !== 0
       ? (fairValuePriceInr - latestPriceInr) / latestPriceInr
       : null;
-  const currentRatio =
-    latestAumCr !== null && latestAumCr !== 0 && latestPriceInr !== null ? latestPriceInr / latestAumCr : null;
+  // Z-score's "today's own ratio" uses avg/avg (confirmed) -- consistent
+  // with Fair value price using the averaged AUM, so both sides of the
+  // ratio get the same smoothing treatment.
+  const currentRatio = avgAumCr !== null && avgAumCr !== 0 && avgPriceInr !== null ? avgPriceInr / avgAumCr : null;
   const zScore =
     currentRatio !== null && ratioStats && ratioStats.stdDev !== 0
       ? (currentRatio - ratioStats.meanRatio) / ratioStats.stdDev
@@ -281,16 +304,19 @@ export function StockCorrelationTable() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          All 8 AMCs with their own listed share price. Avg AUM/Avg Share Price, Corr/R², Fair value, and Z-score are
-          all scoped to the selected period below (default 3 years) and moving-average — Live AUM/Share Price stay
-          today&apos;s value regardless. Corr/R² use day-over-day % changes (matches each AMC&apos;s own AUM Trend
-          chart). Fair value price comes from each day&apos;s own (share price ÷ Live AUM) ratio — its historical
-          mean (or, via Ratio basis, mean ± 1/2 standard deviations) times today&apos;s AUM — rather than a
-          level-vs-level regression, which would spuriously overstate the fit since both series trend upward over
-          time. Z-score is how many standard deviations today&apos;s own ratio sits from that historical mean,
-          highlighted when |z| ≥ 1 (and more strongly at ≥ 2) as notably rich or cheap relative to the AMC&apos;s own
-          history. The period/moving-average/ratio-basis selection here is shared with the chart below — changing
-          either updates both, and &quot;Save as default&quot; makes the current selection what every visitor sees.
+          All 8 AMCs with their own listed share price. Live AUM/Share Price are always today&apos;s raw value.
+          Avg AUM/Avg Share Price are the moving average ending today (set by Moving avg (days) below, independent
+          of the selected period) — identical to Live AUM/Share Price when Moving avg (days) is 0. The period
+          selector scopes Corr/R² and the historical (share price ÷ Live AUM) ratio distribution that Fair value and
+          Z-score are measured against; Corr/R² use day-over-day % changes (matches each AMC&apos;s own AUM Trend
+          chart). Fair value price = that historical ratio&apos;s mean (or, via Ratio basis, mean ± 1/2 standard
+          deviations) times Avg AUM — rather than a level-vs-level regression, which would spuriously overstate the
+          fit since both series trend upward over time. Upside % always compares Fair value against the raw current
+          share price, never the averaged one. Z-score is how many standard deviations today&apos;s own (Avg Share
+          Price ÷ Avg AUM) ratio sits from that historical mean, highlighted when |z| ≥ 1 (and more strongly at ≥ 2)
+          as notably rich or cheap relative to the AMC&apos;s own history. The period/moving-average/ratio-basis
+          selection here is shared with the chart below — changing either updates both, and &quot;Save as
+          default&quot; makes the current selection what every visitor sees.
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1" role="group" aria-label="Date range">
@@ -376,7 +402,7 @@ export function StockCorrelationTable() {
                 Latest (as shown)
               </TableHead>
               <TableHead colSpan={2} className={groupHeadClass}>
-                Avg ({RANGE_OPTIONS.find((o) => o.value === range)?.label ?? range})
+                Avg ({maDays > 1 ? `${maDays}D avg` : "Latest"})
               </TableHead>
               <TableHead colSpan={2} className={groupHeadClass}>
                 Actual (returns)

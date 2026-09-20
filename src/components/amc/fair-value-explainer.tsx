@@ -114,7 +114,13 @@ export function FairValueExplainer({
 
   const latest = aligned[n - 1];
   const fairValue = selectedRatio * latest.aum;
-  const upsidePct = (fairValue - latest.price) / latest.price;
+  // Upside % always compares against the RAW current price, not the
+  // (possibly moving-average-smoothed) latest.price used for Fair value's
+  // own AUM basis and the ratio table above -- confirmed: answers "upside
+  // from the price you could actually transact at today", matching
+  // stock-correlation-table.tsx's computeRow exactly.
+  const currentPriceInr = entry.stockPriceSeries[entry.stockPriceSeries.length - 1].priceInr;
+  const upsidePct = (fairValue - currentPriceInr) / currentPriceInr;
 
   const head = aligned.slice(0, 3);
   const tail = aligned.slice(Math.max(3, n - 3));
@@ -176,7 +182,7 @@ export function FairValueExplainer({
 
         <div>
           <p className="mb-1.5 font-medium text-foreground">
-            2. Fair value price = selected ratio × today&apos;s Live AUM
+            2. Fair value price = selected ratio × today&apos;s Avg AUM{maDays > 1 ? ` (${maDays}D avg)` : ""}
           </p>
           <div className="rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed text-foreground">
             <div className="text-muted-foreground">Mean ratio = average of all {n} daily ratios</div>
@@ -198,7 +204,7 @@ export function FairValueExplainer({
             = {selectedRatio.toFixed(RATIO_DECIMALS)}
             <br />
             <br />
-            <div className="text-muted-foreground">Fair value price = selected ratio × today&apos;s Live AUM</div>
+            <div className="text-muted-foreground">Fair value price = selected ratio × today&apos;s Avg AUM</div>
             Fair value = {selectedRatio.toFixed(RATIO_DECIMALS)} × {formatCr(latest.aum)} ={" "}
             <span className="font-semibold text-[var(--toolbar-accent)]">{formatPriceInr(fairValue)}</span>
           </div>
@@ -218,12 +224,12 @@ export function FairValueExplainer({
 
         <div>
           <p className="mb-1.5 font-medium text-foreground">
-            4. Upside % = fair value vs. today&apos;s actual share price
+            4. Upside % = fair value vs. today&apos;s actual (raw, unaveraged) share price
           </p>
           <div className="rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed text-foreground">
             Upside % = (fair value − current price) ÷ current price
             <br />
-            = ({formatPriceInr(fairValue)} − {formatPriceInr(latest.price)}) ÷ {formatPriceInr(latest.price)}
+            = ({formatPriceInr(fairValue)} − {formatPriceInr(currentPriceInr)}) ÷ {formatPriceInr(currentPriceInr)}
             <br />={" "}
             <span
               className={
