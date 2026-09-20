@@ -19,6 +19,7 @@ import {
 } from "@/lib/aum/series-math";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { FairValueExplainer } from "./fair-value-explainer";
+import { AumTrendChart } from "./aum-trend-chart";
 
 // The AMC used as the worked example below the table -- HDFC specifically
 // requested, not user-selectable (yet).
@@ -161,6 +162,9 @@ export function StockCorrelationTable() {
   }, [data, maDays, ratioBasis]);
 
   const explainerEntry = useMemo(() => data?.amcs.find((a) => a.slug === EXPLAINER_AMC_SLUG) ?? null, [data]);
+
+  const [chartAmcSlug, setChartAmcSlug] = useState(EXPLAINER_AMC_SLUG);
+  const chartEntry = useMemo(() => data?.amcs.find((a) => a.slug === chartAmcSlug) ?? null, [data, chartAmcSlug]);
 
   // Groups rows by their own truncatedFromDate and picks the date shared by
   // the MOST rows as the one general caption, calling out any row whose
@@ -342,6 +346,36 @@ export function StockCorrelationTable() {
             ))}
           </TableBody>
         </Table>
+      </div>
+
+      <div className="space-y-2 rounded-lg border bg-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-medium text-foreground">AUM vs. Share Price</p>
+          <div className="flex items-center gap-2">
+            <label htmlFor="chart-amc-select" className="text-xs text-muted-foreground">
+              AMC
+            </label>
+            <select
+              id="chart-amc-select"
+              value={chartAmcSlug}
+              onChange={(e) => setChartAmcSlug(e.target.value)}
+              className={ratioBasisSelectClass}
+            >
+              {data?.amcs.map((a) => (
+                <option key={a.slug} value={a.slug}>
+                  {a.overviewName}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        {chartEntry && (
+          <AumTrendChart
+            data={chartEntry.aumHistory}
+            stockPriceSeries={chartEntry.stockPriceSeries}
+            stockLabel={chartEntry.tradingSymbol}
+          />
+        )}
       </div>
 
       {explainerEntry && <FairValueExplainer entry={explainerEntry} maDays={maDays} ratioBasis={ratioBasis} />}

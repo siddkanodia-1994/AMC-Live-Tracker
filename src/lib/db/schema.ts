@@ -665,3 +665,63 @@ export const amcListedStock = pgTable(
   },
   (t) => [uniqueIndex("amc_listed_stock_amc_id_idx").on(t.amcId)]
 );
+
+// User-provided ground-truth monthly exit equity AUM for the 8
+// amc_listed_stock AMCs, covering 2022-12 through 2025-12 -- the period
+// before any real monthly holdings import exists (earliest real
+// amc_periods data is 2025-12). Deliberately separate from amcPeriods:
+// these are anchors for an index-return-based daily estimate (see
+// historical-backfill.ts), not real reported-AUM-from-a-holdings-sheet
+// data, and mixing the two would corrupt every amcPeriods-driven
+// period-picker (AUM Growth, Sectoral Holdings, Total AUM Growth, etc).
+export const amcHistoricalAumAnchor = pgTable(
+  "amc_historical_aum_anchor",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    // "YYYY-MM", mirrors amcPeriods.reportPeriod's own convention for
+    // readability only -- this table has no relation to amcPeriods.
+    reportMonth: text("report_month").notNull(),
+    // The actual last NSE trading day of that month (not always the
+    // literal calendar last day) -- what the compounding math keys off,
+    // since it must land on a real NIFTY_500 index_daily_level row.
+    monthEndDate: date("month_end_date").notNull(),
+    exitAumCr: numeric("exit_aum_cr", { precision: 18, scale: 4 }).notNull(),
+  },
+  (t) => [uniqueIndex("amc_historical_aum_anchor_amc_month_idx").on(t.amcId, t.reportMonth)]
+);
+
+// The computed daily estimate bridging amcHistoricalAumAnchor's monthly
+// points: each day's AUM compounds the prior day's by that day's NIFTY_500
+// return, then gets multiplicatively ramped so every month boundary lands
+// exactly on the next anchor (see historical-backfill.ts for the exact
+// algorithm). Fully separate from liveAumDailySnapshot on purpose -- this
+// is an index-proxy estimate for a period with no real holdings data, not
+// a real per-stock-repriced snapshot, and keeping it in its own table
+// means it can never collide with that table's isCanonical partial index
+// or be mistaken for real history by getCanonicalSnapshotDateBounds() and
+// similar cross-AMC readers. src/lib/amc-stock/correlation-summary.ts and
+// src/lib/aum/history.ts prepend this table's rows before the real
+// liveAumDailySnapshot ones when building an AMC's aumHistory.
+export const amcHistoricalAumEstimate = pgTable(
+  "amc_historical_aum_estimate",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    snapshotDate: date("snapshot_date").notNull(),
+    // Final, drift-adjusted value -- what every downstream reader uses.
+    estimatedAumCr: numeric("estimated_aum_cr", { precision: 18, scale: 4 }).notNull(),
+    // Pre-adjustment pure NIFTY_500-compounded value, kept alongside the
+    // final one purely for audit/debugging so the ramp math can be
+    // verified without recomputing it from scratch.
+    rawCompoundedAumCr: numeric("raw_compounded_aum_cr", { precision: 18, scale: 4 }).notNull(),
+    // Which monthly segment (its END anchor) produced this row.
+    anchorMonthEndDate: date("anchor_month_end_date").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("amc_historical_aum_estimate_amc_date_idx").on(t.amcId, t.snapshotDate)]
+);

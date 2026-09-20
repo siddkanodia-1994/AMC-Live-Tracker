@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcPeriods, amcs, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
+import { amcHistoricalAumEstimate, amcPeriods, amcs, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { addDaysToDateString, getIstDateString } from "../utils/date";
 import { firstDayOfNextMonth, lastDayOfReportMonth } from "./report-period";
 
@@ -59,11 +59,40 @@ export async function getAverageAumForRange(
 export interface AumHistoryPoint {
   date: string;
   liveAumCr: number;
-  reportedAumCr: number;
+  // null for the 2023-2025 historical-estimate stretch (see
+  // getHistoricalAumEstimatePoints) -- there's no real monthly import
+  // behind an estimated date, so the chart's Reported AUM line simply
+  // isn't drawn there (Recharts leaves a gap wherever a Line's dataKey is
+  // null); it only starts appearing once real 2026+ data begins.
+  reportedAumCr: number | null;
   // Which report period reportedAumCr reflects on this date -- lets the
   // trend chart's tooltip show e.g. "(May 2026)" next to the Reported AUM
-  // value, since that line only steps when a new month is imported.
+  // value, since that line only steps when a new month is imported. Empty
+  // string for the historical-estimate stretch (reportedAumCr is null
+  // there anyway, so this is never rendered).
   reportPeriod: string;
+}
+
+/**
+ * amc_historical_aum_estimate rows for one AMC, shaped as AumHistoryPoint
+ * so they can be prepended directly ahead of the real liveAumDailySnapshot
+ * rows -- see historical-backfill.ts for how estimatedAumCr is computed.
+ * Empty for any AMC with no estimate rows (i.e. every AMC except the 8
+ * amc_listed_stock ones this backfill covers).
+ */
+async function getHistoricalAumEstimatePoints(amcId: number): Promise<AumHistoryPoint[]> {
+  const rows = await db
+    .select()
+    .from(amcHistoricalAumEstimate)
+    .where(eq(amcHistoricalAumEstimate.amcId, amcId))
+    .orderBy(asc(amcHistoricalAumEstimate.snapshotDate));
+
+  return rows.map((r) => ({
+    date: r.snapshotDate,
+    liveAumCr: Number(r.estimatedAumCr),
+    reportedAumCr: null,
+    reportPeriod: "",
+  }));
 }
 
 export async function getAmcAumHistory(amcId: number): Promise<AumHistoryPoint[]> {
@@ -73,12 +102,14 @@ export async function getAmcAumHistory(amcId: number): Promise<AumHistoryPoint[]
     .where(and(eq(liveAumDailySnapshot.amcId, amcId), eq(liveAumDailySnapshot.isCanonical, true)))
     .orderBy(asc(liveAumDailySnapshot.snapshotDate));
 
-  return rows.map((r) => ({
+  const liveHistory = rows.map((r) => ({
     date: r.snapshotDate,
     liveAumCr: Number(r.liveAumCr),
-    reportedAumCr: Number(r.reportedAumCr),
+    reportedAumCr: Number(r.reportedAumCr) as number | null,
     reportPeriod: r.reportPeriod,
   }));
+  const estimateHistory = await getHistoricalAumEstimatePoints(amcId);
+  return [...estimateHistory, ...liveHistory];
 }
 
 export interface AmcStockPricePoint {
@@ -118,6 +149,17 @@ export async function getAumHistoryForAmcIds(
 ): Promise<Map<number, AumHistoryPoint[]>> {
   const map = new Map<number, AumHistoryPoint[]>();
   if (amcIds.length === 0) return map;
+
+  const estimateRows = await db
+    .select()
+    .from(amcHistoricalAumEstimate)
+    .where(inArray(amcHistoricalAumEstimate.amcId, amcIds))
+    .orderBy(asc(amcHistoricalAumEstimate.snapshotDate));
+  for (const r of estimateRows) {
+    const list = map.get(r.amcId) ?? [];
+    list.push({ date: r.snapshotDate, liveAumCr: Number(r.estimatedAumCr), reportedAumCr: null, reportPeriod: "" });
+    map.set(r.amcId, list);
+  }
 
   const rows = await db
     .select()

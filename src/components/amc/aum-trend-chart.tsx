@@ -43,7 +43,7 @@ function computeYAxisDomain(data: AumHistoryPoint[]): [number, number] {
   let max = -Infinity;
   for (const point of data) {
     for (const value of [point.liveAumCr, point.reportedAumCr]) {
-      if (Number.isFinite(value)) {
+      if (typeof value === "number" && Number.isFinite(value)) {
         if (value < min) min = value;
         if (value > max) max = value;
       }
@@ -186,7 +186,7 @@ export function AumTrendChart({
   stockPriceSeries?: AmcStockPricePoint[];
   stockLabel?: string;
 }) {
-  const [showStockPrice, setShowStockPrice] = useState(false);
+  const [showStockPrice, setShowStockPrice] = useState(true);
   const [maDaysInput, setMaDaysInput] = useState("");
   // Any blank/invalid/out-of-range entry clamps to 1 -- the identity
   // window, i.e. today's raw-daily default -- rather than crashing or
