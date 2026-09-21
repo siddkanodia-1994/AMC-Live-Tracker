@@ -127,7 +127,7 @@ export function FairValueExplainer({
   const omitted = n - head.length - tail.length;
 
   return (
-    <details className="rounded-lg border bg-card p-4" open>
+    <details className="rounded-lg border bg-card p-4">
       <summary className="cursor-pointer font-medium text-foreground">
         How is {entry.overviewName}&apos;s fair value calculated? (worked example)
       </summary>

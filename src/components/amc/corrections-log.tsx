@@ -43,7 +43,7 @@ export function CorrectionsLog({
       </p>
       <div className="space-y-3 rounded-lg border bg-card p-4">
         {hasShareAdjustments && (
-          <details className="text-xs text-muted-foreground" open>
+          <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">
               {shareAdjustments.length} stock{shareAdjustments.length === 1 ? "" : "s"} auto-adjusted for a split/bonus
             </summary>
@@ -59,7 +59,7 @@ export function CorrectionsLog({
           </details>
         )}
         {hasOutageReclaims && (
-          <details className="text-xs text-muted-foreground" open>
+          <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">
               {outageReclaims.length} day{outageReclaims.length === 1 ? "" : "s"} auto-corrected after a DHAN outage
             </summary>
@@ -77,7 +77,7 @@ export function CorrectionsLog({
           </details>
         )}
         {hasStaleMappingCorrections && (
-          <details className="text-xs text-muted-foreground" open>
+          <details className="text-xs text-muted-foreground">
             <summary className="cursor-pointer font-medium text-foreground">
               {staleMappingCorrections.length} stock DHAN mapping{staleMappingCorrections.length === 1 ? "" : "s"} auto-corrected
             </summary>
