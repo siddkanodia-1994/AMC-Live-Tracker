@@ -302,22 +302,27 @@ export function StockCorrelationTable() {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          All 8 AMCs with their own listed share price. Live AUM/Share Price are always today&apos;s raw value.
-          Avg AUM/Avg Share Price are the moving average ending today (set by Moving avg (days) below, independent
-          of the selected period) — identical to Live AUM/Share Price when Moving avg (days) is 0. The period
-          selector scopes Corr/R² and the historical (share price ÷ Live AUM) ratio distribution that Fair value and
-          Z-score are measured against; Corr/R² use day-over-day % changes (matches each AMC&apos;s own AUM Trend
-          chart). Fair value price = that historical ratio&apos;s mean (or, via Ratio basis, mean ± 1/2 standard
-          deviations) times Avg AUM — rather than a level-vs-level regression, which would spuriously overstate the
-          fit since both series trend upward over time. Upside % always compares Fair value against the raw current
-          share price, never the averaged one. Z-score is how many standard deviations today&apos;s own (Avg Share
-          Price ÷ Avg AUM) ratio sits from that historical mean, highlighted when |z| ≥ 1 (and more strongly at ≥ 2)
-          as notably rich or cheap relative to the AMC&apos;s own history. The period/moving-average/ratio-basis
-          selection here is shared with the chart below — changing either updates both, and &quot;Save as
-          default&quot; makes the current selection what every visitor sees.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <details className="max-w-2xl text-sm text-muted-foreground">
+          <summary className="cursor-pointer select-none hover:text-foreground">
+            Methodology &amp; how these figures are calculated
+          </summary>
+          <p className="mt-2">
+            All 8 AMCs with their own listed share price. Live AUM/Share Price are always today&apos;s raw value.
+            Avg AUM/Avg Share Price are the moving average ending today (set by Moving avg (days) below, independent
+            of the selected period) — identical to Live AUM/Share Price when Moving avg (days) is 0. The period
+            selector scopes Corr/R² and the historical (share price ÷ Live AUM) ratio distribution that Fair value
+            and Z-score are measured against; Corr/R² use day-over-day % changes (matches each AMC&apos;s own AUM
+            Trend chart). Fair value price = that historical ratio&apos;s mean (or, via Ratio basis, mean ± 1/2
+            standard deviations) times Avg AUM — rather than a level-vs-level regression, which would spuriously
+            overstate the fit since both series trend upward over time. Upside % always compares Fair value against
+            the raw current share price, never the averaged one. Z-score is how many standard deviations today&apos;s
+            own (Avg Share Price ÷ Avg AUM) ratio sits from that historical mean, highlighted when |z| ≥ 1 (and more
+            strongly at ≥ 2) as notably rich or cheap relative to the AMC&apos;s own history. The
+            period/moving-average/ratio-basis selection here is shared with the chart below — changing either
+            updates both, and &quot;Save as default&quot; makes the current selection what every visitor sees.
+          </p>
+        </details>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1" role="group" aria-label="Date range">
             {RANGE_OPTIONS.map((o) => (
