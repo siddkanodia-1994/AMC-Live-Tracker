@@ -5,6 +5,7 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Too
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatPct, formatPriceInr, formatShortDateWithYear } from "@/lib/utils/format";
 import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
+import { RANGE_OPTIONS, filterByRange, type RangeOption } from "@/lib/aum/date-range";
 import {
   alignAumPriceSeries,
   computeRollingZScore,
@@ -76,12 +77,13 @@ function Stat({ label, value, valueClassName }: { label: string; value: string; 
 /**
  * Live client-side port of the offline Python backtester (see
  * backtesting/ at the project root, which this mirrors exactly -- see
- * src/lib/backtest/engine.ts's parity notes). Receives the SAME
- * `history`/`stockPriceSeries` props AumTrendChart already gets on this
- * page (sourced once server-side, per page load) -- every config change
- * here recomputes entirely in the browser, no DB query, no server call.
+ * src/lib/backtest/engine.ts's parity notes). Renders one AMC's results
+ * -- the caller (backtest-page.tsx, the top-level Backtest tab) supplies
+ * `history`/`stockPriceSeries` for whichever AMC is currently selected in
+ * its own dropdown. Every config change here recomputes entirely in the
+ * browser, no DB query, no server call.
  */
-export function BacktestTab({
+export function BacktestPanel({
   history,
   stockPriceSeries,
   stockLabel,
@@ -90,6 +92,7 @@ export function BacktestTab({
   stockPriceSeries?: AmcStockPricePoint[];
   stockLabel?: string;
 }) {
+  const [range, setRange] = useState<RangeOption>("3y");
   const [thresholdsInput, setThresholdsInput] = useState("-1.5, -2.0");
   const [lookbackDaysInput, setLookbackDaysInput] = useState("15");
   const [exitRule, setExitRule] = useState<ExitRule>("combo");
@@ -114,14 +117,22 @@ export function BacktestTab({
   const fixedCapitalPerTrade = Math.max(1, parseFloat(fixedCapitalPerTradeInput) || 100_000);
   const thresholds = useMemo(() => parseThresholds(thresholdsInput), [thresholdsInput]);
 
+  // Rolling Z-score computed over the FULL (unranged) history first, so a
+  // day near the start of the selected period still gets a genuine
+  // trailing lookback from just-before-the-window data, instead of an
+  // artificial warm-up gap right where the window begins -- same
+  // full-history-then-filter convention AumTrendChart/StockCorrelationTable
+  // already use for their own moving averages.
   const rolling = useMemo(() => {
     if (!hasStockPrice) return [];
     const aligned = alignAumPriceSeries(history, stockPriceSeries!);
     return computeRollingZScore(aligned, lookbackDays);
   }, [history, stockPriceSeries, hasStockPrice, lookbackDays]);
 
+  const rangedRolling = useMemo(() => filterByRange(rolling, range), [rolling, range]);
+
   const resultsByThreshold = useMemo(() => {
-    if (rolling.length < lookbackDays) return [];
+    if (rangedRolling.length < lookbackDays) return [];
     return thresholds.map((threshold) => {
       const config: BacktestConfig = {
         lookbackDays,
@@ -136,12 +147,12 @@ export function BacktestTab({
         positionSizeFraction,
         fixedCapitalPerTrade,
       };
-      const result = runBacktest(rolling, config);
+      const result = runBacktest(rangedRolling, config);
       const metrics = computeMetrics(result, 0);
       return { result, metrics };
     });
   }, [
-    rolling,
+    rangedRolling,
     lookbackDays,
     thresholds,
     exitRule,
@@ -162,6 +173,16 @@ export function BacktestTab({
       <details className="rounded-lg border bg-card p-4" open>
         <summary className="cursor-pointer text-sm font-medium text-foreground">Backtest configuration</summary>
         <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <span className={labelClass}>Backfill period</span>
+            <div className="flex items-center gap-1" role="group" aria-label="Backfill period">
+              {RANGE_OPTIONS.map((o) => (
+                <button key={o.value} type="button" onClick={() => setRange(o.value)} className={o.value === range ? segmentActive : segmentInactive}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex flex-col gap-1">
             <label htmlFor="bt-thresholds" className={labelClass}>
               Z-score thresholds (comma-separated)
@@ -281,10 +302,10 @@ export function BacktestTab({
         </div>
       </details>
 
-      {rolling.length < lookbackDays ? (
+      {rangedRolling.length < lookbackDays ? (
         <p className="text-sm text-muted-foreground">
-          Not enough overlapping AUM/share price history ({rolling.length} day{rolling.length === 1 ? "" : "s"}) for a full {lookbackDays}-day
-          lookback window.
+          Not enough overlapping AUM/share price history in the selected period ({rangedRolling.length} day
+          {rangedRolling.length === 1 ? "" : "s"}) for a full {lookbackDays}-day lookback window.
         </p>
       ) : (
         resultsByThreshold.map(({ result, metrics }) => (
@@ -359,6 +380,7 @@ export function BacktestTab({
                       <TableHead className="text-right">Entry Z</TableHead>
                       <TableHead>Exit Date</TableHead>
                       <TableHead className="text-right">Exit Price</TableHead>
+                      <TableHead className="text-right">Exit Z</TableHead>
                       <TableHead>Exit Reason</TableHead>
                       <TableHead className="text-right">Holding Days</TableHead>
                       <TableHead className="text-right">Return %</TableHead>
@@ -372,6 +394,7 @@ export function BacktestTab({
                         <TableCell className="text-right tabular-nums">{t.entryZScore.toFixed(2)}</TableCell>
                         <TableCell>{formatShortDateWithYear(t.exitDate)}</TableCell>
                         <TableCell className="text-right tabular-nums">{formatPriceInr(t.exitPrice)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{t.exitZScore.toFixed(2)}</TableCell>
                         <TableCell className="capitalize">{t.exitReason.replace(/_/g, " ")}</TableCell>
                         <TableCell className="text-right tabular-nums">{t.holdingDays}</TableCell>
                         <TableCell

@@ -16,6 +16,7 @@ import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-tabl
 import { SectoralHoldingsTable } from "./sectoral-holdings-table";
 import { EtfTable } from "@/components/etf/etf-table";
 import { StockCorrelationTable } from "./stock-correlation-table";
+import { BacktestPage } from "./backtest-page";
 import { StockTab } from "@/components/stock/stock-tab";
 import { DailyDataTable } from "./daily-data-table";
 import { CorrectionsLog } from "./corrections-log";
@@ -859,6 +860,9 @@ export function AmcGrid({
               <TabsTrigger value="amc-stock-correlation" className="after:bg-[var(--toolbar-accent)]">
                 Stock Correlation
               </TabsTrigger>
+              <TabsTrigger value="backtest" className="after:bg-[var(--toolbar-accent)]">
+                Backtest
+              </TabsTrigger>
               <TabsTrigger value="stock" className="after:bg-[var(--toolbar-accent)]">
                 Stock
               </TabsTrigger>
@@ -1215,6 +1219,9 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="amc-stock-correlation">
           <StockCorrelationTable />
+        </TabsContent>
+        <TabsContent value="backtest">
+          <BacktestPage />
         </TabsContent>
         <TabsContent value="stock">
           <StockTab />

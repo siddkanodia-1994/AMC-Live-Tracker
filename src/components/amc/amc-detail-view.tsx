@@ -5,7 +5,6 @@ import { useLiveAumDetail, type AmcDetailResponse } from "@/hooks/use-live-aum-d
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { AmcSwitcher } from "./amc-switcher";
 import { AumTrendChart } from "./aum-trend-chart";
-import { BacktestTab } from "./backtest-tab";
 import { HoldingsTable } from "./holdings-table";
 import { PeriodComparisonTable } from "./period-comparison-table";
 import { SectorBreakdown } from "./sector-breakdown";
@@ -183,7 +182,6 @@ export function AmcDetailView({
           <TabsTrigger value="holdings">Holdings</TabsTrigger>
           <TabsTrigger value="sectors">Sector Allocation</TabsTrigger>
           <TabsTrigger value="comparison">Period Comparison</TabsTrigger>
-          {stockPriceSeries && stockPriceSeries.length > 0 && <TabsTrigger value="backtest">Backtest</TabsTrigger>}
         </TabsList>
         <TabsContent value="holdings">
           {/* Full-bleed: this table has too many columns to fit inside the
@@ -206,11 +204,6 @@ export function AmcDetailView({
             </div>
           </div>
         </TabsContent>
-        {stockPriceSeries && stockPriceSeries.length > 0 && (
-          <TabsContent value="backtest">
-            <BacktestTab history={history} stockPriceSeries={stockPriceSeries} stockLabel={stockLabel} />
-          </TabsContent>
-        )}
       </Tabs>
     </div>
   );

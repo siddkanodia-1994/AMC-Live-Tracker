@@ -91,6 +91,7 @@ export interface Trade {
   entryZScore: number;
   exitDate: string;
   exitPrice: number;
+  exitZScore: number;
   exitReason: "fixed_holding" | "mean_revert" | "end_of_data";
   holdingDays: number;
   returnPct: number; // net of transaction costs, as a fraction (0.05 = 5%)
@@ -179,12 +180,19 @@ export function runBacktest(points: RollingPoint[], config: BacktestConfig): Bac
       equity += pnl;
       equityCurve[exitIdx] = { date: points[exitIdx].date, equity };
 
+      // Always defined here: exitIdx >= entryIdx > i, and a trade only
+      // ever opens where i's own zscore is already defined (i.e.
+      // i >= lookbackDays - 1), so every later index's zscore is defined
+      // too -- TS just can't prove that invariant structurally.
+      const exitZScore = points[exitIdx].zscore as number;
+
       trades.push({
         entryDate: points[entryIdx].date,
         entryPrice,
         entryZScore: zscore,
         exitDate: points[exitIdx].date,
         exitPrice,
+        exitZScore,
         exitReason: reason,
         holdingDays: exitIdx - entryIdx,
         returnPct: netReturn,
