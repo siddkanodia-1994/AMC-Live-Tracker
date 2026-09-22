@@ -5,10 +5,10 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Too
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatPct, formatPriceInr, formatShortDateWithYear } from "@/lib/utils/format";
 import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
-import { RANGE_OPTIONS, filterByRange, type RangeOption } from "@/lib/aum/date-range";
+import { RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
 import {
-  alignAumPriceSeries,
-  computeRollingZScore,
+  alignSmoothedSeries,
+  computeExpandingZScore,
   runBacktest,
   type BacktestConfig,
   type ExitRule,
@@ -94,7 +94,7 @@ export function BacktestPanel({
 }) {
   const [range, setRange] = useState<RangeOption>("3y");
   const [thresholdsInput, setThresholdsInput] = useState("-1.5, -2.0");
-  const [lookbackDaysInput, setLookbackDaysInput] = useState("15");
+  const [maDaysInput, setMaDaysInput] = useState("15");
   const [exitRule, setExitRule] = useState<ExitRule>("combo");
   const [holdingDaysInput, setHoldingDaysInput] = useState("20");
   const [meanRevertTargetZInput, setMeanRevertTargetZInput] = useState("0");
@@ -107,7 +107,7 @@ export function BacktestPanel({
 
   const hasStockPrice = !!stockPriceSeries && stockPriceSeries.length > 0;
 
-  const lookbackDays = Math.max(2, Math.min(250, parseInt(lookbackDaysInput, 10) || 15));
+  const maDays = Math.max(2, Math.min(250, parseInt(maDaysInput, 10) || 15));
   const holdingDays = Math.max(1, Math.min(250, parseInt(holdingDaysInput, 10) || 20));
   const entryLagDays = Math.max(1, Math.min(30, parseInt(entryLagDaysInput, 10) || 1));
   const transactionCostBps = Math.max(0, parseFloat(transactionCostBpsInput) || 0);
@@ -117,25 +117,29 @@ export function BacktestPanel({
   const fixedCapitalPerTrade = Math.max(1, parseFloat(fixedCapitalPerTradeInput) || 100_000);
   const thresholds = useMemo(() => parseThresholds(thresholdsInput), [thresholdsInput]);
 
-  // Rolling Z-score computed over the FULL (unranged) history first, so a
-  // day near the start of the selected period still gets a genuine
-  // trailing lookback from just-before-the-window data, instead of an
-  // artificial warm-up gap right where the window begins -- same
-  // full-history-then-filter convention AumTrendChart/StockCorrelationTable
-  // already use for their own moving averages.
-  const rolling = useMemo(() => {
+  // AUM and price smoothed separately over the AMC's FULL history first
+  // (each with its own N-day moving average), THEN aligned by date --
+  // this only needs to happen when maDays changes, independent of which
+  // Backfill period is selected.
+  const smoothed = useMemo(() => {
     if (!hasStockPrice) return [];
-    const aligned = alignAumPriceSeries(history, stockPriceSeries!);
-    return computeRollingZScore(aligned, lookbackDays);
-  }, [history, stockPriceSeries, hasStockPrice, lookbackDays]);
+    return alignSmoothedSeries(history, stockPriceSeries!, maDays);
+  }, [history, stockPriceSeries, hasStockPrice, maDays]);
 
-  const rangedRolling = useMemo(() => filterByRange(rolling, range), [rolling, range]);
+  // Mean/SD/Z-score expand from the selected Backfill period's own start
+  // date -- recomputed whenever the period OR the smoothing changes,
+  // since both feed directly into it (unlike the old fixed-window
+  // design, changing the period here changes WHICH days get signals at
+  // all, not just which of the same signals are kept).
+  const expanding = useMemo(() => computeExpandingZScore(smoothed, range), [smoothed, range]);
+
+  const validZScoreCount = useMemo(() => expanding.filter((p) => p.zscore !== undefined).length, [expanding]);
 
   const resultsByThreshold = useMemo(() => {
-    if (rangedRolling.length < lookbackDays) return [];
+    if (validZScoreCount < 2) return [];
     return thresholds.map((threshold) => {
       const config: BacktestConfig = {
-        lookbackDays,
+        maDays,
         threshold,
         exitRule,
         holdingDays,
@@ -147,13 +151,14 @@ export function BacktestPanel({
         positionSizeFraction,
         fixedCapitalPerTrade,
       };
-      const result = runBacktest(rangedRolling, config);
+      const result = runBacktest(expanding, config);
       const metrics = computeMetrics(result, 0);
       return { result, metrics };
     });
   }, [
-    rangedRolling,
-    lookbackDays,
+    expanding,
+    validZScoreCount,
+    maDays,
     thresholds,
     exitRule,
     holdingDays,
@@ -196,10 +201,10 @@ export function BacktestPanel({
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label htmlFor="bt-lookback" className={labelClass}>
-              Lookback (days)
+            <label htmlFor="bt-ma-days" className={labelClass}>
+              Moving avg (days)
             </label>
-            <input id="bt-lookback" type="number" min={2} max={250} value={lookbackDaysInput} onChange={(e) => setLookbackDaysInput(e.target.value)} className={numberInputClass} />
+            <input id="bt-ma-days" type="number" min={2} max={250} value={maDaysInput} onChange={(e) => setMaDaysInput(e.target.value)} className={numberInputClass} />
           </div>
           <div className="flex flex-col gap-1">
             <span className={labelClass}>Exit rule</span>
@@ -302,10 +307,10 @@ export function BacktestPanel({
         </div>
       </details>
 
-      {rangedRolling.length < lookbackDays ? (
+      {validZScoreCount < 2 ? (
         <p className="text-sm text-muted-foreground">
-          Not enough overlapping AUM/share price history in the selected period ({rangedRolling.length} day
-          {rangedRolling.length === 1 ? "" : "s"}) for a full {lookbackDays}-day lookback window.
+          Not enough overlapping AUM/share price history in the selected Backfill period ({validZScoreCount} day
+          {validZScoreCount === 1 ? "" : "s"} with a full {maDays}-day moving average) to compute a Z-score.
         </p>
       ) : (
         resultsByThreshold.map(({ result, metrics }) => (

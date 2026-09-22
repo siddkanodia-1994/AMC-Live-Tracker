@@ -4,66 +4,123 @@
 // it takes data the page already fetched once (AmcDetailView's own
 // `history`/`stockPriceSeries` props) and does every computation
 // client-side, so changing a config control never triggers a DB query.
+//
+// Z-score method: an EXPANDING window anchored at the selected Backfill
+// period's own start date (not a fixed rolling width) -- a fixed 15-day
+// rolling window was found to swing wildly (e.g. -2.43 -> +1.92 over 3
+// weeks on HDFC) even when the underlying ratio barely moved, because a
+// short window's own reference mean/std is itself noisy. Confirmed with
+// the user via several worked examples; see the plan for the full audit.
 import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
+import { computeMovingAverage } from "@/lib/aum/series-math";
+import { computeRangeCutoffDate, type RangeOption } from "@/lib/aum/date-range";
 
-export interface AlignedPoint {
+export interface SmoothedPoint {
   date: string;
-  price: number;
-  aumCr: number;
+  avgPrice: number;
+  avgAumCr: number;
+  // The actual, transactable price on this date -- entry/exit P&L is
+  // computed from this, never from avgPrice. Matches this app's existing
+  // precedent (fair-value-explainer.tsx: "Upside % always compares
+  // against the RAW current price... not the moving-average-smoothed"
+  // one) -- the averaged series drives the ratio/Z-score/signal only.
+  rawPrice: number;
 }
 
-// Inner-joins the two raw (unsmoothed) daily series by date -- only days
-// with BOTH a real price and AUM value, same rule aum-trend-chart.tsx's
-// alignedRatioInputs uses for its own (period-filtered, moving-averaged)
-// version. Kept as its own small function here rather than sharing that
-// one: this needs RAW daily values (the backtest computes its own
-// rolling stats), that one needs already-smoothed chart data -- different
-// input shapes, and reusing the shipped/tested chart's own memo isn't
-// worth the risk of touching it for this.
-export function alignAumPriceSeries(history: AumHistoryPoint[], priceSeries: AmcStockPricePoint[]): AlignedPoint[] {
-  const priceByDate = new Map(priceSeries.map((p) => [p.date, p.priceInr]));
-  const points: AlignedPoint[] = [];
+// Smooths AUM and share price SEPARATELY -- each over its own full raw
+// series first (matching aum-trend-chart.tsx's buildChartData/
+// alignedRatioInputs pattern: smooth each full series independently,
+// THEN intersect by date) -- rather than smoothing an already-joined
+// series, since AUM and price history don't always share the exact same
+// date coverage. A point only exists once a genuine N-day moving-average
+// window exists for BOTH series (computeMovingAverage's own semantics:
+// undefined until a real window of real data accumulates, borrowing from
+// before any later-applied period cutoff when the AMC's own history
+// reaches back that far -- never a partial/incomplete average).
+export function alignSmoothedSeries(history: AumHistoryPoint[], priceSeries: AmcStockPricePoint[], maDays: number): SmoothedPoint[] {
+  const avgAumByDate = new Map<string, number>();
+  const aumDisplay = computeMovingAverage(history.map((h) => h.liveAumCr), maDays);
+  history.forEach((h, i) => {
+    const v = aumDisplay[i];
+    if (v !== undefined && v > 0) avgAumByDate.set(h.date, v);
+  });
+
+  const avgPriceByDate = new Map<string, number>();
+  const rawPriceByDate = new Map<string, number>();
+  const priceDisplay = computeMovingAverage(priceSeries.map((p) => p.priceInr), maDays);
+  priceSeries.forEach((p, i) => {
+    const v = priceDisplay[i];
+    if (v !== undefined) avgPriceByDate.set(p.date, v);
+    rawPriceByDate.set(p.date, p.priceInr);
+  });
+
+  const points: SmoothedPoint[] = [];
   for (const h of history) {
-    const price = priceByDate.get(h.date);
-    if (price === undefined || price <= 0 || h.liveAumCr <= 0) continue;
-    points.push({ date: h.date, price, aumCr: h.liveAumCr });
+    const avgAumCr = avgAumByDate.get(h.date);
+    const avgPrice = avgPriceByDate.get(h.date);
+    const rawPrice = rawPriceByDate.get(h.date);
+    if (avgAumCr === undefined || avgPrice === undefined || rawPrice === undefined) continue;
+    points.push({ date: h.date, avgPrice, avgAumCr, rawPrice });
   }
   return points;
 }
 
-export interface RollingPoint extends AlignedPoint {
+export interface ExpandingZScorePoint extends SmoothedPoint {
   ratio: number;
-  rollingMean: number | undefined;
-  rollingStd: number | undefined;
+  mean: number | undefined;
+  std: number | undefined;
   zscore: number | undefined;
 }
 
-// Walk-forward: every point's mean/std only ever looks at the trailing
-// `lookbackDays`, recomputed fresh per point, so a day's Z-score never
-// uses information from a later day. Uses SAMPLE std (N-1 denominator) --
-// matches pandas' `Series.rolling(window).std()` default, which is what
-// backtesting/signals.py actually calls. Deliberately NOT the same as
-// priceToAumRatioStats (population std, N) used elsewhere in this app for
-// the unrelated static Z-score column on the Stock Correlation table --
-// getting this wrong would silently break parity with the already-
-// verified Python tool.
-export function computeRollingZScore(points: AlignedPoint[], lookbackDays: number): RollingPoint[] {
-  const ratios = points.map((p) => p.price / p.aumCr);
-  const result: RollingPoint[] = [];
-  for (let i = 0; i < points.length; i++) {
-    let rollingMean: number | undefined;
-    let rollingStd: number | undefined;
-    let zscore: number | undefined;
-    if (lookbackDays >= 2 && i >= lookbackDays - 1) {
-      const window = ratios.slice(i - lookbackDays + 1, i + 1);
-      const mean = window.reduce((a, b) => a + b, 0) / window.length;
-      const variance = window.reduce((sum, r) => sum + (r - mean) ** 2, 0) / (window.length - 1);
-      const std = Math.sqrt(variance);
-      rollingMean = mean;
-      rollingStd = std;
-      zscore = std !== 0 ? (ratios[i] - mean) / std : undefined;
+// Mean/SD/Z-score come from an EXPANDING window anchored at `range`'s own
+// start date (found the same way every other period selector in this
+// app resolves a trailing window -- computeRangeCutoffDate). Walking
+// forward from that start, day T's mean/SD use every ratio value from
+// the period start through T -- growing every day, never forgetting
+// earlier days within the period, and never reset between a trade's
+// entry and its later exit. Points before the period start carry no
+// Z-score (they only existed to seed the moving average above). Needs
+// >= 2 ratio points within the period before a Z-score exists (mirrors
+// priceToAumRatioStats' own minimum). Sample std (N-1) -- a fresh
+// calculation, not a port of anything with its own convention to match.
+//
+// Uses Welford's online algorithm for the running mean/variance rather
+// than a naive sum-of-squares formula: ratios here are tightly clustered
+// small numbers (~0.005-0.03), and an expanding window can grow to
+// hundreds of days -- a sum-of-squares shortcut would lose real
+// precision to catastrophic cancellation at that scale.
+export function computeExpandingZScore(points: SmoothedPoint[], range: RangeOption): ExpandingZScorePoint[] {
+  const cutoffDate = computeRangeCutoffDate(points, range);
+  const periodStartIdx = cutoffDate === null ? 0 : points.findIndex((p) => p.date >= cutoffDate);
+
+  const result: ExpandingZScorePoint[] = points.map((p) => ({
+    ...p,
+    ratio: p.avgPrice / p.avgAumCr,
+    mean: undefined,
+    std: undefined,
+    zscore: undefined,
+  }));
+
+  if (periodStartIdx === -1) return result;
+
+  let count = 0;
+  let mean = 0;
+  let m2 = 0;
+  for (let i = periodStartIdx; i < result.length; i++) {
+    const ratio = result[i].ratio;
+    count++;
+    const delta = ratio - mean;
+    mean += delta / count;
+    const delta2 = ratio - mean;
+    m2 += delta * delta2;
+
+    if (count >= 2) {
+      const variance = m2 / (count - 1);
+      const std = Math.sqrt(Math.max(variance, 0));
+      result[i].mean = mean;
+      result[i].std = std;
+      result[i].zscore = std !== 0 ? (ratio - mean) / std : undefined;
     }
-    result.push({ ...points[i], ratio: ratios[i], rollingMean, rollingStd, zscore });
   }
   return result;
 }
@@ -72,7 +129,7 @@ export type ExitRule = "fixed_holding" | "mean_revert" | "combo";
 export type PositionSizing = "equal_weight" | "fixed_capital";
 
 export interface BacktestConfig {
-  lookbackDays: number;
+  maDays: number;
   threshold: number;
   exitRule: ExitRule;
   holdingDays: number;
@@ -115,7 +172,7 @@ function positionSize(equity: number, config: BacktestConfig): number {
   return equity * config.positionSizeFraction;
 }
 
-function findExit(points: RollingPoint[], entryIdx: number, config: BacktestConfig): { exitIdx: number; reason: Trade["exitReason"] } {
+function findExit(points: ExpandingZScorePoint[], entryIdx: number, config: BacktestConfig): { exitIdx: number; reason: Trade["exitReason"] } {
   const n = points.length;
   const fixedExitIdx = Math.min(entryIdx + config.holdingDays, n - 1);
 
@@ -140,12 +197,12 @@ function findExit(points: RollingPoint[], entryIdx: number, config: BacktestConf
   return { exitIdx: fixedExitIdx, reason: "fixed_holding" };
 }
 
-// `points` must already carry rollingMean/rollingStd/zscore (see
-// computeRollingZScore). Runs ONE threshold -- call once per configured
-// threshold. One open position at a time (a new signal while already in
-// a trade is ignored) -- the only sane default for a single-instrument
-// long-only mean-reversion backtest.
-export function runBacktest(points: RollingPoint[], config: BacktestConfig): BacktestResult {
+// `points` must already carry mean/std/zscore (see
+// computeExpandingZScore). Runs ONE threshold -- call once per
+// configured threshold. One open position at a time (a new signal while
+// already in a trade is ignored) -- the only sane default for a
+// single-instrument long-only mean-reversion backtest.
+export function runBacktest(points: ExpandingZScorePoint[], config: BacktestConfig): BacktestResult {
   const n = points.length;
   const costFrac = config.transactionCostBps / 10_000;
 
@@ -165,8 +222,8 @@ export function runBacktest(points: RollingPoint[], config: BacktestConfig): Bac
       }
 
       const { exitIdx, reason } = findExit(points, entryIdx, config);
-      const entryPrice = points[entryIdx].price;
-      const exitPrice = points[exitIdx].price;
+      const entryPrice = points[entryIdx].rawPrice;
+      const exitPrice = points[exitIdx].rawPrice;
       const grossReturn = (exitPrice - entryPrice) / entryPrice;
       const netReturn = grossReturn - 2 * costFrac; // entry + exit legs
 
@@ -181,9 +238,10 @@ export function runBacktest(points: RollingPoint[], config: BacktestConfig): Bac
       equityCurve[exitIdx] = { date: points[exitIdx].date, equity };
 
       // Always defined here: exitIdx >= entryIdx > i, and a trade only
-      // ever opens where i's own zscore is already defined (i.e.
-      // i >= lookbackDays - 1), so every later index's zscore is defined
-      // too -- TS just can't prove that invariant structurally.
+      // ever opens where i's own zscore is already defined -- every
+      // later index within the same (already-started) expanding window
+      // has a zscore too -- TS just can't prove that invariant
+      // structurally.
       const exitZScore = points[exitIdx].zscore as number;
 
       trades.push({
