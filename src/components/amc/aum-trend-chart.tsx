@@ -267,6 +267,14 @@ export function AumTrendChart({
   // line default-shows and this is a separate opt-in overlay for Ratio
   // view, so switching views doesn't carry one's choice into the other.
   const [showPriceInRatioView, setShowPriceInRatioView] = useState(false);
+  // null = "not yet touched, mirror the shared Moving avg (days) input" --
+  // the moment the user types into the price-specific box it becomes a
+  // real string and permanently stops following the shared input (even if
+  // they later clear it back to the same value). This ONLY changes how the
+  // overlaid price LINE is smoothed for display -- the ratio itself, its
+  // reference lines, current ratio, and Z-score keep using the shared
+  // maDays exactly as before, never this one.
+  const [priceOverlayMaDaysInput, setPriceOverlayMaDaysInput] = useState<string | null>(null);
   const [internalMaDaysInput, setInternalMaDaysInput] = useState("");
   const [internalRange, setInternalRange] = useState<RangeOption>("3y");
   const maDaysInput = controlledMaDaysInput ?? internalMaDaysInput;
@@ -277,6 +285,10 @@ export function AumTrendChart({
   // window, i.e. today's raw-daily default -- rather than crashing or
   // silently doing nothing.
   const maDays = Math.max(1, Math.min(250, parseInt(maDaysInput, 10) || 1));
+  // Effective value shown in the price-specific box -- mirrors maDaysInput
+  // whenever the user hasn't typed into it directly yet.
+  const effectivePriceOverlayMaDaysInput = priceOverlayMaDaysInput ?? maDaysInput;
+  const priceOverlayMaDays = Math.max(1, Math.min(250, parseInt(effectivePriceOverlayMaDaysInput, 10) || 1));
   // Whether this AMC has share-price tracking AT ALL, independent of the
   // selected date range -- keeps the show/hide toggle button from
   // flickering in and out if a narrow range happens to have zero price
@@ -299,6 +311,23 @@ export function AumTrendChart({
     () => (stockPriceSeries ? computeMovingAverage(stockPriceSeries.map((p) => p.priceInr), maDays) : undefined),
     [stockPriceSeries, maDays]
   );
+  // Separate smoothing pass for Ratio view's optional price overlay LINE
+  // only -- everything that defines the ratio itself (below) keeps reading
+  // stockPriceDisplayValues/maDays above, untouched.
+  const priceOverlayDisplayValues = useMemo(
+    () => (stockPriceSeries ? computeMovingAverage(stockPriceSeries.map((p) => p.priceInr), priceOverlayMaDays) : undefined),
+    [stockPriceSeries, priceOverlayMaDays]
+  );
+  const priceOverlayByDate = useMemo(() => {
+    const map = new Map<string, number>();
+    if (stockPriceSeries && priceOverlayDisplayValues) {
+      stockPriceSeries.forEach((p, i) => {
+        const value = priceOverlayDisplayValues[i];
+        if (value !== undefined) map.set(p.date, value);
+      });
+    }
+    return map;
+  }, [stockPriceSeries, priceOverlayDisplayValues]);
   const fullChartData = useMemo(
     () => buildChartData(data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues),
     [data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues]
@@ -357,10 +386,11 @@ export function AumTrendChart({
   }, [alignedRatioInputs]);
   // The ratio chart's actual `data` source (distinct from ratioSeries
   // above, which only feeds the reference-line/caption stats) -- carries
-  // BOTH `ratio` and the existing `stockPriceInr` field per row, off the
-  // SAME chartData rows Absolute view plots from, so the optional price
-  // overlay Line can read stockPriceInr straight off this array exactly
-  // the way Absolute view already does, no separate series to align.
+  // `ratio` (still off the SHARED-maDays stockPriceInr, per design: the
+  // overlay's own smoothing never changes what the ratio means) AND
+  // `stockPriceOverlayInr` (off priceOverlayByDate, its own independent
+  // smoothing) -- the optional overlay Line reads that second field, never
+  // stockPriceInr, so the two stay fully decoupled.
   const ratioChartData = useMemo(
     () =>
       chartData.map((p) => ({
@@ -369,9 +399,34 @@ export function AumTrendChart({
           p.liveAumDisplay !== undefined && p.stockPriceInr !== undefined && p.liveAumDisplay !== 0
             ? p.stockPriceInr / p.liveAumDisplay
             : undefined,
+        stockPriceOverlayInr: priceOverlayByDate.get(p.date),
       })),
-    [chartData]
+    [chartData, priceOverlayByDate]
   );
+  // Overlay price line's own Y-axis domain/ticks -- kept separate from
+  // stockYDomain/stockYTicks (which stay driven by the shared-maDays price
+  // series for Absolute view) since the overlay can be smoothed over a
+  // different window and would otherwise be framed by the wrong range.
+  const rangedPriceOverlayPoints = useMemo(
+    () =>
+      ratioChartData
+        .filter((p) => p.stockPriceOverlayInr !== undefined)
+        .map((p) => ({ date: p.date, priceInr: p.stockPriceOverlayInr as number })),
+    [ratioChartData]
+  );
+  const priceOverlayYDomain = useMemo(
+    () => (hasStockPrice ? computeStockPriceYAxisDomain(rangedPriceOverlayPoints) : ([0, 1] as [number, number])),
+    [hasStockPrice, rangedPriceOverlayPoints]
+  );
+  const priceOverlayYTicks = useMemo(() => computeNiceTicks(priceOverlayYDomain, 5), [priceOverlayYDomain]);
+  // Mirrors stockPriceTruncatedFromDate's role but for the overlay's own
+  // (possibly different) smoothing window.
+  const priceOverlayTruncatedFromDate = useMemo(() => {
+    if (priceOverlayMaDays <= 1 || !hasStockPrice) return null;
+    const idx = ratioChartData.findIndex((p) => p.stockPriceOverlayInr !== undefined);
+    return idx > 0 ? ratioChartData[idx].date : null;
+  }, [priceOverlayMaDays, hasStockPrice, ratioChartData]);
+  const priceOverlaySeriesName = `${stockLabel ? `${stockLabel} Share Price` : "Share Price"}${priceOverlayMaDays > 1 ? ` (${priceOverlayMaDays}D avg)` : ""}`;
   const currentRatio = ratioSeries.length > 0 ? ratioSeries[ratioSeries.length - 1].ratio : null;
   const ratioZScore =
     ratioStats && currentRatio !== null && ratioStats.stdDev !== 0 ? (currentRatio - ratioStats.meanRatio) / ratioStats.stdDev : null;
@@ -552,9 +607,10 @@ export function AumTrendChart({
                     · {ratioStats.n} trading days
                     {maDays > 1 ? `, ${maDays}D avg` : ""}
                   </span>
-                  {showPriceInRatioView && stockPriceTruncatedFromDate && (
+                  {showPriceInRatioView && priceOverlayTruncatedFromDate && (
                     <span>
-                      Showing {stockLabel ?? "Share Price"} from {formatShortDateWithYear(stockPriceTruncatedFromDate)} ({maDays}D avg)
+                      Showing {stockLabel ?? "Share Price"} from {formatShortDateWithYear(priceOverlayTruncatedFromDate)} (
+                      {priceOverlayMaDays}D avg)
                     </span>
                   )}
                 </>
@@ -618,6 +674,23 @@ export function AumTrendChart({
               {showPriceInRatioView ? `Hide ${stockLabel} share price` : `+ Show ${stockLabel} share price`}
             </button>
           )}
+          {hasStockPrice && chartView === "ratio" && showPriceInRatioView && (
+            <>
+              <label htmlFor="price-overlay-ma-days" className="text-xs text-muted-foreground">
+                Price avg (days)
+              </label>
+              <input
+                id="price-overlay-ma-days"
+                type="number"
+                min={1}
+                max={250}
+                value={effectivePriceOverlayMaDaysInput}
+                onChange={(e) => setPriceOverlayMaDaysInput(e.target.value)}
+                placeholder="Off"
+                className="w-16 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40"
+              />
+            </>
+          )}
         </div>
       </div>
       <div className="h-80 w-full">
@@ -636,8 +709,8 @@ export function AumTrendChart({
                   <YAxis
                     yAxisId="stock"
                     orientation="right"
-                    domain={stockYDomain}
-                    ticks={stockYTicks}
+                    domain={priceOverlayYDomain}
+                    ticks={priceOverlayYTicks}
                     tick={{ fontSize: 12 }}
                     tickFormatter={(v: number) => formatPriceInr(v)}
                     width={70}
@@ -646,7 +719,7 @@ export function AumTrendChart({
                 <Tooltip
                   labelFormatter={(label) => (typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? ""))}
                   formatter={(value, name) => {
-                    if (name === stockSeriesName) {
+                    if (name === priceOverlaySeriesName) {
                       return typeof value === "number" ? formatPriceInr(value) : String(value);
                     }
                     return typeof value === "number" ? formatRatio(value) : String(value);
@@ -731,8 +804,8 @@ export function AumTrendChart({
                   <Line
                     yAxisId="stock"
                     type="monotone"
-                    dataKey="stockPriceInr"
-                    name={stockSeriesName}
+                    dataKey="stockPriceOverlayInr"
+                    name={priceOverlaySeriesName}
                     stroke="var(--color-violet-500)"
                     strokeWidth={1.5}
                     dot={{ r: 2 }}
