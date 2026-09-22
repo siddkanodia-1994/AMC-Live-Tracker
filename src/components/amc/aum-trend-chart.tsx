@@ -263,6 +263,10 @@ export function AumTrendChart({
   // persists calculation INPUTS -- period/moving-avg/ratio-basis -- this is
   // just a view choice, same category as showStockPrice below).
   const [chartView, setChartView] = useState<"absolute" | "ratio">("absolute");
+  // Independent from showStockPrice below -- Absolute view's own price
+  // line default-shows and this is a separate opt-in overlay for Ratio
+  // view, so switching views doesn't carry one's choice into the other.
+  const [showPriceInRatioView, setShowPriceInRatioView] = useState(false);
   const [internalMaDaysInput, setInternalMaDaysInput] = useState("");
   const [internalRange, setInternalRange] = useState<RangeOption>("3y");
   const maDaysInput = controlledMaDaysInput ?? internalMaDaysInput;
@@ -351,6 +355,23 @@ export function AumTrendChart({
     }
     return points;
   }, [alignedRatioInputs]);
+  // The ratio chart's actual `data` source (distinct from ratioSeries
+  // above, which only feeds the reference-line/caption stats) -- carries
+  // BOTH `ratio` and the existing `stockPriceInr` field per row, off the
+  // SAME chartData rows Absolute view plots from, so the optional price
+  // overlay Line can read stockPriceInr straight off this array exactly
+  // the way Absolute view already does, no separate series to align.
+  const ratioChartData = useMemo(
+    () =>
+      chartData.map((p) => ({
+        ...p,
+        ratio:
+          p.liveAumDisplay !== undefined && p.stockPriceInr !== undefined && p.liveAumDisplay !== 0
+            ? p.stockPriceInr / p.liveAumDisplay
+            : undefined,
+      })),
+    [chartData]
+  );
   const currentRatio = ratioSeries.length > 0 ? ratioSeries[ratioSeries.length - 1].ratio : null;
   const ratioZScore =
     ratioStats && currentRatio !== null && ratioStats.stdDev !== 0 ? (currentRatio - ratioStats.meanRatio) / ratioStats.stdDev : null;
@@ -521,15 +542,22 @@ export function AumTrendChart({
             ? ratioStats &&
               currentRatio !== null &&
               ratioZScore !== null && (
-                <span className="font-mono">
-                  Mean ratio {formatRatio(ratioStats.meanRatio)} · Current {formatRatio(currentRatio)} ·{" "}
-                  <span className={ratioZScore >= 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
-                    Z-score {ratioZScore >= 0 ? "+" : ""}
-                    {ratioZScore.toFixed(2)}σ
-                  </span>{" "}
-                  · {ratioStats.n} trading days
-                  {maDays > 1 ? `, ${maDays}D avg` : ""}
-                </span>
+                <>
+                  <span className="font-mono">
+                    Mean ratio {formatRatio(ratioStats.meanRatio)} · Current {formatRatio(currentRatio)} ·{" "}
+                    <span className={ratioZScore >= 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
+                      Z-score {ratioZScore >= 0 ? "+" : ""}
+                      {ratioZScore.toFixed(2)}σ
+                    </span>{" "}
+                    · {ratioStats.n} trading days
+                    {maDays > 1 ? `, ${maDays}D avg` : ""}
+                  </span>
+                  {showPriceInRatioView && stockPriceTruncatedFromDate && (
+                    <span>
+                      Showing {stockLabel ?? "Share Price"} from {formatShortDateWithYear(stockPriceTruncatedFromDate)} ({maDays}D avg)
+                    </span>
+                  )}
+                </>
               )
             : (
                 <>
@@ -581,6 +609,15 @@ export function AumTrendChart({
               {showStockPrice ? `Hide ${stockLabel} share price` : `+ Show ${stockLabel} share price`}
             </button>
           )}
+          {hasStockPrice && chartView === "ratio" && (
+            <button
+              type="button"
+              onClick={() => setShowPriceInRatioView((v) => !v)}
+              className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              {showPriceInRatioView ? `Hide ${stockLabel} share price` : `+ Show ${stockLabel} share price`}
+            </button>
+          )}
         </div>
       </div>
       <div className="h-80 w-full">
@@ -591,13 +628,29 @@ export function AumTrendChart({
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             {chartView === "ratio" && ratioStats && ratioRefLines ? (
-              <LineChart data={ratioSeries} margin={{ top: 8, right: 40, left: 8, bottom: 8 }}>
+              <LineChart data={ratioChartData} margin={{ top: 8, right: 40, left: 8, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="date" tickFormatter={formatShortDateWithYear} tick={{ fontSize: 12 }} />
                 <YAxis domain={ratioYDomain} ticks={ratioYTicks} tick={{ fontSize: 12 }} tickFormatter={formatRatio} width={80} />
+                {showPriceInRatioView && (
+                  <YAxis
+                    yAxisId="stock"
+                    orientation="right"
+                    domain={stockYDomain}
+                    ticks={stockYTicks}
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={(v: number) => formatPriceInr(v)}
+                    width={70}
+                  />
+                )}
                 <Tooltip
                   labelFormatter={(label) => (typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? ""))}
-                  formatter={(value) => (typeof value === "number" ? formatRatio(value) : String(value))}
+                  formatter={(value, name) => {
+                    if (name === stockSeriesName) {
+                      return typeof value === "number" ? formatPriceInr(value) : String(value);
+                    }
+                    return typeof value === "number" ? formatRatio(value) : String(value);
+                  }}
                   contentStyle={{
                     backgroundColor: "var(--color-popover)",
                     borderColor: "var(--color-border)",
@@ -605,34 +658,66 @@ export function AumTrendChart({
                     fontSize: 12,
                   }}
                 />
+                {showPriceInRatioView && <Legend wrapperStyle={{ fontSize: 12 }} />}
+                {/* Labels sit just OUTSIDE the plot ("right") when there's no
+                    second axis to collide with, but that same offset lands
+                    on top of the price axis's own tick labels once one is
+                    added -- "insideBottomLeft" moves them to the ratio
+                    axis's own side instead, inside the plot, clear of the
+                    price axis entirely. */}
                 <ReferenceLine
                   y={ratioRefLines.mean}
                   stroke="var(--color-muted-foreground)"
-                  label={{ value: "Mean", position: "right", fontSize: 10, fill: "var(--color-muted-foreground)" }}
+                  label={{
+                    value: "Mean",
+                    position: showPriceInRatioView ? "insideBottomLeft" : "right",
+                    fontSize: 10,
+                    fill: "var(--color-muted-foreground)",
+                  }}
                 />
                 <ReferenceLine
                   y={ratioRefLines.plus1}
                   stroke="var(--color-red-400)"
                   strokeDasharray="4 4"
-                  label={{ value: "+1 SD", position: "right", fontSize: 10, fill: "var(--color-red-400)" }}
+                  label={{
+                    value: "+1 SD",
+                    position: showPriceInRatioView ? "insideBottomLeft" : "right",
+                    fontSize: 10,
+                    fill: "var(--color-red-400)",
+                  }}
                 />
                 <ReferenceLine
                   y={ratioRefLines.plus2}
                   stroke="var(--color-red-600)"
                   strokeDasharray="4 4"
-                  label={{ value: "+2 SD", position: "right", fontSize: 10, fill: "var(--color-red-600)" }}
+                  label={{
+                    value: "+2 SD",
+                    position: showPriceInRatioView ? "insideBottomLeft" : "right",
+                    fontSize: 10,
+                    fill: "var(--color-red-600)",
+                  }}
                 />
                 <ReferenceLine
                   y={ratioRefLines.minus1}
                   stroke="var(--color-emerald-400)"
                   strokeDasharray="4 4"
-                  label={{ value: "-1 SD", position: "right", fontSize: 10, fill: "var(--color-emerald-400)" }}
+                  label={{
+                    value: "-1 SD",
+                    position: showPriceInRatioView ? "insideBottomLeft" : "right",
+                    fontSize: 10,
+                    fill: "var(--color-emerald-400)",
+                  }}
                 />
                 <ReferenceLine
                   y={ratioRefLines.minus2}
                   stroke="var(--color-emerald-600)"
                   strokeDasharray="4 4"
-                  label={{ value: "-2 SD", position: "right", fontSize: 10, fill: "var(--color-emerald-600)" }}
+                  label={{
+                    value: "-2 SD",
+                    position: showPriceInRatioView ? "insideBottomLeft" : "right",
+                    fontSize: 10,
+                    fill: "var(--color-emerald-600)",
+                  }}
                 />
                 <Line
                   type="monotone"
@@ -642,6 +727,17 @@ export function AumTrendChart({
                   strokeWidth={2}
                   dot={{ r: 2 }}
                 />
+                {showPriceInRatioView && (
+                  <Line
+                    yAxisId="stock"
+                    type="monotone"
+                    dataKey="stockPriceInr"
+                    name={stockSeriesName}
+                    stroke="var(--color-violet-500)"
+                    strokeWidth={1.5}
+                    dot={{ r: 2 }}
+                  />
+                )}
               </LineChart>
             ) : (
               <LineChart data={chartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
