@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShortDateWithYear } from "@/lib/utils/format";
 import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
-import { trimToLastContinuousRun, computeMovingAverage, computeCorrelationStats } from "@/lib/aum/series-math";
+import { trimToLastContinuousRun, computeMovingAverage, computeCorrelationStats, priceToAumRatioStats } from "@/lib/aum/series-math";
 import { RANGE_OPTIONS, filterByRange, type RangeOption } from "@/lib/aum/date-range";
 
 // Padding added above/below the combined (live + reported) data range, as a
@@ -50,9 +50,18 @@ function computeNiceTicks([lower, upper]: [number, number], count: number): numb
   const niceNormalized = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
   const step = niceNormalized * magnitude;
   const start = Math.ceil(lower / step) * step;
+  // Round each tick to kill floating-point residue (e.g. 0.1 + 0.2), at a
+  // precision derived from the step itself -- unconditionally rounding to
+  // the nearest integer (as this used to) is fine for AUM/share-price
+  // scales but collapses every tick on a price/AUM RATIO axis (~0.006) to
+  // the same value (0), which then crashes Recharts on duplicate tick
+  // keys. A large step (thousands of Cr) still rounds to whole numbers;
+  // a tiny step keeps enough decimal places to stay distinct.
+  const decimals = Math.max(0, -Math.floor(Math.log10(step)) + 2);
+  const roundTick = (v: number) => Math.round(v * 10 ** decimals) / 10 ** decimals;
   const ticks: number[] = [];
   for (let v = start; v <= upper + step * 0.001; v += step) {
-    ticks.push(Math.round(v));
+    ticks.push(roundTick(v));
   }
   return ticks.length >= 2 ? ticks : [lower, upper];
 }
@@ -142,6 +151,34 @@ function computeStockPriceYAxisDomain(series: AmcStockPricePoint[]): [number, nu
   return [Math.max(0, min - padding), max + padding];
 }
 
+// Ratio values (Share Price ÷ AUM) sit at a tiny, AMC-specific scale (price
+// in the hundreds-to-thousands, AUM in lakh-crore) -- 6 decimals matches
+// fair-value-explainer.tsx's own RATIO_DECIMALS convention for the same
+// figure elsewhere in the app.
+const RATIO_DECIMALS = 6;
+function formatRatio(v: number): string {
+  return v.toFixed(RATIO_DECIMALS);
+}
+
+// Same domain-padding approach as computeStockPriceYAxisDomain, but spans
+// BOTH the ratio series' own min/max AND every reference line value -- a
+// ±2SD line that's currently far from the plotted series must still never
+// be clipped off the visible plot area.
+function computeRatioYAxisDomain(ratioValues: number[], refLineValues: number[]): [number, number] {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of [...ratioValues, ...refLineValues]) {
+    if (Number.isFinite(v)) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+  const range = max - min;
+  const padding = range > 0 ? range * DOMAIN_PADDING_RATIO : Math.max(Math.abs(max) * FLAT_DOMAIN_PADDING_RATIO, 0.000001);
+  return [min - padding, max + padding];
+}
+
 interface DailyChangePoint {
   date: string;
   changePct: number | null;
@@ -219,6 +256,13 @@ export function AumTrendChart({
   onMaDaysInputChange?: (value: string) => void;
 }) {
   const [showStockPrice, setShowStockPrice] = useState(true);
+  // Which body/caption this chart currently renders -- "ratio" swaps the
+  // dual-axis AUM/price view for a single (Share Price ÷ AUM) line with
+  // Mean/±1SD/±2SD reference bands. Per-session only, deliberately not part
+  // of the Stock Correlation tab's "Save as default" persistence (that
+  // persists calculation INPUTS -- period/moving-avg/ratio-basis -- this is
+  // just a view choice, same category as showStockPrice below).
+  const [chartView, setChartView] = useState<"absolute" | "ratio">("absolute");
   const [internalMaDaysInput, setInternalMaDaysInput] = useState("");
   const [internalRange, setInternalRange] = useState<RangeOption>("3y");
   const maDaysInput = controlledMaDaysInput ?? internalMaDaysInput;
@@ -273,6 +317,65 @@ export function AumTrendChart({
     [hasStockPrice, rangedStockPricePoints]
   );
   const stockYTicks = useMemo(() => computeNiceTicks(stockYDomain, 5), [stockYDomain]);
+  // Same aligned-pair filtering style as rangedStockPricePoints above, but
+  // keeping BOTH series (not just price) since the ratio needs both --
+  // built once and shared by ratioStats/ratioSeries below so they can never
+  // disagree about which days are included.
+  const alignedRatioInputs = useMemo(() => {
+    if (!hasStockPrice) return { dates: [] as string[], aum: [] as number[], price: [] as number[] };
+    const dates: string[] = [];
+    const aum: number[] = [];
+    const price: number[] = [];
+    for (const p of chartData) {
+      if (p.liveAumDisplay !== undefined && p.stockPriceInr !== undefined) {
+        dates.push(p.date);
+        aum.push(p.liveAumDisplay);
+        price.push(p.stockPriceInr);
+      }
+    }
+    return { dates, aum, price };
+  }, [chartData, hasStockPrice]);
+  // Reuses the exact same function the Stock Correlation table's Z-score
+  // column calls -- so this chart's reference lines are guaranteed
+  // consistent with that table's own Z-score for the same AMC/period/
+  // moving-avg selection, never a second slightly-different implementation.
+  const ratioStats = useMemo(
+    () => priceToAumRatioStats(alignedRatioInputs.aum, alignedRatioInputs.price),
+    [alignedRatioInputs]
+  );
+  const ratioSeries = useMemo(() => {
+    const { dates, aum, price } = alignedRatioInputs;
+    const points: { date: string; ratio: number }[] = [];
+    for (let i = 0; i < dates.length; i++) {
+      if (aum[i] !== 0) points.push({ date: dates[i], ratio: price[i] / aum[i] });
+    }
+    return points;
+  }, [alignedRatioInputs]);
+  const currentRatio = ratioSeries.length > 0 ? ratioSeries[ratioSeries.length - 1].ratio : null;
+  const ratioZScore =
+    ratioStats && currentRatio !== null && ratioStats.stdDev !== 0 ? (currentRatio - ratioStats.meanRatio) / ratioStats.stdDev : null;
+  const ratioRefLines = useMemo(
+    () =>
+      ratioStats
+        ? {
+            mean: ratioStats.meanRatio,
+            plus1: ratioStats.meanRatio + ratioStats.stdDev,
+            plus2: ratioStats.meanRatio + 2 * ratioStats.stdDev,
+            minus1: ratioStats.meanRatio - ratioStats.stdDev,
+            minus2: ratioStats.meanRatio - 2 * ratioStats.stdDev,
+          }
+        : null,
+    [ratioStats]
+  );
+  const ratioYDomain = useMemo(
+    () =>
+      computeRatioYAxisDomain(
+        ratioSeries.map((p) => p.ratio),
+        ratioRefLines ? Object.values(ratioRefLines) : []
+      ),
+    [ratioSeries, ratioRefLines]
+  );
+  const ratioYTicks = useMemo(() => computeNiceTicks(ratioYDomain, 5), [ratioYDomain]);
   const rangeSelector = (
     <div className="flex items-center gap-1" role="group" aria-label="Date range">
       {RANGE_OPTIONS.map((o) => (
@@ -291,6 +394,27 @@ export function AumTrendChart({
       ))}
     </div>
   );
+  // Only rendered when hasStockPrice -- a ratio needs both series, so this
+  // toggle has nothing to do on the AUM-only charts (amc-grid.tsx's mini
+  // cards never pass stockPriceSeries at all).
+  const chartViewToggle = hasStockPrice ? (
+    <div className="flex items-center gap-1" role="group" aria-label="Chart view">
+      {(["absolute", "ratio"] as const).map((v) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => setChartView(v)}
+          className={
+            v === chartView
+              ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
+              : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          }
+        >
+          {v === "absolute" ? "Absolute" : "Ratio"}
+        </button>
+      ))}
+    </div>
+  ) : null;
   const maSuffix = maDays > 1 ? ` (${maDays}D avg)` : "";
   const liveAumSeriesName = `Live AUM${maSuffix}`;
   const stockSeriesName = `${stockLabel ? `${stockLabel} Share Price` : "Share Price"}${maSuffix}`;
@@ -393,29 +517,48 @@ export function AumTrendChart({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-          {liveAumTruncatedFromDate && <span>Showing Live AUM from {formatShortDateWithYear(liveAumTruncatedFromDate)} ({maDays}D avg)</span>}
-          {hasStockPrice && showStockPrice && stockPriceTruncatedFromDate && (
-            <span>
-              Showing {stockLabel ?? "Share Price"} from {formatShortDateWithYear(stockPriceTruncatedFromDate)} ({maDays}D avg)
-            </span>
-          )}
-          {hasStockPrice && showStockPrice && correlationStats && (
-            <span className="font-mono">
-              Corr{" "}
-              <span
-                className={
-                  correlationStats.r >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
-                }
-              >
-                {formatPct(correlationStats.r, { alwaysSign: true })}
-              </span>{" "}
-              · R² {formatPct(correlationStats.r2)} · {correlationStats.n} trading days
-              {maDays > 1 ? `, ${maDays}D avg` : ""}
-            </span>
-          )}
+          {chartView === "ratio"
+            ? ratioStats &&
+              currentRatio !== null &&
+              ratioZScore !== null && (
+                <span className="font-mono">
+                  Mean ratio {formatRatio(ratioStats.meanRatio)} · Current {formatRatio(currentRatio)} ·{" "}
+                  <span className={ratioZScore >= 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
+                    Z-score {ratioZScore >= 0 ? "+" : ""}
+                    {ratioZScore.toFixed(2)}σ
+                  </span>{" "}
+                  · {ratioStats.n} trading days
+                  {maDays > 1 ? `, ${maDays}D avg` : ""}
+                </span>
+              )
+            : (
+                <>
+                  {liveAumTruncatedFromDate && <span>Showing Live AUM from {formatShortDateWithYear(liveAumTruncatedFromDate)} ({maDays}D avg)</span>}
+                  {hasStockPrice && showStockPrice && stockPriceTruncatedFromDate && (
+                    <span>
+                      Showing {stockLabel ?? "Share Price"} from {formatShortDateWithYear(stockPriceTruncatedFromDate)} ({maDays}D avg)
+                    </span>
+                  )}
+                  {hasStockPrice && showStockPrice && correlationStats && (
+                    <span className="font-mono">
+                      Corr{" "}
+                      <span
+                        className={
+                          correlationStats.r >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
+                        }
+                      >
+                        {formatPct(correlationStats.r, { alwaysSign: true })}
+                      </span>{" "}
+                      · R² {formatPct(correlationStats.r2)} · {correlationStats.n} trading days
+                      {maDays > 1 ? `, ${maDays}D avg` : ""}
+                    </span>
+                  )}
+                </>
+              )}
         </div>
         <div className="flex items-center gap-2">
           {rangeSelector}
+          {chartViewToggle}
           <label htmlFor="ma-days" className="text-xs text-muted-foreground">
             Moving avg (days)
           </label>
@@ -429,7 +572,7 @@ export function AumTrendChart({
             placeholder="Off"
             className="w-16 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40"
           />
-          {hasStockPrice && (
+          {hasStockPrice && chartView === "absolute" && (
             <button
               type="button"
               onClick={() => setShowStockPrice((v) => !v)}
@@ -441,82 +584,143 @@ export function AumTrendChart({
         </div>
       </div>
       <div className="h-80 w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-            <XAxis dataKey="date" tickFormatter={formatShortDateWithYear} tick={{ fontSize: 12 }} />
-            <YAxis
-              domain={yDomain}
-              ticks={yTicks}
-              tick={{ fontSize: 12 }}
-              tickFormatter={(v: number) => `${(v / 1000).toFixed(tickDecimals)}k`}
-              width={50}
-            />
-            {showStockPrice && (
-              <YAxis
-                yAxisId="stock"
-                orientation="right"
-                domain={stockYDomain}
-                ticks={stockYTicks}
-                tick={{ fontSize: 12 }}
-                tickFormatter={(v: number) => formatPriceInr(v)}
-                width={70}
-              />
+        {chartView === "ratio" && !ratioStats ? (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            Not enough overlapping AUM/share price history in the selected range to compute the ratio.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            {chartView === "ratio" && ratioStats && ratioRefLines ? (
+              <LineChart data={ratioSeries} margin={{ top: 8, right: 40, left: 8, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="date" tickFormatter={formatShortDateWithYear} tick={{ fontSize: 12 }} />
+                <YAxis domain={ratioYDomain} ticks={ratioYTicks} tick={{ fontSize: 12 }} tickFormatter={formatRatio} width={80} />
+                <Tooltip
+                  labelFormatter={(label) => (typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? ""))}
+                  formatter={(value) => (typeof value === "number" ? formatRatio(value) : String(value))}
+                  contentStyle={{
+                    backgroundColor: "var(--color-popover)",
+                    borderColor: "var(--color-border)",
+                    color: "var(--color-popover-foreground)",
+                    fontSize: 12,
+                  }}
+                />
+                <ReferenceLine
+                  y={ratioRefLines.mean}
+                  stroke="var(--color-muted-foreground)"
+                  label={{ value: "Mean", position: "right", fontSize: 10, fill: "var(--color-muted-foreground)" }}
+                />
+                <ReferenceLine
+                  y={ratioRefLines.plus1}
+                  stroke="var(--color-red-400)"
+                  strokeDasharray="4 4"
+                  label={{ value: "+1 SD", position: "right", fontSize: 10, fill: "var(--color-red-400)" }}
+                />
+                <ReferenceLine
+                  y={ratioRefLines.plus2}
+                  stroke="var(--color-red-600)"
+                  strokeDasharray="4 4"
+                  label={{ value: "+2 SD", position: "right", fontSize: 10, fill: "var(--color-red-600)" }}
+                />
+                <ReferenceLine
+                  y={ratioRefLines.minus1}
+                  stroke="var(--color-emerald-400)"
+                  strokeDasharray="4 4"
+                  label={{ value: "-1 SD", position: "right", fontSize: 10, fill: "var(--color-emerald-400)" }}
+                />
+                <ReferenceLine
+                  y={ratioRefLines.minus2}
+                  stroke="var(--color-emerald-600)"
+                  strokeDasharray="4 4"
+                  label={{ value: "-2 SD", position: "right", fontSize: 10, fill: "var(--color-emerald-600)" }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="ratio"
+                  name={`${stockLabel ?? "Share Price"} ÷ Live AUM`}
+                  stroke="var(--color-primary)"
+                  strokeWidth={2}
+                  dot={{ r: 2 }}
+                />
+              </LineChart>
+            ) : (
+              <LineChart data={chartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="date" tickFormatter={formatShortDateWithYear} tick={{ fontSize: 12 }} />
+                <YAxis
+                  domain={yDomain}
+                  ticks={yTicks}
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={(v: number) => `${(v / 1000).toFixed(tickDecimals)}k`}
+                  width={50}
+                />
+                {showStockPrice && (
+                  <YAxis
+                    yAxisId="stock"
+                    orientation="right"
+                    domain={stockYDomain}
+                    ticks={stockYTicks}
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={(v: number) => formatPriceInr(v)}
+                    width={70}
+                  />
+                )}
+                <Tooltip
+                  labelFormatter={(label) => (typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? ""))}
+                  formatter={(value, name, item) => {
+                    if (name === stockSeriesName) {
+                      return typeof value === "number" ? formatPriceInr(value) : String(value);
+                    }
+                    const formatted = typeof value === "number" ? formatCr(value) : String(value);
+                    // Reported AUM only steps once a month (when a new workbook is
+                    // imported) -- show which report period it reflects alongside
+                    // the value, since the chart's X axis is daily.
+                    const reportPeriod = (item?.payload as AumHistoryPoint | undefined)?.reportPeriod;
+                    if (name === "Reported AUM" && reportPeriod) {
+                      return `${formatted} (${formatReportPeriodLabel(reportPeriod)})`;
+                    }
+                    return formatted;
+                  }}
+                  contentStyle={{
+                    backgroundColor: "var(--color-popover)",
+                    borderColor: "var(--color-border)",
+                    color: "var(--color-popover-foreground)",
+                    fontSize: 12,
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Line
+                  type="monotone"
+                  dataKey="liveAumDisplay"
+                  name={liveAumSeriesName}
+                  stroke="var(--color-primary)"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="reportedAumCr"
+                  name="Reported AUM"
+                  stroke="var(--color-muted-foreground)"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 4"
+                  dot={{ r: 2 }}
+                />
+                {showStockPrice && (
+                  <Line
+                    yAxisId="stock"
+                    type="monotone"
+                    dataKey="stockPriceInr"
+                    name={stockSeriesName}
+                    stroke="var(--color-violet-500)"
+                    strokeWidth={1.5}
+                    dot={{ r: 2 }}
+                  />
+                )}
+              </LineChart>
             )}
-            <Tooltip
-              labelFormatter={(label) => (typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? ""))}
-              formatter={(value, name, item) => {
-                if (name === stockSeriesName) {
-                  return typeof value === "number" ? formatPriceInr(value) : String(value);
-                }
-                const formatted = typeof value === "number" ? formatCr(value) : String(value);
-                // Reported AUM only steps once a month (when a new workbook is
-                // imported) -- show which report period it reflects alongside
-                // the value, since the chart's X axis is daily.
-                const reportPeriod = (item?.payload as AumHistoryPoint | undefined)?.reportPeriod;
-                if (name === "Reported AUM" && reportPeriod) {
-                  return `${formatted} (${formatReportPeriodLabel(reportPeriod)})`;
-                }
-                return formatted;
-              }}
-              contentStyle={{
-                backgroundColor: "var(--color-popover)",
-                borderColor: "var(--color-border)",
-                color: "var(--color-popover-foreground)",
-                fontSize: 12,
-              }}
-            />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Line
-              type="monotone"
-              dataKey="liveAumDisplay"
-              name={liveAumSeriesName}
-              stroke="var(--color-primary)"
-              strokeWidth={2}
-              dot={{ r: 3 }}
-            />
-            <Line
-              type="monotone"
-              dataKey="reportedAumCr"
-              name="Reported AUM"
-              stroke="var(--color-muted-foreground)"
-              strokeWidth={1.5}
-              strokeDasharray="4 4"
-              dot={{ r: 2 }}
-            />
-            {showStockPrice && (
-              <Line
-                yAxisId="stock"
-                type="monotone"
-                dataKey="stockPriceInr"
-                name={stockSeriesName}
-                stroke="var(--color-violet-500)"
-                strokeWidth={1.5}
-                dot={{ r: 2 }}
-              />
-            )}
-          </LineChart>
-        </ResponsiveContainer>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   );
