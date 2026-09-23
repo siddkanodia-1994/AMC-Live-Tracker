@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatPct, formatPriceInr, formatShortDateWithYear } from "@/lib/utils/format";
-import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
+import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
 import {
   alignSmoothedSeries,
@@ -15,12 +16,15 @@ import {
   type PositionSizing,
 } from "@/lib/backtest/engine";
 import { computeMetrics } from "@/lib/backtest/metrics";
+import { useBacktestDefaults } from "@/hooks/use-backtest-defaults";
 
 const segmentActive = "rounded-md bg-foreground px-2 py-1 text-xs text-background";
 const segmentInactive = "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground";
 const numberInputClass =
   "w-20 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 const labelClass = "text-xs text-muted-foreground";
+const amcSelectClass =
+  "w-56 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
 const tooltipContentStyle = {
   backgroundColor: "var(--color-popover)",
@@ -77,21 +81,15 @@ function Stat({ label, value, valueClassName }: { label: string; value: string; 
 /**
  * Live client-side port of the offline Python backtester (see
  * backtesting/ at the project root, which this mirrors exactly -- see
- * src/lib/backtest/engine.ts's parity notes). Renders one AMC's results
- * -- the caller (backtest-page.tsx, the top-level Backtest tab) supplies
- * `history`/`stockPriceSeries` for whichever AMC is currently selected in
- * its own dropdown. Every config change here recomputes entirely in the
- * browser, no DB query, no server call.
+ * src/lib/backtest/engine.ts's parity notes). Owns BOTH which AMC is
+ * selected and the full config panel, so "Save as default" can capture
+ * one complete unit -- the caller (backtest-page.tsx, the top-level
+ * Backtest tab) just supplies the raw list of AMCs with a listed stock.
+ * Every config change here recomputes entirely in the browser, no DB
+ * query, no server call (aside from the one-time defaults load/save).
  */
-export function BacktestPanel({
-  history,
-  stockPriceSeries,
-  stockLabel,
-}: {
-  history: AumHistoryPoint[];
-  stockPriceSeries?: AmcStockPricePoint[];
-  stockLabel?: string;
-}) {
+export function BacktestPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
+  const [amcSlug, setAmcSlug] = useState("hdfc-mutual-fund");
   const [range, setRange] = useState<RangeOption>("3y");
   const [thresholdsInput, setThresholdsInput] = useState("-1.5, -2.0");
   const [maDaysInput, setMaDaysInput] = useState("15");
@@ -104,6 +102,12 @@ export function BacktestPanel({
   const [positionSizing, setPositionSizing] = useState<PositionSizing>("equal_weight");
   const [positionSizeFractionInput, setPositionSizeFractionInput] = useState("100");
   const [fixedCapitalPerTradeInput, setFixedCapitalPerTradeInput] = useState("100000");
+  const [isSaving, setIsSaving] = useState(false);
+
+  const entry = useMemo(() => amcs.find((a) => a.slug === amcSlug) ?? null, [amcs, amcSlug]);
+  const history = useMemo(() => entry?.aumHistory ?? [], [entry]);
+  const stockPriceSeries = entry?.stockPriceSeries;
+  const stockLabel = entry?.tradingSymbol;
 
   const hasStockPrice = !!stockPriceSeries && stockPriceSeries.length > 0;
 
@@ -116,6 +120,66 @@ export function BacktestPanel({
   const positionSizeFraction = Math.max(0, Math.min(100, parseFloat(positionSizeFractionInput) || 100)) / 100;
   const fixedCapitalPerTrade = Math.max(1, parseFloat(fixedCapitalPerTradeInput) || 100_000);
   const thresholds = useMemo(() => parseThresholds(thresholdsInput), [thresholdsInput]);
+
+  const { data: savedDefaults } = useBacktestDefaults();
+
+  // Applies the saved global default exactly once, the first time it
+  // arrives -- a ref (not a state flag) so this can't itself trigger a
+  // re-render loop, and so a later SWR revalidation can't clobber changes
+  // the user has since made in this session. Mirrors
+  // StockCorrelationTable's own defaultsAppliedRef pattern exactly.
+  const defaultsAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!savedDefaults || defaultsAppliedRef.current) return;
+    defaultsAppliedRef.current = true;
+    setAmcSlug(savedDefaults.amcSlug);
+    setRange(savedDefaults.range);
+    setThresholdsInput(savedDefaults.thresholdsInput);
+    setMaDaysInput(String(savedDefaults.maDays));
+    setExitRule(savedDefaults.exitRule);
+    setHoldingDaysInput(String(savedDefaults.holdingDays));
+    setMeanRevertTargetZInput(String(savedDefaults.meanRevertTargetZ));
+    setEntryLagDaysInput(String(savedDefaults.entryLagDays));
+    setTransactionCostBpsInput(String(savedDefaults.transactionCostBps));
+    setInitialCapitalInput(String(savedDefaults.initialCapital));
+    setPositionSizing(savedDefaults.positionSizing);
+    setPositionSizeFractionInput(String(savedDefaults.positionSizeFraction));
+    setFixedCapitalPerTradeInput(String(savedDefaults.fixedCapitalPerTrade));
+  }, [savedDefaults]);
+
+  async function handleSaveDefaults() {
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/backtest-defaults", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amcSlug,
+          range,
+          thresholdsInput,
+          maDays,
+          exitRule,
+          holdingDays,
+          meanRevertTargetZ,
+          entryLagDays,
+          transactionCostBps,
+          initialCapital,
+          positionSizing,
+          positionSizeFraction: Math.max(1, Math.min(100, parseFloat(positionSizeFractionInput) || 100)),
+          fixedCapitalPerTrade,
+        }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.error ?? "Save failed");
+      }
+      toast.success("Saved as the default view for everyone");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   // AUM and price smoothed separately over the AMC's FULL history first
   // (each with its own N-day moving average), THEN aligned by date --
@@ -171,15 +235,44 @@ export function BacktestPanel({
     fixedCapitalPerTrade,
   ]);
 
-  if (!hasStockPrice) return null;
-
   return (
     <div className="space-y-4">
-      <details className="rounded-lg border bg-card p-4" open>
-        <summary className="cursor-pointer text-sm font-medium text-foreground">Backtest configuration</summary>
-        <div className="mt-3 flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
-            <span className={labelClass}>Backfill period</span>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium text-foreground">Backtest</p>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label htmlFor="backtest-amc-select" className="text-xs text-muted-foreground">
+              AMC
+            </label>
+            <select id="backtest-amc-select" value={amcSlug} onChange={(e) => setAmcSlug(e.target.value)} className={amcSelectClass}>
+              {amcs.map((a) => (
+                <option key={a.slug} value={a.slug}>
+                  {a.overviewName}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={handleSaveDefaults}
+            disabled={isSaving}
+            title="Save the current AMC and config as the default every visitor sees"
+            className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            {isSaving ? "Saving…" : "Save as default"}
+          </button>
+        </div>
+      </div>
+
+      {!hasStockPrice ? (
+        <p className="text-sm text-muted-foreground">No share price data available for this AMC.</p>
+      ) : (
+        <>
+          <details className="rounded-lg border bg-card p-4" open>
+            <summary className="cursor-pointer text-sm font-medium text-foreground">Backtest configuration</summary>
+            <div className="mt-3 flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <span className={labelClass}>Backfill period</span>
             <div className="flex items-center gap-1" role="group" aria-label="Backfill period">
               {RANGE_OPTIONS.map((o) => (
                 <button key={o.value} type="button" onClick={() => setRange(o.value)} className={o.value === range ? segmentActive : segmentInactive}>
@@ -417,6 +510,8 @@ export function BacktestPanel({
             )}
           </div>
         ))
+      )}
+        </>
       )}
     </div>
   );
