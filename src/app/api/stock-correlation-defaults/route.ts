@@ -29,8 +29,12 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  const aumOnlyAveraging = body?.aumOnlyAveraging;
+  if (typeof aumOnlyAveraging !== "boolean") {
+    return NextResponse.json({ error: "aumOnlyAveraging must be a boolean" }, { status: 400 });
+  }
 
-  const defaults = { range, maDays, ratioBasis };
+  const defaults = { range, maDays, ratioBasis, aumOnlyAveraging };
   await setStockCorrelationDefaults(defaults);
   return NextResponse.json(defaults);
 }

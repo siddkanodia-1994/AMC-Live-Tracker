@@ -76,7 +76,13 @@ interface ComputedRow {
 // A moving average longer than an AMC's own history leaves every value
 // undefined -- that row's cells fall through to "—" the same way any
 // other missing figure already does in this table.
-function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis: RatioBasis, range: RangeOption): ComputedRow {
+function computeRow(
+  entry: AmcStockCorrelationEntry,
+  maDays: number,
+  ratioBasis: RatioBasis,
+  range: RangeOption,
+  aumOnlyAveraging: boolean
+): ComputedRow {
   const data = trimToLastContinuousRun(entry.aumHistory);
   // Moving average computed over the FULL history first, then the period
   // filter applied to the resulting dated series -- so a day near the
@@ -89,10 +95,16 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis:
     data.map((d) => d.liveAumCr),
     maDays
   );
-  const priceDisplay = computeMovingAverage(
-    entry.stockPriceSeries.map((p) => p.priceInr),
-    maDays
-  );
+  // When aumOnlyAveraging is on, share price is never smoothed -- every
+  // downstream consumer (corrStats/ratioStats/avgPriceInr, which feed Fair
+  // value and Z-score) is agnostic to how this array was produced, so this
+  // is the ONLY line that needs to branch for the whole toggle.
+  const priceDisplay = aumOnlyAveraging
+    ? entry.stockPriceSeries.map((p) => p.priceInr)
+    : computeMovingAverage(
+        entry.stockPriceSeries.map((p) => p.priceInr),
+        maDays
+      );
 
   // Keep the moving average's possible undefined gaps through the range
   // filter (unlike toDatedValues, which would drop them immediately) so
@@ -161,7 +173,9 @@ function computeRow(entry: AmcStockCorrelationEntry, maDays: number, ratioBasis:
   // that falls entirely before the period's own start (already warmed up
   // by the time the window begins) correctly produces no caption.
   const aumFirstIdx = maDays > 1 ? aumWithGaps.findIndex((d) => d.value !== undefined) : 0;
-  const priceFirstIdx = maDays > 1 ? priceWithGaps.findIndex((d) => d.value !== undefined) : 0;
+  // Price is never smoothed (and so never has a warm-up gap) once
+  // aumOnlyAveraging is on, regardless of maDays.
+  const priceFirstIdx = maDays > 1 && !aumOnlyAveraging ? priceWithGaps.findIndex((d) => d.value !== undefined) : 0;
   const aumTruncatedFromDate = aumFirstIdx > 0 ? aumWithGaps[aumFirstIdx].date : null;
   const priceTruncatedFromDate = priceFirstIdx > 0 ? priceWithGaps[priceFirstIdx].date : null;
 
@@ -223,6 +237,10 @@ export function StockCorrelationTable() {
   // the single source of truth for "what period is currently selected",
   // not just this table's own concern.
   const [range, setRange] = useState<RangeOption>("3y");
+  // When on, "Moving avg (days)" only smooths AUM -- share price stays raw,
+  // so the ratio (and Corr/R²/Fair value/Z-score derived from it) becomes
+  // raw price ÷ avg AUM instead of avg price ÷ avg AUM. See computeRow.
+  const [aumOnlyAveraging, setAumOnlyAveraging] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   // Applies the saved global default exactly once, the first time it
@@ -236,6 +254,7 @@ export function StockCorrelationTable() {
     setRange(data.defaults.range);
     setMaDaysInput(data.defaults.maDays > 0 ? String(data.defaults.maDays) : "");
     setRatioBasis(data.defaults.ratioBasis);
+    setAumOnlyAveraging(data.defaults.aumOnlyAveraging);
   }, [data]);
 
   async function handleSaveDefaults() {
@@ -244,7 +263,7 @@ export function StockCorrelationTable() {
       const res = await fetch("/api/stock-correlation-defaults", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ range, maDays: maDaysInput === "" ? 0 : maDays, ratioBasis }),
+        body: JSON.stringify({ range, maDays: maDaysInput === "" ? 0 : maDays, ratioBasis, aumOnlyAveraging }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -260,8 +279,8 @@ export function StockCorrelationTable() {
 
   const rows = useMemo(() => {
     if (!data) return [];
-    return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis, range));
-  }, [data, maDays, ratioBasis, range]);
+    return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis, range, aumOnlyAveraging));
+  }, [data, maDays, ratioBasis, range, aumOnlyAveraging]);
 
   const explainerEntry = useMemo(() => data?.amcs.find((a) => a.slug === EXPLAINER_AMC_SLUG) ?? null, [data]);
 
@@ -321,6 +340,9 @@ export function StockCorrelationTable() {
             strongly at ≥ 2) as notably rich or cheap relative to the AMC&apos;s own history. The
             period/moving-average/ratio-basis selection here is shared with the chart below — changing either
             updates both, and &quot;Save as default&quot; makes the current selection what every visitor sees.
+            &quot;AUM-only avg&quot; changes Moving avg (days) to smooth only AUM — share price stays raw, so the
+            ratio (and Corr/R²/Fair value/Z-score) becomes each day&apos;s raw share price ÷ that day&apos;s Avg AUM
+            instead of Avg Share Price ÷ Avg AUM.
           </p>
         </details>
         <div className="flex flex-wrap items-center gap-3">
@@ -372,11 +394,25 @@ export function StockCorrelationTable() {
               className={maInputClass}
             />
           </div>
+          <label
+            htmlFor="summary-aum-only-avg"
+            title="Moving avg applies only to AUM; the ratio uses each day's raw share price instead of an averaged one"
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <input
+              id="summary-aum-only-avg"
+              type="checkbox"
+              checked={aumOnlyAveraging}
+              onChange={(e) => setAumOnlyAveraging(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            AUM-only avg
+          </label>
           <button
             type="button"
             onClick={handleSaveDefaults}
             disabled={isSaving}
-            title="Save the current period, ratio basis, and moving average as the default every visitor sees"
+            title="Save the current period, ratio basis, moving average, and AUM-only avg setting as the default every visitor sees"
             className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
             {isSaving ? "Saving…" : "Save as default"}
@@ -407,7 +443,9 @@ export function StockCorrelationTable() {
                 Latest (as shown)
               </TableHead>
               <TableHead colSpan={2} className={groupHeadClass}>
-                Avg ({maDays > 1 ? `${maDays}D avg` : "Latest"})
+                {aumOnlyAveraging
+                  ? `AUM avg (${maDays > 1 ? `${maDays}D` : "Latest"}) · Price raw`
+                  : `Avg (${maDays > 1 ? `${maDays}D avg` : "Latest"})`}
               </TableHead>
               <TableHead colSpan={2} className={groupHeadClass}>
                 Actual (returns)
@@ -421,7 +459,7 @@ export function StockCorrelationTable() {
               <TableHead className="text-right align-bottom">Live AUM</TableHead>
               <TableHead className="text-right align-bottom">Share Price</TableHead>
               <TableHead className="border-l text-right align-bottom">Avg AUM</TableHead>
-              <TableHead className="text-right align-bottom">Avg Share Price</TableHead>
+              <TableHead className="text-right align-bottom">{aumOnlyAveraging ? "Share Price" : "Avg Share Price"}</TableHead>
               <TableHead className="border-l text-right align-bottom">Corr</TableHead>
               <TableHead className="text-right align-bottom">R²</TableHead>
               <TableHead className="border-l text-right align-bottom">
@@ -527,12 +565,19 @@ export function StockCorrelationTable() {
             onRangeChange={setRange}
             maDaysInput={maDaysInput}
             onMaDaysInputChange={setMaDaysInput}
+            aumOnlyAveraging={aumOnlyAveraging}
           />
         )}
       </div>
 
       {explainerEntry && (
-        <FairValueExplainer entry={explainerEntry} maDays={maDays} ratioBasis={ratioBasis} range={range} />
+        <FairValueExplainer
+          entry={explainerEntry}
+          maDays={maDays}
+          ratioBasis={ratioBasis}
+          range={range}
+          aumOnlyAveraging={aumOnlyAveraging}
+        />
       )}
     </div>
   );

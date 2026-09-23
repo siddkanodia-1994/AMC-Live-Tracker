@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SettingsForm } from "@/components/admin/settings-form";
 import { SyncActions } from "@/components/admin/sync-actions";
+import { WeekendPriceAnomalies } from "@/components/admin/weekend-price-anomalies";
 import { adminFetch, clearStoredAdminSecret, getStoredAdminSecret, storeAdminSecret } from "@/lib/admin-client";
 
 export default function AdminPage() {
@@ -74,6 +75,7 @@ export default function AdminPage() {
       </div>
       <SettingsForm secret={secret} />
       <SyncActions secret={secret} />
+      <WeekendPriceAnomalies secret={secret} />
     </div>
   );
 }

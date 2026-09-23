@@ -60,11 +60,13 @@ export function FairValueExplainer({
   maDays,
   ratioBasis,
   range,
+  aumOnlyAveraging,
 }: {
   entry: AmcStockCorrelationEntry;
   maDays: number;
   ratioBasis: RatioBasis;
   range: RangeOption;
+  aumOnlyAveraging: boolean;
 }) {
   const aligned = useMemo(() => {
     // Moving average computed over the FULL history first (avoids an
@@ -75,7 +77,11 @@ export function FairValueExplainer({
     // computeRow exactly, so the table and this walkthrough never disagree.
     const fullData = trimToLastContinuousRun(entry.aumHistory);
     const fullAumDisplay = computeMovingAverage(fullData.map((d) => d.liveAumCr), maDays);
-    const fullPriceDisplay = computeMovingAverage(entry.stockPriceSeries.map((p) => p.priceInr), maDays);
+    // Never smoothed once aumOnlyAveraging is on -- mirrors computeRow's own
+    // single branch point exactly.
+    const fullPriceDisplay = aumOnlyAveraging
+      ? entry.stockPriceSeries.map((p) => p.priceInr)
+      : computeMovingAverage(entry.stockPriceSeries.map((p) => p.priceInr), maDays);
     const cutoffDate = computeRangeCutoffDate(fullData, range);
 
     const rangedAum = filterByCutoff(
@@ -93,7 +99,7 @@ export function FairValueExplainer({
       rangedPrice,
       rangedPrice.map((d) => d.value)
     );
-  }, [entry, maDays, range]);
+  }, [entry, maDays, range, aumOnlyAveraging]);
 
   const basis = RATIO_BASIS_OPTIONS.find((o) => o.value === ratioBasis) ?? RATIO_BASIS_OPTIONS[0];
 
@@ -135,8 +141,8 @@ export function FairValueExplainer({
         <p>
           Using the same <span className="font-medium text-foreground">{n} trading days</span> currently shown
           above ({formatShortDate(aligned[0].date)} – {formatShortDate(latest.date)}
-          {maDays > 1 ? `, ${maDays}D avg` : ""}): each day&apos;s own (Share Price ÷ Live AUM) ratio is computed,
-          then averaged.
+          {maDays > 1 ? `, ${maDays}D avg ${aumOnlyAveraging ? "AUM (raw share price)" : "AUM & share price"}` : ""}
+          ): each day&apos;s own (Share Price ÷ Live AUM) ratio is computed, then averaged.
         </p>
 
         <div>

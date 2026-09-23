@@ -10,9 +10,13 @@ export interface StockCorrelationDefaults {
   range: RangeOption;
   maDays: number;
   ratioBasis: RatioBasis;
+  // When true, "Moving avg (days)" only smooths AUM -- share price stays
+  // raw, so the ratio (and everything derived from it) becomes raw price
+  // ÷ avg AUM instead of avg price ÷ avg AUM. See stock-correlation-table.tsx.
+  aumOnlyAveraging: boolean;
 }
 
-const FALLBACK_DEFAULTS: StockCorrelationDefaults = { range: "3y", maDays: 0, ratioBasis: "mean" };
+const FALLBACK_DEFAULTS: StockCorrelationDefaults = { range: "3y", maDays: 0, ratioBasis: "mean", aumOnlyAveraging: false };
 
 function isRangeOption(value: unknown): value is RangeOption {
   return typeof value === "string" && RANGE_OPTIONS.some((o) => o.value === value);
@@ -39,6 +43,7 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
       range: isRangeOption(parsed.range) ? parsed.range : FALLBACK_DEFAULTS.range,
       maDays: Number.isFinite(parsed.maDays) && (parsed.maDays as number) >= 0 ? Number(parsed.maDays) : FALLBACK_DEFAULTS.maDays,
       ratioBasis: isRatioBasis(parsed.ratioBasis) ? parsed.ratioBasis : FALLBACK_DEFAULTS.ratioBasis,
+      aumOnlyAveraging: typeof parsed.aumOnlyAveraging === "boolean" ? parsed.aumOnlyAveraging : FALLBACK_DEFAULTS.aumOnlyAveraging,
     };
   } catch {
     return FALLBACK_DEFAULTS;

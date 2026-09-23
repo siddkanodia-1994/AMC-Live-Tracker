@@ -4,8 +4,14 @@ import { useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatCr, formatPct, formatPriceInr, formatReportPeriodLabel, formatShortDateWithYear } from "@/lib/utils/format";
 import type { AumHistoryPoint, AmcStockPricePoint } from "@/lib/aum/history";
-import { trimToLastContinuousRun, computeMovingAverage, computeCorrelationStats, priceToAumRatioStats } from "@/lib/aum/series-math";
-import { RANGE_OPTIONS, filterByRange, type RangeOption } from "@/lib/aum/date-range";
+import {
+  trimToLastContinuousRun,
+  computeMovingAverage,
+  computeCorrelationStats,
+  priceToAumRatioStats,
+  type DatedValue,
+} from "@/lib/aum/series-math";
+import { RANGE_OPTIONS, filterByRange, computeRangeCutoffDate, filterByCutoff, type RangeOption } from "@/lib/aum/date-range";
 
 // Padding added above/below the combined (live + reported) data range, as a
 // fraction of that range, so the line doesn't sit flush against the plot
@@ -237,6 +243,7 @@ export function AumTrendChart({
   onRangeChange,
   maDaysInput: controlledMaDaysInput,
   onMaDaysInputChange,
+  aumOnlyAveraging = false,
 }: {
   data: AumHistoryPoint[];
   mode?: "absolute" | "change";
@@ -254,6 +261,13 @@ export function AumTrendChart({
   onRangeChange?: (range: RangeOption) => void;
   maDaysInput?: string;
   onMaDaysInputChange?: (value: string) => void;
+  // Stock Correlation tab's own toggle, forwarded so Ratio view's ratio
+  // (and its reference lines/Z-score) never disagrees with that table.
+  // Only ever passed by that one caller -- every other usage defaults to
+  // false, fully unaffected. Absolute view (and its own price line/Corr/R²
+  // caption) is untouched by this regardless -- it only reaches Ratio
+  // view's own ratio calculation, below.
+  aumOnlyAveraging?: boolean;
 }) {
   const [showStockPrice, setShowStockPrice] = useState(true);
   // Which body/caption this chart currently renders -- "ratio" swaps the
@@ -328,6 +342,24 @@ export function AumTrendChart({
     }
     return map;
   }, [stockPriceSeries, priceOverlayDisplayValues]);
+  // Ratio-only price series -- raw (unsmoothed) once aumOnlyAveraging is on,
+  // otherwise the same shared-maDays smoothed values Absolute view's own
+  // price line uses. Kept entirely separate from stockPriceDisplayValues/
+  // chartData.stockPriceInr so Absolute view's price line never changes.
+  const ratioPriceDisplayValues = useMemo(
+    () => (stockPriceSeries ? (aumOnlyAveraging ? stockPriceSeries.map((p) => p.priceInr) : stockPriceDisplayValues) : undefined),
+    [stockPriceSeries, aumOnlyAveraging, stockPriceDisplayValues]
+  );
+  const ratioPriceByDate = useMemo(() => {
+    const map = new Map<string, number>();
+    if (stockPriceSeries && ratioPriceDisplayValues) {
+      stockPriceSeries.forEach((p, i) => {
+        const value = ratioPriceDisplayValues[i];
+        if (value !== undefined) map.set(p.date, value);
+      });
+    }
+    return map;
+  }, [stockPriceSeries, ratioPriceDisplayValues]);
   const fullChartData = useMemo(
     () => buildChartData(data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues),
     [data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues]
@@ -360,14 +392,15 @@ export function AumTrendChart({
     const aum: number[] = [];
     const price: number[] = [];
     for (const p of chartData) {
-      if (p.liveAumDisplay !== undefined && p.stockPriceInr !== undefined) {
+      const ratioPrice = ratioPriceByDate.get(p.date);
+      if (p.liveAumDisplay !== undefined && ratioPrice !== undefined) {
         dates.push(p.date);
         aum.push(p.liveAumDisplay);
-        price.push(p.stockPriceInr);
+        price.push(ratioPrice);
       }
     }
     return { dates, aum, price };
-  }, [chartData, hasStockPrice]);
+  }, [chartData, hasStockPrice, ratioPriceByDate]);
   // Reuses the exact same function the Stock Correlation table's Z-score
   // column calls -- so this chart's reference lines are guaranteed
   // consistent with that table's own Z-score for the same AMC/period/
@@ -393,15 +426,18 @@ export function AumTrendChart({
   // stockPriceInr, so the two stay fully decoupled.
   const ratioChartData = useMemo(
     () =>
-      chartData.map((p) => ({
-        ...p,
-        ratio:
-          p.liveAumDisplay !== undefined && p.stockPriceInr !== undefined && p.liveAumDisplay !== 0
-            ? p.stockPriceInr / p.liveAumDisplay
-            : undefined,
-        stockPriceOverlayInr: priceOverlayByDate.get(p.date),
-      })),
-    [chartData, priceOverlayByDate]
+      chartData.map((p) => {
+        const ratioPrice = ratioPriceByDate.get(p.date);
+        return {
+          ...p,
+          ratio:
+            p.liveAumDisplay !== undefined && ratioPrice !== undefined && p.liveAumDisplay !== 0
+              ? ratioPrice / p.liveAumDisplay
+              : undefined,
+          stockPriceOverlayInr: priceOverlayByDate.get(p.date),
+        };
+      }),
+    [chartData, priceOverlayByDate, ratioPriceByDate]
   );
   // Overlay price line's own Y-axis domain/ticks -- kept separate from
   // stockYDomain/stockYTicks (which stay driven by the shared-maDays price
@@ -498,16 +534,28 @@ export function AumTrendChart({
   // displayed (raw or smoothed) -- only meaningful with a share price to
   // compare against. Cheap enough (~200 points) to always compute rather
   // than gating it behind showStockPrice too.
+  //
+  // Each series' own full date list is used independently here (mirrors
+  // stock-correlation-table.tsx's computeRow exactly), NOT chartData
+  // (which is keyed to AUM's own dates only, via buildChartData's
+  // per-AUM-date price lookup) -- a date where price has a row but AUM
+  // doesn't (e.g. a stray non-trading-day price entry) would otherwise
+  // never get a row in chartData at all, silently dropping that day's
+  // return before it's even computed, rather than correctly computing it
+  // and only excluding it at the final correlation-intersection step.
   const correlationStats = useMemo(() => {
     if (!hasStockPrice) return null;
-    const liveAumDisplayDated = chartData
-      .filter((p) => p.liveAumDisplay !== undefined)
-      .map((p) => ({ date: p.date, value: p.liveAumDisplay as number }));
-    const stockPriceDisplayDated = chartData
-      .filter((p) => p.stockPriceInr !== undefined)
-      .map((p) => ({ date: p.date, value: p.stockPriceInr as number }));
+    const cutoffDate = computeRangeCutoffDate(data, range);
+    const aumFullDated = data
+      .map((d, i) => ({ date: d.date, value: liveAumDisplayValues[i] }))
+      .filter((d): d is DatedValue => d.value !== undefined);
+    const priceFullDated = (stockPriceSeries ?? [])
+      .map((p, i) => ({ date: p.date, value: stockPriceDisplayValues?.[i] }))
+      .filter((d): d is DatedValue => d.value !== undefined);
+    const liveAumDisplayDated = filterByCutoff(aumFullDated, cutoffDate);
+    const stockPriceDisplayDated = filterByCutoff(priceFullDated, cutoffDate);
     return computeCorrelationStats(liveAumDisplayDated, stockPriceDisplayDated);
-  }, [chartData, hasStockPrice]);
+  }, [data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues, range, hasStockPrice]);
   // Whenever the moving average's warm-up gap extends INTO the currently
   // selected range's visible window, note where the line actually starts
   // instead of leaving the shorter line unexplained -- Live AUM and the
@@ -605,7 +653,7 @@ export function AumTrendChart({
                       {ratioZScore.toFixed(2)}σ
                     </span>{" "}
                     · {ratioStats.n} trading days
-                    {maDays > 1 ? `, ${maDays}D avg` : ""}
+                    {maDays > 1 ? `, ${maDays}D avg${aumOnlyAveraging ? " AUM (raw price)" : ""}` : ""}
                   </span>
                   {showPriceInRatioView && priceOverlayTruncatedFromDate && (
                     <span>
