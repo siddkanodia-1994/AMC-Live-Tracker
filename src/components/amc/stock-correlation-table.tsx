@@ -208,22 +208,110 @@ function computeRow(
   };
 }
 
-// Per-day export rows for one AMC -- mirrors computeRow's own alignment
+// One raw SheetJS cell -- either a plain value or a LIVE FORMULA with a
+// JS-computed cache alongside it. A formula cell with no cached value
+// renders as an error (t="e") until Excel recalculates, so every formula
+// cell here also carries the equivalent plain-JS value as its cache --
+// same technique already proven in crosscheck/generate-crosscheck-excel.ts.
+type ExportCellValue = { f: string; value: number | string | null } | number | string | null;
+
+function setExportCell(ws: Record<string, unknown>, addr: string, cell: ExportCellValue): void {
+  if (cell === null) return;
+  if (typeof cell === "object") {
+    if (cell.value === null) return;
+    const isStr = typeof cell.value === "string";
+    ws[addr] = { t: isStr ? "str" : "n", f: cell.f, v: cell.value };
+  } else if (typeof cell === "number") {
+    ws[addr] = { t: "n", v: cell };
+  } else {
+    ws[addr] = { t: "s", v: cell };
+  }
+}
+
+function ratioBasisColumnLetter(ratioBasis: RatioBasis): string {
+  switch (ratioBasis) {
+    case "mean":
+      return "H";
+    case "+1sd":
+      return "I";
+    case "+2sd":
+      return "J";
+    case "-1sd":
+      return "K";
+    case "-2sd":
+      return "L";
+  }
+}
+
+// Builds one AMC's full worksheet -- mirrors computeRow's own alignment
 // pipeline (trim, smooth AUM, smooth-or-raw price per aumOnlyAveraging,
-// period cutoff) exactly, but returns every aligned day instead of just
-// the latest-day summary a ComputedRow carries. Deliberately its own pass
-// rather than sharing computeRow's internals, same reasoning as
-// fair-value-explainer.tsx's own independent alignment: it needs
-// per-day granularity computeRow's return type doesn't have.
-// "Price used for ratio" is always its own column (never reusing the raw
-// Share Price column's name) so it never collides whether it holds the
-// smoothed or the raw price, depending on aumOnlyAveraging.
-function buildExportRows(
+// period cutoff) exactly, but as LIVE EXCEL FORMULAS with a JS-computed
+// cache per cell, not precomputed values -- per the user's own hand-built
+// HDFC template (Sept 2026 audit). Deliberately its own pass rather than
+// sharing computeRow's internals, same reasoning as
+// fair-value-explainer.tsx's own independent alignment: it needs per-day
+// granularity computeRow's return type doesn't have.
+//
+// Column layout (row 1 = headers, row 2.. = data; G/O/R are blank
+// spacers, matching the template):
+//   A-F: Date, Live AUM, Share Price, Avg AUM, Price used for ratio, Ratio
+//   H-N: Mean/SD+1/SD+2/SD-1/SD-2/SD/Z Score -- repeated every row (Z-score
+//     is a genuine per-day time series; Mean/SD/bands ride along on the
+//     same rows, matching the template exactly)
+//   P-Q: AUM Return/Price Return -- helper columns feeding Corr's formula
+//   S-V: Corr/R²/Fair value price/Upside % -- single value, row 2 only
+//     (whole-period "current" stats, not a per-day series)
+//
+// SD uses STDEVP (population), matching the app's own displayed Z-score/
+// Fair value/CV exactly -- NOT STDEV (sample), which the hand-built
+// template used and which reads slightly differently. Every derived
+// formula degrades to a blank cell (not an Excel error) when an AMC's own
+// history is too short for the current period/Moving avg to produce a
+// value at all.
+//
+// One accepted simplification: Avg AUM's formula window is always exactly
+// `maDays` real AUM rows (AUM has no internal date gaps against itself),
+// but Price used for ratio/AUM Return/Price Return/Corr's formulas walk
+// `maDays`/1 SHEET rows on AUM's own date spine -- usually, but (per the
+// earlier weekend-anomaly audits) not provably always, the same real
+// price trading days computeMovingAverage/computeCorrelationStats would
+// use on price's own independent index. The CACHED value in every cell is
+// still the exact correct number from the app's own functions regardless;
+// only a manual Excel recalculation after editing an input could show a
+// tiny divergence, and only in a date range where AUM/price genuinely
+// disagree about a trading day.
+function buildAmcWorksheet(
   entry: AmcStockCorrelationEntry,
   maDays: number,
   range: RangeOption,
-  aumOnlyAveraging: boolean
-): Record<string, string | number | null>[] {
+  aumOnlyAveraging: boolean,
+  levelsCorrelation: boolean,
+  ratioBasis: RatioBasis
+): Record<string, unknown> {
+  const ws: Record<string, unknown> = {};
+  const headers: Record<string, string> = {
+    A: "Date",
+    B: "Live AUM (cr)",
+    C: "Share Price (INR)",
+    D: "Avg AUM (cr)",
+    E: "Price used for ratio (INR)",
+    F: "Ratio (Price / AUM)",
+    H: "Mean",
+    I: "SD+1",
+    J: "SD+2",
+    K: "SD-1",
+    L: "SD-2",
+    M: "SD",
+    N: "Z Score",
+    P: "AUM Return",
+    Q: "Price Return",
+    S: "Corr",
+    T: "R²",
+    U: "Fair value price",
+    V: "Upside %",
+  };
+  for (const [col, label] of Object.entries(headers)) setExportCell(ws, `${col}1`, label);
+
   const data = trimToLastContinuousRun(entry.aumHistory);
   const aumDisplay = computeMovingAverage(
     data.map((d) => d.liveAumCr),
@@ -235,31 +323,116 @@ function buildExportRows(
         entry.stockPriceSeries.map((p) => p.priceInr),
         maDays
       );
-
   const priceRawByDate = new Map(entry.stockPriceSeries.map((p) => [p.date, p.priceInr]));
   const priceDisplayByDate = new Map(entry.stockPriceSeries.map((p, i) => [p.date, priceDisplay[i] ?? null]));
 
   // AUM's own date list is the spine (matches aum-trend-chart.tsx's
   // buildChartData convention) -- price/ratio columns are looked up per
-  // AUM date, null when that date has no price. Cutoff anchored to AUM's
+  // AUM date, blank when that date has no price. Cutoff anchored to AUM's
   // own latest date, same as computeRow.
   const aumWithGapsFull = data.map((d, i) => ({ date: d.date, liveAumCr: d.liveAumCr, avgAumCr: aumDisplay[i] ?? null }));
   const cutoffDate = computeRangeCutoffDate(aumWithGapsFull, range);
   const rangedAum = filterByCutoff(aumWithGapsFull, cutoffDate);
+  const lastRow = rangedAum.length + 1;
 
-  return rangedAum.map((point) => {
+  const alignedAum: number[] = [];
+  const alignedPrice: number[] = [];
+  let prevAvgAum: number | null = null;
+  let prevPriceForRatio: number | null = null;
+
+  rangedAum.forEach((point, idx) => {
+    const r = idx + 2;
+    const priceForRatio = priceDisplayByDate.get(point.date) ?? null;
+    const rawPrice = priceRawByDate.get(point.date) ?? null;
+    const ratio =
+      point.avgAumCr !== null && point.avgAumCr !== 0 && priceForRatio !== null ? priceForRatio / point.avgAumCr : null;
+
+    setExportCell(ws, `A${r}`, point.date);
+    setExportCell(ws, `B${r}`, point.liveAumCr);
+    setExportCell(ws, `C${r}`, rawPrice);
+
+    if (point.avgAumCr !== null) {
+      setExportCell(ws, `D${r}`, { f: `AVERAGE(B${r - maDays + 1}:B${r})`, value: point.avgAumCr });
+    }
+    if (priceForRatio !== null) {
+      const priceFormula = aumOnlyAveraging ? `C${r}` : `AVERAGE(C${r - maDays + 1}:C${r})`;
+      setExportCell(ws, `E${r}`, { f: priceFormula, value: priceForRatio });
+    }
+    if (ratio !== null) {
+      setExportCell(ws, `F${r}`, { f: `E${r}/D${r}`, value: ratio });
+      alignedAum.push(point.avgAumCr as number);
+      alignedPrice.push(priceForRatio as number);
+    }
+
+    if (prevAvgAum !== null && point.avgAumCr !== null && prevAvgAum !== 0) {
+      setExportCell(ws, `P${r}`, {
+        f: `IF(OR(D${r}="",D${r - 1}=""),"",(D${r}-D${r - 1})/D${r - 1})`,
+        value: (point.avgAumCr - prevAvgAum) / prevAvgAum,
+      });
+    }
+    if (prevPriceForRatio !== null && priceForRatio !== null && prevPriceForRatio !== 0) {
+      setExportCell(ws, `Q${r}`, {
+        f: `IF(OR(E${r}="",E${r - 1}=""),"",(E${r}-E${r - 1})/E${r - 1})`,
+        value: (priceForRatio - prevPriceForRatio) / prevPriceForRatio,
+      });
+    }
+    prevAvgAum = point.avgAumCr;
+    prevPriceForRatio = priceForRatio;
+  });
+
+  const ratioStats = priceToAumRatioStats(alignedAum, alignedPrice);
+
+  rangedAum.forEach((point, idx) => {
+    const r = idx + 2;
+    setExportCell(ws, `H${r}`, { f: `IFERROR(AVERAGE(F:F),"")`, value: ratioStats?.meanRatio ?? "" });
+    setExportCell(ws, `M${r}`, { f: `IFERROR(STDEVP(F:F),"")`, value: ratioStats?.stdDev ?? "" });
+    setExportCell(ws, `I${r}`, {
+      f: `IF(OR(H${r}="",M${r}=""),"",H${r}+M${r})`,
+      value: ratioStats ? ratioStats.meanRatio + ratioStats.stdDev : "",
+    });
+    setExportCell(ws, `J${r}`, {
+      f: `IF(OR(I${r}="",M${r}=""),"",I${r}+M${r})`,
+      value: ratioStats ? ratioStats.meanRatio + 2 * ratioStats.stdDev : "",
+    });
+    setExportCell(ws, `K${r}`, {
+      f: `IF(OR(H${r}="",M${r}=""),"",H${r}-M${r})`,
+      value: ratioStats ? ratioStats.meanRatio - ratioStats.stdDev : "",
+    });
+    setExportCell(ws, `L${r}`, {
+      f: `IF(OR(K${r}="",M${r}=""),"",K${r}-M${r})`,
+      value: ratioStats ? ratioStats.meanRatio - 2 * ratioStats.stdDev : "",
+    });
+
     const priceForRatio = priceDisplayByDate.get(point.date) ?? null;
     const ratio =
       point.avgAumCr !== null && point.avgAumCr !== 0 && priceForRatio !== null ? priceForRatio / point.avgAumCr : null;
-    return {
-      Date: point.date,
-      "Live AUM (cr)": point.liveAumCr,
-      "Share Price (INR)": priceRawByDate.get(point.date) ?? null,
-      "Avg AUM (cr)": point.avgAumCr,
-      "Price used for ratio (INR)": priceForRatio,
-      "Ratio (Price / AUM)": ratio,
-    };
+    const zScoreValue =
+      ratio !== null && ratioStats && ratioStats.stdDev !== 0 ? (ratio - ratioStats.meanRatio) / ratioStats.stdDev : null;
+    setExportCell(ws, `N${r}`, {
+      f: `IF(OR(F${r}="",H${r}="",M${r}=""),"",(F${r}-H${r})/M${r})`,
+      value: zScoreValue ?? "",
+    });
   });
+
+  // Whole-period summary (Corr/R²/Fair value/Upside %) -- reuses
+  // computeRow's own authoritative numbers as the cache, so these can
+  // never drift from what the table shows on screen for this AMC.
+  const summary = computeRow(entry, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation);
+  const basisCol = ratioBasisColumnLetter(ratioBasis);
+  const corrFormula = levelsCorrelation ? `IFERROR(CORREL(D:D,E:E),"")` : `IFERROR(CORREL(P:P,Q:Q),"")`;
+  setExportCell(ws, "S2", { f: corrFormula, value: summary.corr ?? "" });
+  setExportCell(ws, "T2", { f: `IF(S2="","",S2^2)`, value: summary.r2 ?? "" });
+  setExportCell(ws, "U2", {
+    f: `IF(OR(${basisCol}2="",D${lastRow}=""),"",${basisCol}2*D${lastRow})`,
+    value: summary.fairValuePriceInr ?? "",
+  });
+  setExportCell(ws, "V2", {
+    f: `IF(OR(U2="",C${lastRow}=""),"",(U2-C${lastRow})/C${lastRow})`,
+    value: summary.upsidePct ?? "",
+  });
+
+  ws["!ref"] = `A1:V${lastRow}`;
+  return ws;
 }
 
 const maInputClass =
@@ -375,8 +548,8 @@ export function StockCorrelationTable() {
       utils.book_append_sheet(workbook, utils.json_to_sheet(settingsRows), "Settings");
 
       for (const entry of data.amcs) {
-        const exportRows = buildExportRows(entry, maDays, range, aumOnlyAveraging);
-        utils.book_append_sheet(workbook, utils.json_to_sheet(exportRows), entry.overviewName.slice(0, 31));
+        const worksheet = buildAmcWorksheet(entry, maDays, range, aumOnlyAveraging, levelsCorrelation, ratioBasis);
+        utils.book_append_sheet(workbook, worksheet, entry.overviewName.slice(0, 31));
       }
 
       const dateStamp = new Date().toISOString().slice(0, 10);
