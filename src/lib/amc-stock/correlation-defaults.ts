@@ -14,9 +14,18 @@ export interface StockCorrelationDefaults {
   // raw, so the ratio (and everything derived from it) becomes raw price
   // ÷ avg AUM instead of avg price ÷ avg AUM. See stock-correlation-table.tsx.
   aumOnlyAveraging: boolean;
+  // When true, Corr/R² correlate the two series' raw LEVELS directly
+  // instead of their day-over-day % change. See computeLevelCorrelationStats.
+  levelsCorrelation: boolean;
 }
 
-const FALLBACK_DEFAULTS: StockCorrelationDefaults = { range: "3y", maDays: 0, ratioBasis: "mean", aumOnlyAveraging: false };
+const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
+  range: "3y",
+  maDays: 0,
+  ratioBasis: "mean",
+  aumOnlyAveraging: false,
+  levelsCorrelation: false,
+};
 
 function isRangeOption(value: unknown): value is RangeOption {
   return typeof value === "string" && RANGE_OPTIONS.some((o) => o.value === value);
@@ -44,6 +53,7 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
       maDays: Number.isFinite(parsed.maDays) && (parsed.maDays as number) >= 0 ? Number(parsed.maDays) : FALLBACK_DEFAULTS.maDays,
       ratioBasis: isRatioBasis(parsed.ratioBasis) ? parsed.ratioBasis : FALLBACK_DEFAULTS.ratioBasis,
       aumOnlyAveraging: typeof parsed.aumOnlyAveraging === "boolean" ? parsed.aumOnlyAveraging : FALLBACK_DEFAULTS.aumOnlyAveraging,
+      levelsCorrelation: typeof parsed.levelsCorrelation === "boolean" ? parsed.levelsCorrelation : FALLBACK_DEFAULTS.levelsCorrelation,
     };
   } catch {
     return FALLBACK_DEFAULTS;

@@ -33,8 +33,12 @@ export async function POST(request: Request) {
   if (typeof aumOnlyAveraging !== "boolean") {
     return NextResponse.json({ error: "aumOnlyAveraging must be a boolean" }, { status: 400 });
   }
+  const levelsCorrelation = body?.levelsCorrelation;
+  if (typeof levelsCorrelation !== "boolean") {
+    return NextResponse.json({ error: "levelsCorrelation must be a boolean" }, { status: 400 });
+  }
 
-  const defaults = { range, maDays, ratioBasis, aumOnlyAveraging };
+  const defaults = { range, maDays, ratioBasis, aumOnlyAveraging, levelsCorrelation };
   await setStockCorrelationDefaults(defaults);
   return NextResponse.json(defaults);
 }

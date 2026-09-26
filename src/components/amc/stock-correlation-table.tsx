@@ -10,6 +10,7 @@ import {
   trimToLastContinuousRun,
   computeMovingAverage,
   computeCorrelationStats,
+  computeLevelCorrelationStats,
   priceToAumRatioStats,
   ratioAtBasis,
   alignSeriesByDate,
@@ -81,7 +82,8 @@ function computeRow(
   maDays: number,
   ratioBasis: RatioBasis,
   range: RangeOption,
-  aumOnlyAveraging: boolean
+  aumOnlyAveraging: boolean,
+  levelsCorrelation: boolean
 ): ComputedRow {
   const data = trimToLastContinuousRun(entry.aumHistory);
   // Moving average computed over the FULL history first, then the period
@@ -131,7 +133,12 @@ function computeRow(
   const aumDated = aumWithGaps.filter((d): d is { date: string; value: number } => d.value !== undefined);
   const priceDated = priceWithGaps.filter((d): d is { date: string; value: number } => d.value !== undefined);
 
-  const corrStats = computeCorrelationStats(aumDated, priceDated);
+  // "Levels (no % chg)" swaps in the raw-level correlation instead of the
+  // default day-over-day % change one -- same aumDated/priceDated inputs
+  // either way (already reflecting the period filter and AUM-only avg).
+  const corrStats = levelsCorrelation
+    ? computeLevelCorrelationStats(aumDated, priceDated)
+    : computeCorrelationStats(aumDated, priceDated);
   const { xs, ys } = alignSeriesByDate(aumDated, priceDated);
   const ratioStats = priceToAumRatioStats(xs, ys);
 
@@ -241,6 +248,9 @@ export function StockCorrelationTable() {
   // so the ratio (and Corr/R²/Fair value/Z-score derived from it) becomes
   // raw price ÷ avg AUM instead of avg price ÷ avg AUM. See computeRow.
   const [aumOnlyAveraging, setAumOnlyAveraging] = useState(false);
+  // When on, Corr/R² correlate the two series' raw LEVELS directly instead
+  // of their day-over-day % change -- see computeLevelCorrelationStats.
+  const [levelsCorrelation, setLevelsCorrelation] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   // Applies the saved global default exactly once, the first time it
@@ -255,6 +265,7 @@ export function StockCorrelationTable() {
     setMaDaysInput(data.defaults.maDays > 0 ? String(data.defaults.maDays) : "");
     setRatioBasis(data.defaults.ratioBasis);
     setAumOnlyAveraging(data.defaults.aumOnlyAveraging);
+    setLevelsCorrelation(data.defaults.levelsCorrelation);
   }, [data]);
 
   async function handleSaveDefaults() {
@@ -263,7 +274,13 @@ export function StockCorrelationTable() {
       const res = await fetch("/api/stock-correlation-defaults", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ range, maDays: maDaysInput === "" ? 0 : maDays, ratioBasis, aumOnlyAveraging }),
+        body: JSON.stringify({
+          range,
+          maDays: maDaysInput === "" ? 0 : maDays,
+          ratioBasis,
+          aumOnlyAveraging,
+          levelsCorrelation,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -279,8 +296,8 @@ export function StockCorrelationTable() {
 
   const rows = useMemo(() => {
     if (!data) return [];
-    return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis, range, aumOnlyAveraging));
-  }, [data, maDays, ratioBasis, range, aumOnlyAveraging]);
+    return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation));
+  }, [data, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation]);
 
   const explainerEntry = useMemo(() => data?.amcs.find((a) => a.slug === EXPLAINER_AMC_SLUG) ?? null, [data]);
 
@@ -342,7 +359,10 @@ export function StockCorrelationTable() {
             updates both, and &quot;Save as default&quot; makes the current selection what every visitor sees.
             &quot;AUM-only avg&quot; changes Moving avg (days) to smooth only AUM — share price stays raw, so the
             ratio (and Corr/R²/Fair value/Z-score) becomes each day&apos;s raw share price ÷ that day&apos;s Avg AUM
-            instead of Avg Share Price ÷ Avg AUM.
+            instead of Avg Share Price ÷ Avg AUM. &quot;Levels (no % chg)&quot; changes Corr/R² specifically to
+            correlate the two series&apos; raw values directly instead of their day-over-day % change — this is
+            the level-vs-level regression noted above as spuriously overstating the fit, kept here as an explicit
+            opt-in for comparison rather than the default.
           </p>
         </details>
         <div className="flex flex-wrap items-center gap-3">
@@ -408,11 +428,25 @@ export function StockCorrelationTable() {
             />
             AUM-only avg
           </label>
+          <label
+            htmlFor="summary-levels-correlation"
+            title="Corr/R² use the two series' raw values directly instead of their day-over-day % change"
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <input
+              id="summary-levels-correlation"
+              type="checkbox"
+              checked={levelsCorrelation}
+              onChange={(e) => setLevelsCorrelation(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            Levels (no % chg)
+          </label>
           <button
             type="button"
             onClick={handleSaveDefaults}
             disabled={isSaving}
-            title="Save the current period, ratio basis, moving average, and AUM-only avg setting as the default every visitor sees"
+            title="Save the current period, ratio basis, moving average, and toggle settings as the default every visitor sees"
             className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
             {isSaving ? "Saving…" : "Save as default"}
@@ -566,6 +600,7 @@ export function StockCorrelationTable() {
             maDaysInput={maDaysInput}
             onMaDaysInputChange={setMaDaysInput}
             aumOnlyAveraging={aumOnlyAveraging}
+            levelsCorrelation={levelsCorrelation}
           />
         )}
       </div>

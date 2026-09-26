@@ -156,6 +156,21 @@ export function computeCorrelationStats(seriesA: DatedValue[], seriesB: DatedVal
   return { r, r2: r * r, n: xs.length };
 }
 
+// The "Levels (no % chg)" toggle's alternative to computeCorrelationStats
+// above -- correlates the two series' own raw (or moving-average-smoothed)
+// VALUES directly, with no returns transform. This is the level-vs-level
+// regression computeCorrelationStats' own comment warns is a spurious-
+// regression risk (both AUM and share price trend upward for years,
+// regardless of any real short-term relationship) -- kept here as an
+// explicit, opt-in alternative rather than the default, per the user's own
+// request to be able to see/compare both.
+export function computeLevelCorrelationStats(seriesA: DatedValue[], seriesB: DatedValue[]): CorrelationStats | null {
+  const { xs, ys } = alignSeriesByDate(seriesA, seriesB);
+  const r = pearsonCorrelation(xs, ys);
+  if (r === null) return null;
+  return { r, r2: r * r, n: xs.length };
+}
+
 export interface RatioStats {
   meanRatio: number;
   stdDev: number;
