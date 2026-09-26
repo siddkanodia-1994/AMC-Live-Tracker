@@ -351,12 +351,32 @@ function buildAmcWorksheet(
     setExportCell(ws, `B${r}`, point.liveAumCr);
     setExportCell(ws, `C${r}`, rawPrice);
 
+    // A live AVERAGE formula is only valid when this row's own maDays-window
+    // fits entirely within the visible sheet (idx >= maDays - 1, i.e. row
+    // >= maDays + 1) -- otherwise its window reaches into pre-period history
+    // that isn't in this sheet at all (e.g. a 3Y period + 45D moving avg,
+    // since the warmup finishes using data from well before the 3Y cutoff),
+    // and r - maDays + 1 would be zero or negative -- a malformed Excel
+    // reference that corrupts the file (confirmed: row 2 under 3Y+45D
+    // produced "AVERAGE(B-42:B2)"). Falls back to a plain cached value in
+    // that case, which is correct either way -- the true window genuinely
+    // isn't expressible as an in-sheet formula.
+    const windowFitsInSheet = idx >= maDays - 1;
     if (point.avgAumCr !== null) {
-      setExportCell(ws, `D${r}`, { f: `AVERAGE(B${r - maDays + 1}:B${r})`, value: point.avgAumCr });
+      if (windowFitsInSheet) {
+        setExportCell(ws, `D${r}`, { f: `AVERAGE(B${r - maDays + 1}:B${r})`, value: point.avgAumCr });
+      } else {
+        setExportCell(ws, `D${r}`, point.avgAumCr);
+      }
     }
     if (priceForRatio !== null) {
-      const priceFormula = aumOnlyAveraging ? `C${r}` : `AVERAGE(C${r - maDays + 1}:C${r})`;
-      setExportCell(ws, `E${r}`, { f: priceFormula, value: priceForRatio });
+      if (aumOnlyAveraging) {
+        setExportCell(ws, `E${r}`, { f: `C${r}`, value: priceForRatio });
+      } else if (windowFitsInSheet) {
+        setExportCell(ws, `E${r}`, { f: `AVERAGE(C${r - maDays + 1}:C${r})`, value: priceForRatio });
+      } else {
+        setExportCell(ws, `E${r}`, priceForRatio);
+      }
     }
     if (ratio !== null) {
       setExportCell(ws, `F${r}`, { f: `E${r}/D${r}`, value: ratio });
