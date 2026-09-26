@@ -263,13 +263,11 @@ export function AumTrendChart({
   onRangeChange?: (range: RangeOption) => void;
   maDaysInput?: string;
   onMaDaysInputChange?: (value: string) => void;
-  // Stock Correlation tab's own toggle, forwarded so Ratio view's ratio
-  // (and its reference lines/Z-score) AND Absolute view's own Corr/R²
-  // caption never disagree with that table. Only ever passed by that one
-  // caller -- every other usage defaults to false, fully unaffected.
-  // Absolute view's actual plotted price LINE is untouched by this
-  // regardless -- only its Corr/R² caption and Ratio view's ratio
-  // calculation read this.
+  // Stock Correlation tab's own toggle, forwarded so nothing in this chart
+  // (Absolute view's price line + its Corr/R² caption, Ratio view's ratio/
+  // reference lines/Z-score) ever disagrees with that table. Only ever
+  // passed by that one caller -- every other usage defaults to false,
+  // fully unaffected.
   aumOnlyAveraging?: boolean;
   // Stock Correlation tab's own "Levels (no % chg)" toggle, forwarded so
   // Absolute view's own Corr/R² caption never disagrees with that table.
@@ -330,9 +328,19 @@ export function AumTrendChart({
     () => computeMovingAverage(data.map((d) => d.liveAumCr), maDays),
     [data, maDays]
   );
+  // Raw (unsmoothed) once aumOnlyAveraging is on, otherwise the shared-maDays
+  // smoothed values -- mirrors computeRow's own priceDisplay branch exactly,
+  // so the plotted price LINE (via chartData.stockPriceInr below), its
+  // Y-axis domain, Ratio view's ratio calc, and Absolute view's own Corr/R²
+  // caption all agree with the table for the same toggle state.
   const stockPriceDisplayValues = useMemo(
-    () => (stockPriceSeries ? computeMovingAverage(stockPriceSeries.map((p) => p.priceInr), maDays) : undefined),
-    [stockPriceSeries, maDays]
+    () =>
+      stockPriceSeries
+        ? aumOnlyAveraging
+          ? stockPriceSeries.map((p) => p.priceInr)
+          : computeMovingAverage(stockPriceSeries.map((p) => p.priceInr), maDays)
+        : undefined,
+    [stockPriceSeries, aumOnlyAveraging, maDays]
   );
   // Separate smoothing pass for Ratio view's optional price overlay LINE
   // only -- everything that defines the ratio itself (below) keeps reading
@@ -351,27 +359,6 @@ export function AumTrendChart({
     }
     return map;
   }, [stockPriceSeries, priceOverlayDisplayValues]);
-  // AUM-only-avg-aware price series -- raw (unsmoothed) once aumOnlyAveraging
-  // is on, otherwise the same shared-maDays smoothed values Absolute view's
-  // own price LINE uses. Feeds Ratio view's ratio calc AND Absolute view's
-  // own Corr/R² caption below (so both always match the table's Corr/R² for
-  // the same toggle state) -- kept entirely separate from
-  // stockPriceDisplayValues/chartData.stockPriceInr so the actual plotted
-  // price LINE in Absolute view never changes regardless of this toggle.
-  const ratioPriceDisplayValues = useMemo(
-    () => (stockPriceSeries ? (aumOnlyAveraging ? stockPriceSeries.map((p) => p.priceInr) : stockPriceDisplayValues) : undefined),
-    [stockPriceSeries, aumOnlyAveraging, stockPriceDisplayValues]
-  );
-  const ratioPriceByDate = useMemo(() => {
-    const map = new Map<string, number>();
-    if (stockPriceSeries && ratioPriceDisplayValues) {
-      stockPriceSeries.forEach((p, i) => {
-        const value = ratioPriceDisplayValues[i];
-        if (value !== undefined) map.set(p.date, value);
-      });
-    }
-    return map;
-  }, [stockPriceSeries, ratioPriceDisplayValues]);
   const fullChartData = useMemo(
     () => buildChartData(data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues),
     [data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues]
@@ -404,15 +391,14 @@ export function AumTrendChart({
     const aum: number[] = [];
     const price: number[] = [];
     for (const p of chartData) {
-      const ratioPrice = ratioPriceByDate.get(p.date);
-      if (p.liveAumDisplay !== undefined && ratioPrice !== undefined) {
+      if (p.liveAumDisplay !== undefined && p.stockPriceInr !== undefined) {
         dates.push(p.date);
         aum.push(p.liveAumDisplay);
-        price.push(ratioPrice);
+        price.push(p.stockPriceInr);
       }
     }
     return { dates, aum, price };
-  }, [chartData, hasStockPrice, ratioPriceByDate]);
+  }, [chartData, hasStockPrice]);
   // Reuses the exact same function the Stock Correlation table's Z-score
   // column calls -- so this chart's reference lines are guaranteed
   // consistent with that table's own Z-score for the same AMC/period/
@@ -431,25 +417,21 @@ export function AumTrendChart({
   }, [alignedRatioInputs]);
   // The ratio chart's actual `data` source (distinct from ratioSeries
   // above, which only feeds the reference-line/caption stats) -- carries
-  // `ratio` (still off the SHARED-maDays stockPriceInr, per design: the
-  // overlay's own smoothing never changes what the ratio means) AND
-  // `stockPriceOverlayInr` (off priceOverlayByDate, its own independent
-  // smoothing) -- the optional overlay Line reads that second field, never
-  // stockPriceInr, so the two stay fully decoupled.
+  // `ratio` (off chartData's own stockPriceInr, which already reflects
+  // aumOnlyAveraging) AND `stockPriceOverlayInr` (off priceOverlayByDate,
+  // its own independent smoothing) -- the optional overlay Line reads that
+  // second field, never stockPriceInr, so the two stay fully decoupled.
   const ratioChartData = useMemo(
     () =>
-      chartData.map((p) => {
-        const ratioPrice = ratioPriceByDate.get(p.date);
-        return {
-          ...p,
-          ratio:
-            p.liveAumDisplay !== undefined && ratioPrice !== undefined && p.liveAumDisplay !== 0
-              ? ratioPrice / p.liveAumDisplay
-              : undefined,
-          stockPriceOverlayInr: priceOverlayByDate.get(p.date),
-        };
-      }),
-    [chartData, priceOverlayByDate, ratioPriceByDate]
+      chartData.map((p) => ({
+        ...p,
+        ratio:
+          p.liveAumDisplay !== undefined && p.stockPriceInr !== undefined && p.liveAumDisplay !== 0
+            ? p.stockPriceInr / p.liveAumDisplay
+            : undefined,
+        stockPriceOverlayInr: priceOverlayByDate.get(p.date),
+      })),
+    [chartData, priceOverlayByDate]
   );
   // Overlay price line's own Y-axis domain/ticks -- kept separate from
   // stockYDomain/stockYTicks (which stay driven by the shared-maDays price
@@ -541,17 +523,14 @@ export function AumTrendChart({
   ) : null;
   const maSuffix = maDays > 1 ? ` (${maDays}D avg)` : "";
   const liveAumSeriesName = `Live AUM${maSuffix}`;
-  const stockSeriesName = `${stockLabel ? `${stockLabel} Share Price` : "Share Price"}${maSuffix}`;
+  // No "(NDavg)" suffix once aumOnlyAveraging is on -- the line itself is
+  // raw in that mode (see stockPriceDisplayValues), so the label shouldn't
+  // claim otherwise.
+  const stockSeriesName = `${stockLabel ? `${stockLabel} Share Price` : "Share Price"}${aumOnlyAveraging ? "" : maSuffix}`;
   // Correlates day-over-day returns (or, with levelsCorrelation on, the raw
-  // levels directly) of whichever series the table's own toggles currently
-  // select -- only meaningful with a share price to compare against. Cheap
-  // enough (~200 points) to always compute rather than gating it behind
-  // showStockPrice too. Uses ratioPriceDisplayValues (not
-  // stockPriceDisplayValues) for the price leg so this always matches the
-  // table's own Corr/R² for the same AUM-only-avg state, same as Ratio
-  // view's ratio calc already does -- the actual plotted price LINE in
-  // Absolute view is unaffected either way, since that reads chartData/
-  // stockPriceDisplayValues directly, not this.
+  // levels directly) of whichever series is currently displayed --
+  // stockPriceDisplayValues already reflects aumOnlyAveraging, so this
+  // always matches the table's own Corr/R² for the same toggle state.
   //
   // Each series' own full date list is used independently here (mirrors
   // stock-correlation-table.tsx's computeRow exactly), NOT chartData
@@ -568,14 +547,14 @@ export function AumTrendChart({
       .map((d, i) => ({ date: d.date, value: liveAumDisplayValues[i] }))
       .filter((d): d is DatedValue => d.value !== undefined);
     const priceFullDated = (stockPriceSeries ?? [])
-      .map((p, i) => ({ date: p.date, value: ratioPriceDisplayValues?.[i] }))
+      .map((p, i) => ({ date: p.date, value: stockPriceDisplayValues?.[i] }))
       .filter((d): d is DatedValue => d.value !== undefined);
     const liveAumDisplayDated = filterByCutoff(aumFullDated, cutoffDate);
     const stockPriceDisplayDated = filterByCutoff(priceFullDated, cutoffDate);
     return levelsCorrelation
       ? computeLevelCorrelationStats(liveAumDisplayDated, stockPriceDisplayDated)
       : computeCorrelationStats(liveAumDisplayDated, stockPriceDisplayDated);
-  }, [data, liveAumDisplayValues, stockPriceSeries, ratioPriceDisplayValues, range, hasStockPrice, levelsCorrelation]);
+  }, [data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues, range, hasStockPrice, levelsCorrelation]);
   // Whenever the moving average's warm-up gap extends INTO the currently
   // selected range's visible window, note where the line actually starts
   // instead of leaving the shorter line unexplained -- Live AUM and the
@@ -589,10 +568,11 @@ export function AumTrendChart({
     return idx > 0 ? chartData[idx].date : null;
   }, [maDays, chartData]);
   const stockPriceTruncatedFromDate = useMemo(() => {
-    if (maDays <= 1 || !hasStockPrice) return null;
+    // Raw price (aumOnlyAveraging on) has no warm-up gap to caption.
+    if (maDays <= 1 || !hasStockPrice || aumOnlyAveraging) return null;
     const idx = chartData.findIndex((p) => p.stockPriceInr !== undefined);
     return idx > 0 ? chartData[idx].date : null;
-  }, [maDays, hasStockPrice, chartData]);
+  }, [maDays, hasStockPrice, chartData, aumOnlyAveraging]);
 
   if (rawData.length === 0) {
     return (
