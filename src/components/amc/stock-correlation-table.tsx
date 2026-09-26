@@ -208,6 +208,60 @@ function computeRow(
   };
 }
 
+// Per-day export rows for one AMC -- mirrors computeRow's own alignment
+// pipeline (trim, smooth AUM, smooth-or-raw price per aumOnlyAveraging,
+// period cutoff) exactly, but returns every aligned day instead of just
+// the latest-day summary a ComputedRow carries. Deliberately its own pass
+// rather than sharing computeRow's internals, same reasoning as
+// fair-value-explainer.tsx's own independent alignment: it needs
+// per-day granularity computeRow's return type doesn't have.
+// "Price used for ratio" is always its own column (never reusing the raw
+// Share Price column's name) so it never collides whether it holds the
+// smoothed or the raw price, depending on aumOnlyAveraging.
+function buildExportRows(
+  entry: AmcStockCorrelationEntry,
+  maDays: number,
+  range: RangeOption,
+  aumOnlyAveraging: boolean
+): Record<string, string | number | null>[] {
+  const data = trimToLastContinuousRun(entry.aumHistory);
+  const aumDisplay = computeMovingAverage(
+    data.map((d) => d.liveAumCr),
+    maDays
+  );
+  const priceDisplay = aumOnlyAveraging
+    ? entry.stockPriceSeries.map((p) => p.priceInr)
+    : computeMovingAverage(
+        entry.stockPriceSeries.map((p) => p.priceInr),
+        maDays
+      );
+
+  const priceRawByDate = new Map(entry.stockPriceSeries.map((p) => [p.date, p.priceInr]));
+  const priceDisplayByDate = new Map(entry.stockPriceSeries.map((p, i) => [p.date, priceDisplay[i] ?? null]));
+
+  // AUM's own date list is the spine (matches aum-trend-chart.tsx's
+  // buildChartData convention) -- price/ratio columns are looked up per
+  // AUM date, null when that date has no price. Cutoff anchored to AUM's
+  // own latest date, same as computeRow.
+  const aumWithGapsFull = data.map((d, i) => ({ date: d.date, liveAumCr: d.liveAumCr, avgAumCr: aumDisplay[i] ?? null }));
+  const cutoffDate = computeRangeCutoffDate(aumWithGapsFull, range);
+  const rangedAum = filterByCutoff(aumWithGapsFull, cutoffDate);
+
+  return rangedAum.map((point) => {
+    const priceForRatio = priceDisplayByDate.get(point.date) ?? null;
+    const ratio =
+      point.avgAumCr !== null && point.avgAumCr !== 0 && priceForRatio !== null ? priceForRatio / point.avgAumCr : null;
+    return {
+      Date: point.date,
+      "Live AUM (cr)": point.liveAumCr,
+      "Share Price (INR)": priceRawByDate.get(point.date) ?? null,
+      "Avg AUM (cr)": point.avgAumCr,
+      "Price used for ratio (INR)": priceForRatio,
+      "Ratio (Price / AUM)": ratio,
+    };
+  });
+}
+
 const maInputClass =
   "w-16 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 const ratioBasisSelectClass =
@@ -252,6 +306,7 @@ export function StockCorrelationTable() {
   // of their day-over-day % change -- see computeLevelCorrelationStats.
   const [levelsCorrelation, setLevelsCorrelation] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Applies the saved global default exactly once, the first time it
   // arrives -- a ref (not a state flag) so this can't itself trigger a
@@ -291,6 +346,43 @@ export function StockCorrelationTable() {
       toast.error(err instanceof Error ? err.message : "Save failed");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  // One sheet per AMC (full daily AUM/price/derived series for the
+  // currently selected period + moving-avg + AUM-only-avg), plus a
+  // Settings sheet documenting exactly what was selected when generated --
+  // self-contained, so the file makes sense on its own later. Client-side
+  // only (xlsx loaded lazily, same as the header's own DownloadExcelButton)
+  // since every AMC's full history is already fetched via
+  // useAmcStockCorrelations -- no new API route/DB query.
+  async function handleDownloadExcel() {
+    if (!data) return;
+    setIsDownloading(true);
+    try {
+      const { utils, writeFileXLSX } = await import("xlsx");
+      const workbook = utils.book_new();
+
+      const rangeLabel = RANGE_OPTIONS.find((o) => o.value === range)?.label ?? range;
+      const settingsRows = [
+        { Setting: "Period", Value: rangeLabel },
+        { Setting: "Moving avg (days)", Value: maDaysInput === "" ? 0 : maDays },
+        { Setting: "AUM-only avg", Value: aumOnlyAveraging ? "On" : "Off" },
+        { Setting: "Levels (no % chg) correlation", Value: levelsCorrelation ? "On" : "Off" },
+        { Setting: "Ratio basis", Value: activeBasis.label },
+        { Setting: "Generated at", Value: new Date().toISOString() },
+      ];
+      utils.book_append_sheet(workbook, utils.json_to_sheet(settingsRows), "Settings");
+
+      for (const entry of data.amcs) {
+        const exportRows = buildExportRows(entry, maDays, range, aumOnlyAveraging);
+        utils.book_append_sheet(workbook, utils.json_to_sheet(exportRows), entry.overviewName.slice(0, 31));
+      }
+
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      writeFileXLSX(workbook, `Stock_Correlation_${rangeLabel}_${dateStamp}.xlsx`);
+    } finally {
+      setIsDownloading(false);
     }
   }
 
@@ -450,6 +542,15 @@ export function StockCorrelationTable() {
             className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
             {isSaving ? "Saving…" : "Save as default"}
+          </button>
+          <button
+            type="button"
+            onClick={handleDownloadExcel}
+            disabled={isDownloading || !data}
+            title="Download all 8 AMCs' full AUM/share price history for the current period and settings, one sheet per AMC"
+            className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            {isDownloading ? "Preparing…" : "Download Excel"}
           </button>
         </div>
       </div>
