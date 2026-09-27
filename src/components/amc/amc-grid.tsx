@@ -842,6 +842,12 @@ export function AmcGrid({
               <TabsTrigger value="overview" className="after:bg-[var(--toolbar-accent)]">
                 Overview
               </TabsTrigger>
+              <TabsTrigger value="gold-silver-etfs" className="after:bg-[var(--toolbar-accent)]">
+                Gold &amp; Silver ETFs
+              </TabsTrigger>
+              <TabsTrigger value="amc-stock-correlation" className="after:bg-[var(--toolbar-accent)]">
+                Stock Correlation
+              </TabsTrigger>
               <TabsTrigger value="aum-growth" className="after:bg-[var(--toolbar-accent)]">
                 Equity AUM Growth
               </TabsTrigger>
@@ -853,12 +859,6 @@ export function AmcGrid({
               </TabsTrigger>
               <TabsTrigger value="cash-holdings" className="after:bg-[var(--toolbar-accent)]">
                 Cash Holdings
-              </TabsTrigger>
-              <TabsTrigger value="gold-silver-etfs" className="after:bg-[var(--toolbar-accent)]">
-                Gold &amp; Silver ETFs
-              </TabsTrigger>
-              <TabsTrigger value="amc-stock-correlation" className="after:bg-[var(--toolbar-accent)]">
-                Stock Correlation
               </TabsTrigger>
               <TabsTrigger value="backtest" className="after:bg-[var(--toolbar-accent)]">
                 Backtest
@@ -1202,6 +1202,12 @@ export function AmcGrid({
             <p className="mt-4 text-center text-sm text-muted-foreground">No AMCs match &quot;{query}&quot;.</p>
           )}
         </TabsContent>
+        <TabsContent value="gold-silver-etfs">
+          <EtfTable />
+        </TabsContent>
+        <TabsContent value="amc-stock-correlation">
+          <StockCorrelationTable />
+        </TabsContent>
         <TabsContent value="aum-growth">
           <AumGrowthTable topN={topN} />
         </TabsContent>
@@ -1213,12 +1219,6 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="cash-holdings">
           <CashHoldingsTable topN={topN} />
-        </TabsContent>
-        <TabsContent value="gold-silver-etfs">
-          <EtfTable />
-        </TabsContent>
-        <TabsContent value="amc-stock-correlation">
-          <StockCorrelationTable />
         </TabsContent>
         <TabsContent value="backtest">
           <BacktestPage />

@@ -895,6 +895,7 @@ export function StockCorrelationTable() {
             onMaDaysInputChange={setMaDaysInput}
             aumOnlyAveraging={aumOnlyAveraging}
             levelsCorrelation={levelsCorrelation}
+            showReportedAum={false}
           />
         )}
       </div>

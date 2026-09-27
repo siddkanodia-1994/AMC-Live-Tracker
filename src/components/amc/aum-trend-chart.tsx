@@ -73,11 +73,12 @@ function computeNiceTicks([lower, upper]: [number, number], count: number): numb
   return ticks.length >= 2 ? ticks : [lower, upper];
 }
 
-function computeYAxisDomain(data: AumHistoryPoint[]): [number, number] {
+function computeYAxisDomain(data: AumHistoryPoint[], includeReportedAum: boolean = true): [number, number] {
   let min = Infinity;
   let max = -Infinity;
   for (const point of data) {
-    for (const value of [point.liveAumCr, point.reportedAumCr]) {
+    const values = includeReportedAum ? [point.liveAumCr, point.reportedAumCr] : [point.liveAumCr];
+    for (const value of values) {
       if (typeof value === "number" && Number.isFinite(value)) {
         if (value < min) min = value;
         if (value > max) max = value;
@@ -246,6 +247,7 @@ export function AumTrendChart({
   onMaDaysInputChange,
   aumOnlyAveraging = false,
   levelsCorrelation = false,
+  showReportedAum = true,
 }: {
   data: AumHistoryPoint[];
   mode?: "absolute" | "change";
@@ -275,6 +277,12 @@ export function AumTrendChart({
   // false. Ratio view is untouched -- this only reaches Absolute view's
   // correlationStats, below.
   levelsCorrelation?: boolean;
+  // Hides the "Reported AUM" step-line in Absolute view. Defaults to true
+  // (shown) everywhere -- each AMC's own detail page and the homepage's
+  // industry-wide chart keep it as a validation reference against the live
+  // daily estimate. Only the Stock Correlation tab's chart passes false,
+  // since it's specifically about the AUM-vs-share-price relationship.
+  showReportedAum?: boolean;
 }) {
   const [showStockPrice, setShowStockPrice] = useState(true);
   // Which body/caption this chart currently renders -- "ratio" swaps the
@@ -364,7 +372,7 @@ export function AumTrendChart({
     [data, liveAumDisplayValues, stockPriceSeries, stockPriceDisplayValues]
   );
   const chartData = useMemo(() => filterByRange(fullChartData, range), [fullChartData, range]);
-  const yDomain = useMemo(() => computeYAxisDomain(chartData), [chartData]);
+  const yDomain = useMemo(() => computeYAxisDomain(chartData, showReportedAum), [chartData, showReportedAum]);
   const yTicks = useMemo(() => computeNiceTicks(yDomain, 5), [yDomain]);
   const tickDecimals = useMemo(() => computeTickDecimals(yDomain), [yDomain]);
   const changeSeries = useMemo(() => computeDailyChangeSeries(chartData), [chartData]);
@@ -914,15 +922,17 @@ export function AumTrendChart({
                   strokeWidth={2}
                   dot={{ r: 3 }}
                 />
-                <Line
-                  type="monotone"
-                  dataKey="reportedAumCr"
-                  name="Reported AUM"
-                  stroke="var(--color-muted-foreground)"
-                  strokeWidth={1.5}
-                  strokeDasharray="4 4"
-                  dot={{ r: 2 }}
-                />
+                {showReportedAum && (
+                  <Line
+                    type="monotone"
+                    dataKey="reportedAumCr"
+                    name="Reported AUM"
+                    stroke="var(--color-muted-foreground)"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 4"
+                    dot={{ r: 2 }}
+                  />
+                )}
                 {showStockPrice && (
                   <Line
                     yAxisId="stock"
