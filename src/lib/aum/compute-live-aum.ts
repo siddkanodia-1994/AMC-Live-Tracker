@@ -840,3 +840,22 @@ export async function computeLiveAumForAmc(
     pricesAreLive: result.snapshot.pricesAreLive,
   };
 }
+
+// Multi-AMC version of computeLiveAumForAmc, for the "Compare AMCs" tab --
+// shares the exact same getOrCompute() singleflight/TTL cache as every other
+// live-AUM read, so comparing 2-5 AMCs triggers zero extra DHAN calls beyond
+// whatever the first visitor of the day already paid for. Returns one entry
+// per requested slug, in the same order, `null` for any slug not found
+// (caller decides how to surface that, matching computeLiveAumForAmc's own
+// null-for-not-found convention rather than throwing).
+export async function computeLiveAumForAmcs(
+  slugs: string[],
+  options?: { forceRefresh?: boolean }
+): Promise<Array<{ amc: AmcLiveAum; holdings: HoldingLiveView[] } | null>> {
+  const result = await getOrCompute(options?.forceRefresh);
+  return slugs.map((slug) => {
+    const amc = result.snapshot.amcs.find((a) => a.slug === slug);
+    if (!amc) return null;
+    return { amc, holdings: result.holdingsByAmcId.get(amc.amcId) ?? [] };
+  });
+}

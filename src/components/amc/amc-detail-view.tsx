@@ -5,6 +5,7 @@ import { useLiveAumDetail, type AmcDetailResponse } from "@/hooks/use-live-aum-d
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { AmcSwitcher } from "./amc-switcher";
 import { AumTrendChart } from "./aum-trend-chart";
+import { CompareAmcsPanel } from "./compare-amcs-panel";
 import { HoldingsTable } from "./holdings-table";
 import { PeriodComparisonTable } from "./period-comparison-table";
 import { SectorBreakdown } from "./sector-breakdown";
@@ -182,6 +183,7 @@ export function AmcDetailView({
           <TabsTrigger value="holdings">Holdings</TabsTrigger>
           <TabsTrigger value="sectors">Sector Allocation</TabsTrigger>
           <TabsTrigger value="comparison">Period Comparison</TabsTrigger>
+          <TabsTrigger value="compare-amcs">Compare AMCs</TabsTrigger>
         </TabsList>
         <TabsContent value="holdings">
           {/* Full-bleed: this table has too many columns to fit inside the
@@ -201,6 +203,13 @@ export function AmcDetailView({
           <div className="relative left-1/2 right-1/2 -mx-[50vw] w-screen">
             <div className="mx-auto max-w-[1800px] px-4 sm:px-6">
               <PeriodComparisonTable slug={slug} />
+            </div>
+          </div>
+        </TabsContent>
+        <TabsContent value="compare-amcs">
+          <div className="relative left-1/2 right-1/2 -mx-[50vw] w-screen">
+            <div className="mx-auto max-w-[1800px] px-4 sm:px-6">
+              <CompareAmcsPanel anchorSlug={slug} switcherAmcs={switcherAmcs} />
             </div>
           </div>
         </TabsContent>
