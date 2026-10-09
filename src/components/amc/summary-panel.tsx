@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import type { Worksheet, Workbook } from "exceljs";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
@@ -555,9 +555,111 @@ function computeSipChartSeries(points: MonthlyFlowPoint[]) {
   });
 }
 
+// Population stddev (divide by n, not n-1) -- same math as
+// priceToAumRatioStats (src/lib/aum/series-math.ts), minus the AUM/price
+// pairing specifics, since this is already a single derived series (YoY%).
+function computeMeanSd(values: number[]): { mean: number; stdDev: number; n: number } | null {
+  if (values.length < 2) return null;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
+  return { mean, stdDev: Math.sqrt(variance), n: values.length };
+}
+
+const DOMAIN_PADDING_RATIO = 0.1;
+const FLAT_DOMAIN_PADDING_RATIO = 0.05;
+
+// Mirrors aum-trend-chart.tsx's own computeRatioYAxisDomain exactly, so the
+// control-line bands never get clipped off the visible plot area.
+function computeYAxisDomain(values: number[], refLineValues: number[]): [number, number] {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of [...values, ...refLineValues]) {
+    if (Number.isFinite(v)) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+  const range = max - min;
+  const padding = range > 0 ? range * DOMAIN_PADDING_RATIO : Math.max(Math.abs(max) * FLAT_DOMAIN_PADDING_RATIO, 0.0001);
+  return [min - padding, max + padding];
+}
+
+interface YoyBands {
+  mean: number;
+  plus1: number;
+  plus2: number;
+  minus1: number;
+  minus2: number;
+}
+
+// Hovering anywhere on the YoY chart shows the hovered point's own value
+// together with all 5 band levels, so there's always a direct read of where
+// that point sits relative to the bands (confirmed as the simpler
+// alternative to pixel-proximity line highlighting, which the existing
+// Ratio chart doesn't actually implement either).
+function YoyBandTooltip({
+  active,
+  payload,
+  label,
+  bands,
+}: {
+  active?: boolean;
+  payload?: ReadonlyArray<{ value?: unknown }>;
+  label?: string | number;
+  bands: YoyBands | null;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const value = payload[0]?.value;
+  return (
+    <div
+      className="rounded-md border px-2.5 py-2 text-xs shadow-sm"
+      style={{ backgroundColor: "var(--color-popover)", borderColor: "var(--color-border)", color: "var(--color-popover-foreground)" }}
+    >
+      <div className="mb-1 font-medium">{typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? "")}</div>
+      <div>SIP YoY: {typeof value === "number" ? formatPct(value, { alwaysSign: true }) : "—"}</div>
+      {bands && (
+        <div className="mt-1.5 space-y-0.5 border-t pt-1.5" style={{ borderColor: "var(--color-border)" }}>
+          <div style={{ color: "var(--color-red-600)" }}>+2 SD: {formatPct(bands.plus2, { alwaysSign: true })}</div>
+          <div style={{ color: "var(--color-red-400)" }}>+1 SD: {formatPct(bands.plus1, { alwaysSign: true })}</div>
+          <div style={{ color: "var(--color-muted-foreground)" }}>Mean: {formatPct(bands.mean, { alwaysSign: true })}</div>
+          <div style={{ color: "var(--color-emerald-400)" }}>-1 SD: {formatPct(bands.minus1, { alwaysSign: true })}</div>
+          <div style={{ color: "var(--color-emerald-600)" }}>-2 SD: {formatPct(bands.minus2, { alwaysSign: true })}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SipFlowChart({ points }: { points: MonthlyFlowPoint[] }) {
   const [mode, setMode] = useState<"abs" | "yoy">("abs");
   const series = useMemo(() => computeSipChartSeries(points), [points]);
+
+  const yoyValues = useMemo(
+    () => series.map((p) => p.sipYoyPct).filter((v): v is number => v !== null),
+    [series]
+  );
+  const yoyStats = useMemo(() => computeMeanSd(yoyValues), [yoyValues]);
+  const yoyBands: YoyBands | null = useMemo(
+    () =>
+      yoyStats
+        ? {
+            mean: yoyStats.mean,
+            plus1: yoyStats.mean + yoyStats.stdDev,
+            plus2: yoyStats.mean + 2 * yoyStats.stdDev,
+            minus1: yoyStats.mean - yoyStats.stdDev,
+            minus2: yoyStats.mean - 2 * yoyStats.stdDev,
+          }
+        : null,
+    [yoyStats]
+  );
+  const yoyDomain = useMemo(
+    () => computeYAxisDomain(yoyValues, yoyBands ? Object.values(yoyBands) : []),
+    [yoyValues, yoyBands]
+  );
+  const currentYoy = yoyValues.length > 0 ? yoyValues[yoyValues.length - 1] : null;
+  const yoyZScore =
+    yoyStats && currentYoy !== null && yoyStats.stdDev !== 0 ? (currentYoy - yoyStats.mean) / yoyStats.stdDev : null;
 
   if (series.length === 0) return null;
 
@@ -579,6 +681,16 @@ function SipFlowChart({ points }: { points: MonthlyFlowPoint[] }) {
             ))}
           </div>
         </div>
+        {mode === "yoy" && yoyStats && currentYoy !== null && yoyZScore !== null && (
+          <p className="text-xs text-muted-foreground">
+            Mean YoY {formatPct(yoyStats.mean, { alwaysSign: true })} · Current {formatPct(currentYoy, { alwaysSign: true })} ·{" "}
+            <span className={yoyZScore >= 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
+              Z-score {yoyZScore >= 0 ? "+" : ""}
+              {yoyZScore.toFixed(2)}σ
+            </span>{" "}
+            · {yoyStats.n} months
+          </p>
+        )}
       </CardHeader>
       <CardContent>
         <div className="h-80 w-full">
@@ -608,17 +720,46 @@ function SipFlowChart({ points }: { points: MonthlyFlowPoint[] }) {
               <LineChart data={series} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="date" tickFormatter={formatShortDateWithYear} tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} tickFormatter={(v: number) => formatPct(v, { alwaysSign: true })} width={60} />
-                <Tooltip
-                  labelFormatter={(label) => (typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? ""))}
-                  formatter={(value) => (typeof value === "number" ? formatPct(value, { alwaysSign: true }) : String(value))}
-                  contentStyle={{
-                    backgroundColor: "var(--color-popover)",
-                    borderColor: "var(--color-border)",
-                    color: "var(--color-popover-foreground)",
-                    fontSize: 12,
-                  }}
+                <YAxis
+                  domain={yoyDomain}
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={(v: number) => formatPct(v, { alwaysSign: true })}
+                  width={60}
                 />
+                <Tooltip content={(props) => <YoyBandTooltip {...props} bands={yoyBands} />} />
+                {yoyBands && (
+                  <>
+                    <ReferenceLine
+                      y={yoyBands.mean}
+                      stroke="var(--color-muted-foreground)"
+                      label={{ value: "Mean", position: "right", fontSize: 10, fill: "var(--color-muted-foreground)" }}
+                    />
+                    <ReferenceLine
+                      y={yoyBands.plus1}
+                      stroke="var(--color-red-400)"
+                      strokeDasharray="4 4"
+                      label={{ value: "+1 SD", position: "right", fontSize: 10, fill: "var(--color-red-400)" }}
+                    />
+                    <ReferenceLine
+                      y={yoyBands.plus2}
+                      stroke="var(--color-red-600)"
+                      strokeDasharray="4 4"
+                      label={{ value: "+2 SD", position: "right", fontSize: 10, fill: "var(--color-red-600)" }}
+                    />
+                    <ReferenceLine
+                      y={yoyBands.minus1}
+                      stroke="var(--color-emerald-400)"
+                      strokeDasharray="4 4"
+                      label={{ value: "-1 SD", position: "right", fontSize: 10, fill: "var(--color-emerald-400)" }}
+                    />
+                    <ReferenceLine
+                      y={yoyBands.minus2}
+                      stroke="var(--color-emerald-600)"
+                      strokeDasharray="4 4"
+                      label={{ value: "-2 SD", position: "right", fontSize: 10, fill: "var(--color-emerald-600)" }}
+                    />
+                  </>
+                )}
                 <Line type="monotone" dataKey="sipYoyPct" name="SIP YoY Change %" stroke="var(--color-primary)" strokeWidth={2} dot={false} connectNulls />
               </LineChart>
             )}

@@ -164,12 +164,14 @@ function clampToToday(end: string, today: string): string {
 function buildFinancialYearBlock(points: AumHistoryPoint[], today: string, mode: AumMode): FinancialYearRow[] {
   const cur = getFiscalYearBounds(today);
   const prev = getPreviousFiscalYearBounds(today);
+  const prevPrev = getPreviousFiscalYearBounds(prev.start);
   const curEnd = clampToToday(cur.end, today);
   const v0 = averageOrExitAum(points, cur.start, curEnd, mode);
   const v1 = averageOrExitAum(points, prev.start, prev.end, mode);
+  const v2 = averageOrExitAum(points, prevPrev.start, prevPrev.end, mode);
   return [
     { label: `FY ${cur.fy}`, valCr: v0, yoyPct: pctChange(v0, v1), range: [cur.start, curEnd] },
-    { label: `FY ${prev.fy}`, valCr: v1, range: [prev.start, prev.end] },
+    { label: `FY ${prev.fy}`, valCr: v1, yoyPct: pctChange(v1, v2), range: [prev.start, prev.end] },
   ];
 }
 

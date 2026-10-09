@@ -109,9 +109,11 @@ function sumsFor(points: MonthlyFlowPoint[], start: string, end: string) {
 function buildFinancialYearBlock(realPoints: MonthlyFlowPoint[], latestReal: string): FlowPeriodRow[] {
   const cur = getFiscalYearBounds(latestReal);
   const prev = getPreviousFiscalYearBounds(latestReal);
+  const prevPrev = getPreviousFiscalYearBounds(prev.start);
   const curEnd = clampToAnchor(cur.end, latestReal);
   const v0 = sumsFor(realPoints, cur.start, curEnd);
   const v1Full = sumsFor(realPoints, prev.start, prev.end);
+  const v2Full = sumsFor(realPoints, prevPrev.start, prevPrev.end);
 
   const samePeriodStart = subtractMonthsLocal(cur.start, 12);
   const samePeriodEnd = subtractMonthsLocal(curEnd, 12);
@@ -128,7 +130,12 @@ function buildFinancialYearBlock(realPoints: MonthlyFlowPoint[], latestReal: str
       label: `FY ${prev.fy} (Same Period)`, range: [samePeriodStart, samePeriodEnd],
       sip: v1Same.sip, netFlow: v1Same.netFlow, bulk: v1Same.bulk,
     },
-    { label: `FY ${prev.fy}`, range: [prev.start, prev.end], sip: v1Full.sip, netFlow: v1Full.netFlow, bulk: v1Full.bulk },
+    {
+      label: `FY ${prev.fy}`, range: [prev.start, prev.end],
+      sip: v1Full.sip, sipYoy: pctChange(v1Full.sip, v2Full.sip),
+      netFlow: v1Full.netFlow, netFlowYoy: pctChange(v1Full.netFlow, v2Full.netFlow),
+      bulk: v1Full.bulk, bulkYoy: pctChange(v1Full.bulk, v2Full.bulk),
+    },
   ];
 }
 
