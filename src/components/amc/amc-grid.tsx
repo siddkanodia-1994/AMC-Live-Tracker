@@ -16,6 +16,7 @@ import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-tabl
 import { SectoralHoldingsTable } from "./sectoral-holdings-table";
 import { EtfTable } from "@/components/etf/etf-table";
 import { StockCorrelationTable } from "./stock-correlation-table";
+import { SummaryPage } from "./summary-page";
 import { BacktestPage } from "./backtest-page";
 import { StockTab } from "@/components/stock/stock-tab";
 import { DailyDataTable } from "./daily-data-table";
@@ -848,6 +849,9 @@ export function AmcGrid({
               <TabsTrigger value="amc-stock-correlation" className="after:bg-[var(--toolbar-accent)]">
                 Stock Correlation
               </TabsTrigger>
+              <TabsTrigger value="summary" className="after:bg-[var(--toolbar-accent)]">
+                Summary
+              </TabsTrigger>
               <TabsTrigger value="aum-growth" className="after:bg-[var(--toolbar-accent)]">
                 Equity AUM Growth
               </TabsTrigger>
@@ -1207,6 +1211,9 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="amc-stock-correlation">
           <StockCorrelationTable />
+        </TabsContent>
+        <TabsContent value="summary">
+          <SummaryPage />
         </TabsContent>
         <TabsContent value="aum-growth">
           <AumGrowthTable topN={topN} />

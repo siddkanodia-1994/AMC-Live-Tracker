@@ -95,6 +95,35 @@ export interface FiscalQuarterOption {
   end: string;
 }
 
+// Public wrapper around fyQuarterNumber for callers that only have a date
+// string, not already-decomposed (quarterStartMonth, year) -- e.g. the
+// Summary tab's quarter-row labels.
+export function getFiscalYearAndQuarter(dateStr: string): { fy: number; q: number } {
+  const [year, month] = dateStr.split("-").map(Number);
+  return fyQuarterNumber(fiscalQuarterStartMonth(month), year);
+}
+
+export interface FiscalYearBounds {
+  start: string;
+  end: string;
+  fy: number;
+}
+
+// Indian fiscal year: 1 Apr - 31 Mar, named by the calendar year it ENDS in
+// (matches getFiscalQuarterBounds' own FY-naming convention) -- e.g. today
+// "2026-10-09" -> FY2027 (1 Apr 2026 - 31 Mar 2027). 31 Mar always exists
+// (not a leap-year-sensitive day), so no DAYS_IN_MONTH lookup needed here.
+export function getFiscalYearBounds(dateStr: string): FiscalYearBounds {
+  const [year, month] = dateStr.split("-").map(Number);
+  const fy = month >= 4 ? year + 1 : year;
+  return { start: `${fy - 1}-04-01`, end: `${fy}-03-31`, fy };
+}
+
+export function getPreviousFiscalYearBounds(dateStr: string): FiscalYearBounds {
+  const { start } = getFiscalYearBounds(dateStr);
+  return getFiscalYearBounds(`${Number(start.slice(0, 4)) - 1}-04-01`);
+}
+
 // Every Indian fiscal quarter overlapping [minDate, maxDate], oldest first --
 // for the Overview toolbar's quarter-picker dropdowns. Purely derived from
 // whatever data bounds are passed in (no hardcoded quarter list), so it
