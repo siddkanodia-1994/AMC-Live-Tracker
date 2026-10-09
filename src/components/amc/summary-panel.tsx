@@ -43,16 +43,29 @@ function ValCell({ value, italic = false }: { value: number | null; italic?: boo
   );
 }
 
+// Cell-fill coloring matching the uploaded Excel template exactly in light
+// mode (#C6EFCE/#006100 positive, #FFC7CE/#9C0006 negative); dark mode uses
+// an adapted darker/desaturated palette instead of those same pastels
+// (which would look blown-out against a dark background) -- confirmed via
+// an Artifact preview (light = exact Excel colors, dark = adapted) before
+// building. Applies uniformly everywhere PctCell is used (every block,
+// including the weekday-seasonality table), since it's the one shared cell
+// renderer for every percentage column in this tab.
 function PctCell({ value }: { value?: number | null }) {
   if (value === undefined) return <TableCell className="text-right tabular-nums" />;
   if (value === null) {
     return <TableCell className="text-right tabular-nums text-muted-foreground">{"—"}</TableCell>;
   }
+  const positive = value >= 0;
   return (
-    <TableCell className="text-right tabular-nums">
-      <span className={value >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
-        {formatPct(value, { alwaysSign: true })}
-      </span>
+    <TableCell
+      className={`text-right tabular-nums font-semibold ${
+        positive
+          ? "bg-[#C6EFCE] text-[#006100] dark:bg-[#0d3b2b] dark:text-[#6ee7b7]"
+          : "bg-[#FFC7CE] text-[#9C0006] dark:bg-[#4c1113] dark:text-[#fca5a5]"
+      }`}
+    >
+      {formatPct(value, { alwaysSign: true })}
     </TableCell>
   );
 }
