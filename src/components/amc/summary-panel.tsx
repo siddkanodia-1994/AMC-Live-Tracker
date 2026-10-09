@@ -5,7 +5,7 @@ import type { Worksheet, Workbook } from "exceljs";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { computeSummaryViewData, type AumMode, type SummaryViewData } from "@/lib/aum/summary-view";
-import { formatCr, formatPct } from "@/lib/utils/format";
+import { formatPct } from "@/lib/utils/format";
 import { getIstDateString } from "@/lib/utils/date";
 
 const amcSelectClass =
@@ -28,10 +28,17 @@ function RangeSub({ range }: { range?: [string | null, string | null] }) {
   return <div className="text-[10.5px] font-normal text-muted-foreground/70">{text}</div>;
 }
 
+// Whole crores, no decimals -- scoped to just this tab (per user request),
+// NOT the shared formatCr() used everywhere else in the app (Holdings,
+// Overview cards, Compare AMCs, etc. all keep their own 2-decimal display).
+function formatCrRounded(valueCr: number): string {
+  return `₹${Math.round(valueCr).toLocaleString("en-IN")} cr`;
+}
+
 function ValCell({ value, italic = false }: { value: number | null; italic?: boolean }) {
   return (
     <TableCell className={`text-right tabular-nums ${italic ? "italic text-muted-foreground" : ""}`}>
-      {value === null ? "—" : formatCr(value)}
+      {value === null ? "—" : formatCrRounded(value)}
     </TableCell>
   );
 }
@@ -67,7 +74,7 @@ function BannerRow({ cols }: { cols: [string, string, string, string] }) {
   );
 }
 
-const CR_FORMAT = '"₹"#,##0.00" cr"';
+const CR_FORMAT = '"₹"#,##0" cr"'; // whole crores, no decimals -- matches the web UI's own rounding
 const PCT_FORMAT = "0.00%";
 
 // Exact colors from the user's own uploaded reference template.
