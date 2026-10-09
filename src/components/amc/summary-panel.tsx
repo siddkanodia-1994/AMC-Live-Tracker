@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import type { Worksheet, Workbook } from "exceljs";
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { computeSummaryViewData, type AumMode, type SummaryViewData } from "@/lib/aum/summary-view";
 import { formatPct } from "@/lib/utils/format";
@@ -239,7 +239,218 @@ function saveWorkbookBuffer(buffer: ArrayBuffer | Uint8Array, filename: string):
   URL.revokeObjectURL(url);
 }
 
+// All 8 AMCs' Financial Year + Quarter blocks, transposed into columns so
+// AMCs can be compared side by side -- Month/Trading-window/Weekday blocks
+// are deliberately out of scope here (per the request). Pure rendering: the
+// exact same computeSummaryViewData already powering the per-AMC view above,
+// just called once per AMC instead of once for the dropdown's selection.
+type MatrixSortKey =
+  | "name"
+  | "fy0Total"
+  | "fy0Yoy"
+  | "fy1Total"
+  | "q0Val"
+  | "q0Qoq"
+  | "q0Yoy"
+  | "q1Val"
+  | "q1Qoq"
+  | "q1Yoy"
+  | "q2Val"
+  | "q3Val"
+  | "q4Val";
+
+const MATRIX_DEFAULT_SORT_KEY: MatrixSortKey = "q0Val";
+
+interface MatrixRow {
+  slug: string;
+  overviewName: string;
+  data: SummaryViewData;
+}
+
+function getMatrixSortValue(row: MatrixRow, key: MatrixSortKey): number | string | null {
+  const [fy0, fy1] = row.data.financialYear;
+  const [q0, q1, q2, q3, q4] = row.data.quarter;
+  switch (key) {
+    case "name":
+      return row.overviewName;
+    case "fy0Total":
+      return fy0?.valCr ?? null;
+    case "fy0Yoy":
+      return fy0?.yoyPct ?? null;
+    case "fy1Total":
+      return fy1?.valCr ?? null;
+    case "q0Val":
+      return q0?.valCr ?? null;
+    case "q0Qoq":
+      return q0?.qoqPct ?? null;
+    case "q0Yoy":
+      return q0?.yoyPct ?? null;
+    case "q1Val":
+      return q1?.valCr ?? null;
+    case "q1Qoq":
+      return q1?.qoqPct ?? null;
+    case "q1Yoy":
+      return q1?.yoyPct ?? null;
+    case "q2Val":
+      return q2?.valCr ?? null;
+    case "q3Val":
+      return q3?.valCr ?? null;
+    case "q4Val":
+      return q4?.valCr ?? null;
+  }
+}
+
+// Rows with a structurally-absent/missing value for the active column always
+// sort last, in either direction -- matches "there's nothing meaningful to
+// rank here" rather than arbitrarily treating a missing value as the lowest
+// or highest number.
+function compareMatrixRows(a: MatrixRow, b: MatrixRow, key: MatrixSortKey, desc: boolean): number {
+  const av = getMatrixSortValue(a, key);
+  const bv = getMatrixSortValue(b, key);
+  const aMissing = av === null || av === undefined;
+  const bMissing = bv === null || bv === undefined;
+  if (aMissing && bMissing) return 0;
+  if (aMissing) return 1;
+  if (bMissing) return -1;
+  if (typeof av === "string" && typeof bv === "string") {
+    return desc ? bv.localeCompare(av) : av.localeCompare(bv);
+  }
+  return desc ? (bv as number) - (av as number) : (av as number) - (bv as number);
+}
+
+// Mirrors holdings-table.tsx's own SortableHead/toggleSort exactly (3-click
+// cycle: new column -> desc, same column again -> asc, same column a third
+// time -> reset to the default sort) -- a local copy since that component is
+// private to holdings-table.tsx, not a shared export.
+function SortableHead({
+  label,
+  sk,
+  sortKey,
+  sortDesc,
+  onToggle,
+  className,
+}: {
+  label: string;
+  sk: MatrixSortKey;
+  sortKey: MatrixSortKey | null;
+  sortDesc: boolean;
+  onToggle: (key: MatrixSortKey) => void;
+  className?: string;
+}) {
+  const active = sk === sortKey;
+  return (
+    <TableHead className={className}>
+      <button type="button" onClick={() => onToggle(sk)} className="hover:text-foreground">
+        {label}
+        {active ? (sortDesc ? " ↓" : " ↑") : ""}
+      </button>
+    </TableHead>
+  );
+}
+
+function AllAmcsMatrix({ amcs, mode }: { amcs: AmcStockCorrelationEntry[]; mode: AumMode }) {
+  const [sortKey, setSortKey] = useState<MatrixSortKey | null>(null);
+  const [sortDesc, setSortDesc] = useState(true);
+
+  const matrixRows: MatrixRow[] = useMemo(() => {
+    const today = getIstDateString();
+    return amcs.map((a) => ({
+      slug: a.slug,
+      overviewName: a.overviewName,
+      data: computeSummaryViewData(a.aumHistory, mode, today),
+    }));
+  }, [amcs, mode]);
+
+  function toggleSort(key: MatrixSortKey) {
+    if (sortKey !== key) {
+      setSortKey(key);
+      setSortDesc(true);
+    } else if (sortDesc) {
+      setSortDesc(false);
+    } else {
+      setSortKey(null);
+      setSortDesc(true);
+    }
+  }
+
+  const sortedRows = useMemo(() => {
+    const key = sortKey ?? MATRIX_DEFAULT_SORT_KEY;
+    const desc = sortKey === null ? true : sortDesc;
+    return [...matrixRows].sort((a, b) => compareMatrixRows(a, b, key, desc));
+  }, [matrixRows, sortKey, sortDesc]);
+
+  if (matrixRows.length === 0) {
+    return <p className="text-sm text-muted-foreground">No AUM history available.</p>;
+  }
+
+  const headerRow = matrixRows[0].data;
+  const [fyLabel0, fyLabel1] = headerRow.financialYear.map((r) => r.label);
+  const [qLabel0, qLabel1, qLabel2, qLabel3, qLabel4] = headerRow.quarter.map((r) => r.label);
+  const headProps = { sortKey, sortDesc, onToggle: toggleSort };
+  const banner = "border-l border-background/20 text-center text-background";
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <Table>
+        <TableHeader>
+          <TableRow className="bg-foreground hover:bg-foreground">
+            <TableHead className="sticky left-0 z-10 bg-foreground" />
+            <TableHead colSpan={2} className={banner}>{fyLabel0}</TableHead>
+            <TableHead className={banner}>{fyLabel1}</TableHead>
+            <TableHead colSpan={3} className={banner}>{qLabel0}</TableHead>
+            <TableHead colSpan={3} className={banner}>{qLabel1}</TableHead>
+            <TableHead className={banner}>{qLabel2}</TableHead>
+            <TableHead className={banner}>{qLabel3}</TableHead>
+            <TableHead className={banner}>{qLabel4}</TableHead>
+          </TableRow>
+          <TableRow>
+            <SortableHead label="AMC" sk="name" {...headProps} className="sticky left-0 z-10 bg-card" />
+            <SortableHead label="Total" sk="fy0Total" {...headProps} className="border-l text-right" />
+            <SortableHead label="YoY" sk="fy0Yoy" {...headProps} className="text-right" />
+            <SortableHead label="Total" sk="fy1Total" {...headProps} className="border-l text-right" />
+            <SortableHead label="Val" sk="q0Val" {...headProps} className="border-l text-right" />
+            <SortableHead label="QoQ" sk="q0Qoq" {...headProps} className="text-right" />
+            <SortableHead label="YoY" sk="q0Yoy" {...headProps} className="text-right" />
+            <SortableHead label="Val" sk="q1Val" {...headProps} className="border-l text-right" />
+            <SortableHead label="QoQ" sk="q1Qoq" {...headProps} className="text-right" />
+            <SortableHead label="YoY" sk="q1Yoy" {...headProps} className="text-right" />
+            <SortableHead label="Val" sk="q2Val" {...headProps} className="border-l text-right" />
+            <SortableHead label="Val" sk="q3Val" {...headProps} className="border-l text-right" />
+            <SortableHead label="Val" sk="q4Val" {...headProps} className="border-l text-right" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {sortedRows.map((row) => {
+            const [fy0, fy1] = row.data.financialYear;
+            const [q0, q1, q2, q3, q4] = row.data.quarter;
+            return (
+              <TableRow key={row.slug} className="group">
+                <TableCell className="sticky left-0 z-10 bg-card font-medium group-hover:bg-muted/50">
+                  {row.overviewName}
+                </TableCell>
+                <ValCell value={fy0.valCr} />
+                <PctCell value={fy0.yoyPct} />
+                <ValCell value={fy1.valCr} />
+                <ValCell value={q0.valCr} />
+                <PctCell value={q0.qoqPct} />
+                <PctCell value={q0.yoyPct} />
+                <ValCell value={q1.valCr} />
+                <PctCell value={q1.qoqPct} />
+                <PctCell value={q1.yoyPct} />
+                <ValCell value={q2.valCr} />
+                <ValCell value={q3.valCr} />
+                <ValCell value={q4.valCr} />
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
+  const [view, setView] = useState<"single" | "all">("single");
   const [amcSlug, setAmcSlug] = useState("hdfc-mutual-fund");
   const [mode, setMode] = useState<AumMode>("average");
   const [isDownloading, setIsDownloading] = useState(false);
@@ -285,23 +496,37 @@ export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-4 rounded-lg border bg-card p-3">
-        <div className="flex items-center gap-2">
-          <label htmlFor="amc-summary-amc-select" className="text-xs text-muted-foreground">
-            AMC
-          </label>
-          <select
-            id="amc-summary-amc-select"
-            value={amcSlug}
-            onChange={(e) => setAmcSlug(e.target.value)}
-            className={amcSelectClass}
-          >
-            {amcs.map((a) => (
-              <option key={a.slug} value={a.slug}>
-                {a.overviewName}
-              </option>
-            ))}
-          </select>
+        <div className="flex items-center gap-1" role="group" aria-label="Summary view">
+          {(["single", "all"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setView(v)}
+              className={v === view ? segmentActive : segmentInactive}
+            >
+              {v === "single" ? "Single AMC" : "All AMCs"}
+            </button>
+          ))}
         </div>
+        {view === "single" && (
+          <div className="flex items-center gap-2">
+            <label htmlFor="amc-summary-amc-select" className="text-xs text-muted-foreground">
+              AMC
+            </label>
+            <select
+              id="amc-summary-amc-select"
+              value={amcSlug}
+              onChange={(e) => setAmcSlug(e.target.value)}
+              className={amcSelectClass}
+            >
+              {amcs.map((a) => (
+                <option key={a.slug} value={a.slug}>
+                  {a.overviewName}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="flex items-center gap-1" role="group" aria-label="AUM basis">
           {(["average", "exit"] as const).map((m) => (
             <button
@@ -330,7 +555,9 @@ export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
         </button>
       </div>
 
-      {!entry || !data ? (
+      {view === "all" ? (
+        <AllAmcsMatrix amcs={amcs} mode={mode} />
+      ) : !entry || !data ? (
         <p className="text-sm text-muted-foreground">No AUM history available for this AMC.</p>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">

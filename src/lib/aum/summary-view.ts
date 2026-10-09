@@ -222,8 +222,12 @@ function buildMonthBlock(points: AumHistoryPoint[], today: string, mode: AumMode
 
   let sixMonthsComplete = true;
   const sixVals: number[] = [];
-  for (let off = 1; off <= 6; off++) {
+  let sixStart = "";
+  let sixEnd = "";
+  for (let off = 6; off >= 1; off--) {
     const b = monthBounds(subtractMonths(today, off));
+    if (off === 6) sixStart = b.start;
+    if (off === 1) sixEnd = b.end;
     const v = averageOrExitAum(points, b.start, b.end, mode);
     if (v === null) sixMonthsComplete = false;
     else sixVals.push(v);
@@ -245,7 +249,7 @@ function buildMonthBlock(points: AumHistoryPoint[], today: string, mode: AumMode
       range: [prevB.start, prevB.end],
     },
     { label: label(twoBackB), valCr: v2, range: [twoBackB.start, twoBackB.end] },
-    { label: "Avg Of Last 6 Months", valCr: v3 },
+    { label: "Avg Of Last 6 Months", valCr: v3, range: [sixStart, sixEnd] },
   ];
 }
 
