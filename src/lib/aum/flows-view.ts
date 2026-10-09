@@ -20,19 +20,25 @@ type FlowMetricKey = "sipContributionsCr" | "equityNetFlowsCr" | "equityBulkFlow
 // ("--"), number = a real value. `estimated` flags a row whose total
 // includes the one rolling placeholder month (see computeFlowsViewData) --
 // never set on a row built entirely from real, entered data.
+//
+// `chg1`/`chg2` are deliberately generic (not named "Qoq"/"Yoy") -- each
+// block gives them its own real meaning via its own banner header
+// (QoQ/YoY for the Quarter block, YoY/"vs Avg 6M" for the Month block, just
+// YoY in `chg2` for the Financial Year block) rather than the field name
+// itself, since the same two slots mean different things per block.
 export interface FlowPeriodRow {
   label: string;
   range: [string, string];
   estimated?: boolean;
   sip: number | null;
-  sipQoq?: number | null;
-  sipYoy?: number | null;
+  sipChg1?: number | null;
+  sipChg2?: number | null;
   netFlow: number | null;
-  netFlowQoq?: number | null;
-  netFlowYoy?: number | null;
+  netFlowChg1?: number | null;
+  netFlowChg2?: number | null;
   bulk: number | null;
-  bulkQoq?: number | null;
-  bulkYoy?: number | null;
+  bulkChg1?: number | null;
+  bulkChg2?: number | null;
 }
 
 export interface FlowsViewData {
@@ -122,9 +128,9 @@ function buildFinancialYearBlock(realPoints: MonthlyFlowPoint[], latestReal: str
   return [
     {
       label: `FY ${cur.fy}`, range: [cur.start, curEnd],
-      sip: v0.sip, sipYoy: pctChange(v0.sip, v1Same.sip),
-      netFlow: v0.netFlow, netFlowYoy: pctChange(v0.netFlow, v1Same.netFlow),
-      bulk: v0.bulk, bulkYoy: pctChange(v0.bulk, v1Same.bulk),
+      sip: v0.sip, sipChg2: pctChange(v0.sip, v1Same.sip),
+      netFlow: v0.netFlow, netFlowChg2: pctChange(v0.netFlow, v1Same.netFlow),
+      bulk: v0.bulk, bulkChg2: pctChange(v0.bulk, v1Same.bulk),
     },
     {
       label: `FY ${prev.fy} (Same Period)`, range: [samePeriodStart, samePeriodEnd],
@@ -132,9 +138,9 @@ function buildFinancialYearBlock(realPoints: MonthlyFlowPoint[], latestReal: str
     },
     {
       label: `FY ${prev.fy}`, range: [prev.start, prev.end],
-      sip: v1Full.sip, sipYoy: pctChange(v1Full.sip, v2Full.sip),
-      netFlow: v1Full.netFlow, netFlowYoy: pctChange(v1Full.netFlow, v2Full.netFlow),
-      bulk: v1Full.bulk, bulkYoy: pctChange(v1Full.bulk, v2Full.bulk),
+      sip: v1Full.sip, sipChg2: pctChange(v1Full.sip, v2Full.sip),
+      netFlow: v1Full.netFlow, netFlowChg2: pctChange(v1Full.netFlow, v2Full.netFlow),
+      bulk: v1Full.bulk, bulkChg2: pctChange(v1Full.bulk, v2Full.bulk),
     },
   ];
 }
@@ -168,15 +174,15 @@ function buildQuarterBlock(points: MonthlyFlowPoint[], anchor: string, estimated
   return [
     {
       label: label(q0), range: [q0.start, q0End], estimated: q0Estimated,
-      sip: v0.sip, sipQoq: pctChange(v0.sip, v1.sip), sipYoy: pctChange(v0.sip, vY0.sip),
-      netFlow: v0.netFlow, netFlowQoq: pctChange(v0.netFlow, v1.netFlow), netFlowYoy: pctChange(v0.netFlow, vY0.netFlow),
-      bulk: v0.bulk, bulkQoq: pctChange(v0.bulk, v1.bulk), bulkYoy: pctChange(v0.bulk, vY0.bulk),
+      sip: v0.sip, sipChg1: pctChange(v0.sip, v1.sip), sipChg2: pctChange(v0.sip, vY0.sip),
+      netFlow: v0.netFlow, netFlowChg1: pctChange(v0.netFlow, v1.netFlow), netFlowChg2: pctChange(v0.netFlow, vY0.netFlow),
+      bulk: v0.bulk, bulkChg1: pctChange(v0.bulk, v1.bulk), bulkChg2: pctChange(v0.bulk, vY0.bulk),
     },
     {
       label: label(q1), range: [q1.start, q1.end],
-      sip: v1.sip, sipQoq: pctChange(v1.sip, v2.sip), sipYoy: pctChange(v1.sip, vY1.sip),
-      netFlow: v1.netFlow, netFlowQoq: pctChange(v1.netFlow, v2.netFlow), netFlowYoy: pctChange(v1.netFlow, vY1.netFlow),
-      bulk: v1.bulk, bulkQoq: pctChange(v1.bulk, v2.bulk), bulkYoy: pctChange(v1.bulk, vY1.bulk),
+      sip: v1.sip, sipChg1: pctChange(v1.sip, v2.sip), sipChg2: pctChange(v1.sip, vY1.sip),
+      netFlow: v1.netFlow, netFlowChg1: pctChange(v1.netFlow, v2.netFlow), netFlowChg2: pctChange(v1.netFlow, vY1.netFlow),
+      bulk: v1.bulk, bulkChg1: pctChange(v1.bulk, v2.bulk), bulkChg2: pctChange(v1.bulk, vY1.bulk),
     },
     { label: label(q2), range: [q2.start, q2.end], sip: v2.sip, netFlow: v2.netFlow, bulk: v2.bulk },
     { label: label(yoy0), range: [yoy0.start, yoy0.end], sip: vY0.sip, netFlow: vY0.netFlow, bulk: vY0.bulk },
@@ -184,24 +190,31 @@ function buildQuarterBlock(points: MonthlyFlowPoint[], anchor: string, estimated
   ];
 }
 
-// Same 4-row shape as summary-view.ts's buildMonthBlock, computed over REAL
-// + the one rolling placeholder month. Two deliberate differences from the
-// AUM version: (1) "Average Of Last 6 Months" stays an AVERAGE (not a sum)
-// because it's a comparison BASELINE for a single month, not a period total
-// -- comparing one month's sum against a 6-month sum would be apples-to-
-// oranges (confirmed in this round's preview, which showed nonsensical
-// -80%+ swings before this fix); (2) that 6-month window is always built
-// from real months only (off 1-6 relative to the anchor never reaches the
-// placeholder, which sits exactly at off 0).
+// 5 rows, computed over REAL + the one rolling placeholder month: current
+// month, prior month (both get their own YoY, vs. the same calendar month
+// one year back -- rows 3/4 below -- plus "vs Avg 6M"), then the two YoY
+// base months as their own visible rows (context only, same convention as
+// buildQuarterBlock's own YoY-anchor rows), then the 6-month average.
+// Confirmed design: no more MoM / no more "2-back month" context row --
+// once the comparison is YoY instead of month-over-month, the 2-back month
+// has no remaining purpose. "Average Of Last 6 Months" stays an AVERAGE
+// (not a sum) because it's a comparison BASELINE for a single month, not a
+// period total -- comparing one month's sum against a 6-month sum would be
+// apples-to-oranges (confirmed in an earlier round, which showed
+// nonsensical -80%+ swings before this fix); that 6-month window is always
+// built from real months only (off 1-6 relative to the anchor never
+// reaches the placeholder, which sits exactly at off 0).
 function buildMonthBlock(points: MonthlyFlowPoint[], anchor: string, estimatedMonth: string | null): FlowPeriodRow[] {
   const cur = monthBounds(anchor);
   const prevB = monthBounds(subtractMonthsLocal(anchor, 1));
-  const twoBackB = monthBounds(subtractMonthsLocal(anchor, 2));
+  const yoy0B = monthBounds(subtractMonthsLocal(anchor, 12));
+  const yoy1B = monthBounds(subtractMonthsLocal(anchor, 13));
   const curEstimated = estimatedMonth !== null && estimatedMonth >= cur.start && estimatedMonth <= cur.end;
 
   const v0 = sumsFor(points, cur.start, cur.end);
   const v1 = sumsFor(points, prevB.start, prevB.end);
-  const v2 = sumsFor(points, twoBackB.start, twoBackB.end);
+  const vYoy0 = sumsFor(points, yoy0B.start, yoy0B.end);
+  const vYoy1 = sumsFor(points, yoy1B.start, yoy1B.end);
 
   let sixComplete = true;
   const sixVals: ReturnType<typeof sumsFor>[] = [];
@@ -231,17 +244,18 @@ function buildMonthBlock(points: MonthlyFlowPoint[], anchor: string, estimatedMo
   return [
     {
       label: label(cur), range: [cur.start, cur.end], estimated: curEstimated,
-      sip: v0.sip, sipQoq: pctChange(v0.sip, v1.sip), sipYoy: pctChange(v0.sip, avg6.sip),
-      netFlow: v0.netFlow, netFlowQoq: pctChange(v0.netFlow, v1.netFlow), netFlowYoy: pctChange(v0.netFlow, avg6.netFlow),
-      bulk: v0.bulk, bulkQoq: pctChange(v0.bulk, v1.bulk), bulkYoy: pctChange(v0.bulk, avg6.bulk),
+      sip: v0.sip, sipChg1: pctChange(v0.sip, vYoy0.sip), sipChg2: pctChange(v0.sip, avg6.sip),
+      netFlow: v0.netFlow, netFlowChg1: pctChange(v0.netFlow, vYoy0.netFlow), netFlowChg2: pctChange(v0.netFlow, avg6.netFlow),
+      bulk: v0.bulk, bulkChg1: pctChange(v0.bulk, vYoy0.bulk), bulkChg2: pctChange(v0.bulk, avg6.bulk),
     },
     {
       label: label(prevB), range: [prevB.start, prevB.end],
-      sip: v1.sip, sipQoq: pctChange(v1.sip, v2.sip), sipYoy: pctChange(v1.sip, avg6.sip),
-      netFlow: v1.netFlow, netFlowQoq: pctChange(v1.netFlow, v2.netFlow), netFlowYoy: pctChange(v1.netFlow, avg6.netFlow),
-      bulk: v1.bulk, bulkQoq: pctChange(v1.bulk, v2.bulk), bulkYoy: pctChange(v1.bulk, avg6.bulk),
+      sip: v1.sip, sipChg1: pctChange(v1.sip, vYoy1.sip), sipChg2: pctChange(v1.sip, avg6.sip),
+      netFlow: v1.netFlow, netFlowChg1: pctChange(v1.netFlow, vYoy1.netFlow), netFlowChg2: pctChange(v1.netFlow, avg6.netFlow),
+      bulk: v1.bulk, bulkChg1: pctChange(v1.bulk, vYoy1.bulk), bulkChg2: pctChange(v1.bulk, avg6.bulk),
     },
-    { label: label(twoBackB), range: [twoBackB.start, twoBackB.end], sip: v2.sip, netFlow: v2.netFlow, bulk: v2.bulk },
+    { label: label(yoy0B), range: [yoy0B.start, yoy0B.end], sip: vYoy0.sip, netFlow: vYoy0.netFlow, bulk: vYoy0.bulk },
+    { label: label(yoy1B), range: [yoy1B.start, yoy1B.end], sip: vYoy1.sip, netFlow: vYoy1.netFlow, bulk: vYoy1.bulk },
     { label: "Average Of Last 6 Months", range: [sixStart, sixEnd], sip: avg6.sip, netFlow: avg6.netFlow, bulk: avg6.bulk },
   ];
 }

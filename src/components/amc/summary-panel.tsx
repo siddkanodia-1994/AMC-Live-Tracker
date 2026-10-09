@@ -455,7 +455,7 @@ function AllAmcsMatrix({ amcs, mode }: { amcs: AmcStockCorrelationEntry[]; mode:
 
 // One combined table -- Financial Year / Quarter / Month blocks stacked,
 // SIP Contributions / Net Flows / Bulk Flows as grouped column-triples
-// (Val/Chg1/Chg2, where Chg1/Chg2 mean QoQ/YoY for Quarter, MoM/vs-6M-avg
+// (Val/Chg1/Chg2, where Chg1/Chg2 mean QoQ/YoY for Quarter, YoY/vs-6M-avg
 // for Month, and only Chg2=YoY for Financial Year -- Chg1 stays blank there,
 // same "pad to a shared column count" convention the left panel already
 // uses for its own Financial Year block). Sticky label column + horizontal
@@ -499,14 +499,14 @@ function FlowDataRow({ row }: { row: FlowPeriodRow }) {
         <RangeSub range={row.range} />
       </TableCell>
       <ValCell value={row.sip} />
-      <PctCell value={row.sipQoq} />
-      <PctCell value={row.sipYoy} />
+      <PctCell value={row.sipChg1} />
+      <PctCell value={row.sipChg2} />
       <ValCell value={row.netFlow} />
-      <PctCell value={row.netFlowQoq} />
-      <PctCell value={row.netFlowYoy} />
+      <PctCell value={row.netFlowChg1} />
+      <PctCell value={row.netFlowChg2} />
       <ValCell value={row.bulk} />
-      <PctCell value={row.bulkQoq} />
-      <PctCell value={row.bulkYoy} />
+      <PctCell value={row.bulkChg1} />
+      <PctCell value={row.bulkChg2} />
     </TableRow>
   );
 }
@@ -534,7 +534,7 @@ function FlowsPanel({ points }: { points: MonthlyFlowPoint[] }) {
           ))}
         </TableBody>
         <TableBody>
-          <FlowGroupBanner periodLabel="Month" chg1Label="MoM" chg2Label="vs Avg 6M" />
+          <FlowGroupBanner periodLabel="Month" chg1Label="YoY" chg2Label="vs Avg 6M" />
           {data.month.map((r, i) => (
             <FlowDataRow key={`${r.label}-${i}`} row={r} />
           ))}
@@ -544,14 +544,26 @@ function FlowsPanel({ points }: { points: MonthlyFlowPoint[] }) {
   );
 }
 
-const SIP_LOOKBACK_MONTHS = 12; // one row per calendar month, so a plain index offset is YoY
+const FLOW_CHART_LOOKBACK_MONTHS = 12; // one row per calendar month, so a plain index offset is YoY
 
-function computeSipChartSeries(points: MonthlyFlowPoint[]) {
+type FlowChartMetric = "sip" | "netFlow";
+
+const FLOW_CHART_METRIC_LABEL: Record<FlowChartMetric, string> = {
+  sip: "SIP Contributions",
+  netFlow: "Equity Net Flows",
+};
+
+function flowChartMetricValue(p: MonthlyFlowPoint, metric: FlowChartMetric): number {
+  return metric === "sip" ? p.sipContributionsCr : p.equityNetFlowsCr;
+}
+
+function computeFlowChartSeries(points: MonthlyFlowPoint[], metric: FlowChartMetric) {
   const sorted = [...points].sort((a, b) => (a.monthEndDate < b.monthEndDate ? -1 : 1));
   return sorted.map((p, i) => {
-    const base = i >= SIP_LOOKBACK_MONTHS ? sorted[i - SIP_LOOKBACK_MONTHS].sipContributionsCr : null;
-    const yoyPct = base && base !== 0 ? p.sipContributionsCr / base - 1 : null;
-    return { date: p.monthEndDate, sip: p.sipContributionsCr, sipYoyPct: yoyPct };
+    const base = i >= FLOW_CHART_LOOKBACK_MONTHS ? flowChartMetricValue(sorted[i - FLOW_CHART_LOOKBACK_MONTHS], metric) : null;
+    const value = flowChartMetricValue(p, metric);
+    const yoyPct = base && base !== 0 ? value / base - 1 : null;
+    return { date: p.monthEndDate, value, yoyPct };
   });
 }
 
@@ -603,11 +615,13 @@ function YoyBandTooltip({
   payload,
   label,
   bands,
+  metricLabel,
 }: {
   active?: boolean;
   payload?: ReadonlyArray<{ value?: unknown }>;
   label?: string | number;
   bands: YoyBands | null;
+  metricLabel: string;
 }) {
   if (!active || !payload || payload.length === 0) return null;
   const value = payload[0]?.value;
@@ -617,7 +631,7 @@ function YoyBandTooltip({
       style={{ backgroundColor: "var(--color-popover)", borderColor: "var(--color-border)", color: "var(--color-popover-foreground)" }}
     >
       <div className="mb-1 font-medium">{typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? "")}</div>
-      <div>SIP YoY: {typeof value === "number" ? formatPct(value, { alwaysSign: true }) : "—"}</div>
+      <div>{metricLabel} YoY: {typeof value === "number" ? formatPct(value, { alwaysSign: true }) : "—"}</div>
       {bands && (
         <div className="mt-1.5 space-y-0.5 border-t pt-1.5" style={{ borderColor: "var(--color-border)" }}>
           <div style={{ color: "var(--color-red-600)" }}>+2 SD: {formatPct(bands.plus2, { alwaysSign: true })}</div>
@@ -631,12 +645,14 @@ function YoyBandTooltip({
   );
 }
 
-function SipFlowChart({ points }: { points: MonthlyFlowPoint[] }) {
+function FlowTrendChart({ points }: { points: MonthlyFlowPoint[] }) {
+  const [metric, setMetric] = useState<FlowChartMetric>("sip");
   const [mode, setMode] = useState<"abs" | "yoy">("abs");
-  const series = useMemo(() => computeSipChartSeries(points), [points]);
+  const metricLabel = FLOW_CHART_METRIC_LABEL[metric];
+  const series = useMemo(() => computeFlowChartSeries(points, metric), [points, metric]);
 
   const yoyValues = useMemo(
-    () => series.map((p) => p.sipYoyPct).filter((v): v is number => v !== null),
+    () => series.map((p) => p.yoyPct).filter((v): v is number => v !== null),
     [series]
   );
   const yoyStats = useMemo(() => computeMeanSd(yoyValues), [yoyValues]);
@@ -667,18 +683,32 @@ function SipFlowChart({ points }: { points: MonthlyFlowPoint[] }) {
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>SIP Contributions Trend</CardTitle>
-          <div className="flex items-center gap-1" role="group" aria-label="Chart mode">
-            {(["abs", "yoy"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                className={m === mode ? segmentActive : segmentInactive}
-              >
-                {m === "abs" ? "Absolute" : "YoY Change %"}
-              </button>
-            ))}
+          <CardTitle>{metricLabel} Trend</CardTitle>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1" role="group" aria-label="Chart metric">
+              {(["sip", "netFlow"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMetric(m)}
+                  className={m === metric ? segmentActive : segmentInactive}
+                >
+                  {FLOW_CHART_METRIC_LABEL[m]}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1" role="group" aria-label="Chart mode">
+              {(["abs", "yoy"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={m === mode ? segmentActive : segmentInactive}
+                >
+                  {m === "abs" ? "Absolute" : "YoY Change %"}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         {mode === "yoy" && yoyStats && currentYoy !== null && yoyZScore !== null && (
@@ -714,7 +744,7 @@ function SipFlowChart({ points }: { points: MonthlyFlowPoint[] }) {
                     fontSize: 12,
                   }}
                 />
-                <Line type="monotone" dataKey="sip" name="SIP Contributions" stroke="var(--color-primary)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="value" name={metricLabel} stroke="var(--color-primary)" strokeWidth={2} dot={false} />
               </LineChart>
             ) : (
               <LineChart data={series} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
@@ -726,7 +756,7 @@ function SipFlowChart({ points }: { points: MonthlyFlowPoint[] }) {
                   tickFormatter={(v: number) => formatPct(v, { alwaysSign: true })}
                   width={60}
                 />
-                <Tooltip content={(props) => <YoyBandTooltip {...props} bands={yoyBands} />} />
+                <Tooltip content={(props) => <YoyBandTooltip {...props} bands={yoyBands} metricLabel={metricLabel} />} />
                 {yoyBands && (
                   <>
                     <ReferenceLine
@@ -760,7 +790,7 @@ function SipFlowChart({ points }: { points: MonthlyFlowPoint[] }) {
                     />
                   </>
                 )}
-                <Line type="monotone" dataKey="sipYoyPct" name="SIP YoY Change %" stroke="var(--color-primary)" strokeWidth={2} dot={false} connectNulls />
+                <Line type="monotone" dataKey="yoyPct" name={`${metricLabel} YoY Change %`} stroke="var(--color-primary)" strokeWidth={2} dot={false} connectNulls />
               </LineChart>
             )}
           </ResponsiveContainer>
@@ -1007,7 +1037,7 @@ export function SummaryPanel({
         </div>
       )}
 
-      {flowsPoints && flowsPoints.length > 0 && <SipFlowChart points={flowsPoints} />}
+      {flowsPoints && flowsPoints.length > 0 && <FlowTrendChart points={flowsPoints} />}
     </div>
   );
 }
