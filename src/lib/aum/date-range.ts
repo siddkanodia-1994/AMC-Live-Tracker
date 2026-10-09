@@ -12,10 +12,18 @@ export const RANGE_OPTIONS: { value: RangeOption; label: string; months: number 
   { value: "all", label: "All", months: null },
 ];
 
+// Pure year/month arithmetic, not JS Date month-rollover (`setUTCMonth`
+// silently overflows into the next month when the source day doesn't exist
+// in the target month -- e.g. Oct 31 minus 1 month landed back on Oct 1
+// instead of Sep 30). Clamps the day to the target month's real last day.
 export function subtractMonths(dateStr: string, months: number): string {
-  const d = new Date(`${dateStr}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() - months);
-  return d.toISOString().slice(0, 10);
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const totalMonths = y * 12 + (m - 1) - months;
+  const newY = Math.floor(totalMonths / 12);
+  const newM0 = ((totalMonths % 12) + 12) % 12;
+  const lastDayOfNewMonth = new Date(Date.UTC(newY, newM0 + 1, 0)).getUTCDate();
+  const newD = Math.min(d, lastDayOfNewMonth);
+  return `${newY}-${String(newM0 + 1).padStart(2, "0")}-${String(newD).padStart(2, "0")}`;
 }
 
 // The cutoff date `filterByRange` would use for this exact series, measured

@@ -2,10 +2,14 @@
 
 import { Fragment, useMemo, useState } from "react";
 import type { Worksheet, Workbook } from "exceljs";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
+import type { MonthlyFlowPoint } from "@/lib/aum/industry-flows";
+import { computeFlowsViewData, type FlowPeriodRow } from "@/lib/aum/flows-view";
 import { computeSummaryViewData, type AumMode, type SummaryViewData } from "@/lib/aum/summary-view";
-import { formatPct } from "@/lib/utils/format";
+import { formatPct, formatShortDateWithYear } from "@/lib/utils/format";
 import { getIstDateString } from "@/lib/utils/date";
 
 const amcSelectClass =
@@ -449,11 +453,194 @@ function AllAmcsMatrix({ amcs, mode }: { amcs: AmcStockCorrelationEntry[]; mode:
   );
 }
 
-export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
+// One combined table -- Financial Year / Quarter / Month blocks stacked,
+// SIP Contributions / Net Flows / Bulk Flows as grouped column-triples
+// (Val/Chg1/Chg2, where Chg1/Chg2 mean QoQ/YoY for Quarter, MoM/vs-6M-avg
+// for Month, and only Chg2=YoY for Financial Year -- Chg1 stays blank there,
+// same "pad to a shared column count" convention the left panel already
+// uses for its own Financial Year block). Sticky label column + horizontal
+// scroll, matching the already-shipped "All AMCs" matrix, since the 10 data
+// columns don't fit in half the tab's width.
+function FlowGroupBanner({ periodLabel, chg1Label, chg2Label }: { periodLabel: string; chg1Label: string; chg2Label: string }) {
+  return (
+    <>
+      <TableRow className="bg-foreground hover:bg-foreground">
+        <TableCell className="sticky left-0 z-10 bg-foreground font-semibold text-background">{periodLabel}</TableCell>
+        <TableCell colSpan={3} className="border-l border-background/20 text-center font-semibold text-background">
+          SIP Contributions
+        </TableCell>
+        <TableCell colSpan={3} className="border-l border-background/20 text-center font-semibold text-background">
+          Net Flows
+        </TableCell>
+        <TableCell colSpan={3} className="border-l border-background/20 text-center font-semibold text-background">
+          Bulk Flows
+        </TableCell>
+      </TableRow>
+      <TableRow className="hover:bg-transparent">
+        <TableCell className="sticky left-0 z-10 bg-card" />
+        {[0, 1, 2].map((i) => (
+          <Fragment key={i}>
+            <TableCell className="border-l text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Val</TableCell>
+            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">{chg1Label}</TableCell>
+            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">{chg2Label}</TableCell>
+          </Fragment>
+        ))}
+      </TableRow>
+    </>
+  );
+}
+
+function FlowDataRow({ row }: { row: FlowPeriodRow }) {
+  return (
+    <TableRow className="group">
+      <TableCell className="sticky left-0 z-10 bg-card font-medium group-hover:bg-muted/50">
+        {row.label}
+        {row.estimated && <span className="ml-1.5 text-[10px] font-normal italic text-muted-foreground">(Est.)</span>}
+        <RangeSub range={row.range} />
+      </TableCell>
+      <ValCell value={row.sip} />
+      <PctCell value={row.sipQoq} />
+      <PctCell value={row.sipYoy} />
+      <ValCell value={row.netFlow} />
+      <PctCell value={row.netFlowQoq} />
+      <PctCell value={row.netFlowYoy} />
+      <ValCell value={row.bulk} />
+      <PctCell value={row.bulkQoq} />
+      <PctCell value={row.bulkYoy} />
+    </TableRow>
+  );
+}
+
+function FlowsPanel({ points }: { points: MonthlyFlowPoint[] }) {
+  const data = useMemo(() => computeFlowsViewData(points), [points]);
+
+  if (points.length === 0) {
+    return <p className="p-4 text-sm text-muted-foreground">No industry flow data available yet.</p>;
+  }
+
+  return (
+    <div className="overflow-hidden">
+      <Table>
+        <TableBody>
+          <FlowGroupBanner periodLabel="Financial Year" chg1Label="" chg2Label="YoY" />
+          {data.financialYear.map((r) => (
+            <FlowDataRow key={r.label} row={r} />
+          ))}
+        </TableBody>
+        <TableBody>
+          <FlowGroupBanner periodLabel="Quarter" chg1Label="QoQ" chg2Label="YoY" />
+          {data.quarter.map((r) => (
+            <FlowDataRow key={r.label} row={r} />
+          ))}
+        </TableBody>
+        <TableBody>
+          <FlowGroupBanner periodLabel="Month" chg1Label="MoM" chg2Label="vs Avg 6M" />
+          {data.month.map((r, i) => (
+            <FlowDataRow key={`${r.label}-${i}`} row={r} />
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+const SIP_LOOKBACK_MONTHS = 12; // one row per calendar month, so a plain index offset is YoY
+
+function computeSipChartSeries(points: MonthlyFlowPoint[]) {
+  const sorted = [...points].sort((a, b) => (a.monthEndDate < b.monthEndDate ? -1 : 1));
+  return sorted.map((p, i) => {
+    const base = i >= SIP_LOOKBACK_MONTHS ? sorted[i - SIP_LOOKBACK_MONTHS].sipContributionsCr : null;
+    const yoyPct = base && base !== 0 ? p.sipContributionsCr / base - 1 : null;
+    return { date: p.monthEndDate, sip: p.sipContributionsCr, sipYoyPct: yoyPct };
+  });
+}
+
+function SipFlowChart({ points }: { points: MonthlyFlowPoint[] }) {
+  const [mode, setMode] = useState<"abs" | "yoy">("abs");
+  const series = useMemo(() => computeSipChartSeries(points), [points]);
+
+  if (series.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>SIP Contributions Trend</CardTitle>
+          <div className="flex items-center gap-1" role="group" aria-label="Chart mode">
+            {(["abs", "yoy"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={m === mode ? segmentActive : segmentInactive}
+              >
+                {m === "abs" ? "Absolute" : "YoY Change %"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="h-80 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            {mode === "abs" ? (
+              <LineChart data={series} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="date" tickFormatter={formatShortDateWithYear} tick={{ fontSize: 12 }} />
+                <YAxis
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={(v: number) => formatCrRounded(v)}
+                  width={80}
+                />
+                <Tooltip
+                  labelFormatter={(label) => (typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? ""))}
+                  formatter={(value) => (typeof value === "number" ? formatCrRounded(value) : String(value))}
+                  contentStyle={{
+                    backgroundColor: "var(--color-popover)",
+                    borderColor: "var(--color-border)",
+                    color: "var(--color-popover-foreground)",
+                    fontSize: 12,
+                  }}
+                />
+                <Line type="monotone" dataKey="sip" name="SIP Contributions" stroke="var(--color-primary)" strokeWidth={2} dot={false} />
+              </LineChart>
+            ) : (
+              <LineChart data={series} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="date" tickFormatter={formatShortDateWithYear} tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} tickFormatter={(v: number) => formatPct(v, { alwaysSign: true })} width={60} />
+                <Tooltip
+                  labelFormatter={(label) => (typeof label === "string" ? formatShortDateWithYear(label) : String(label ?? ""))}
+                  formatter={(value) => (typeof value === "number" ? formatPct(value, { alwaysSign: true }) : String(value))}
+                  contentStyle={{
+                    backgroundColor: "var(--color-popover)",
+                    borderColor: "var(--color-border)",
+                    color: "var(--color-popover-foreground)",
+                    fontSize: 12,
+                  }}
+                />
+                <Line type="monotone" dataKey="sipYoyPct" name="SIP YoY Change %" stroke="var(--color-primary)" strokeWidth={2} dot={false} connectNulls />
+              </LineChart>
+            )}
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function SummaryPanel({
+  amcs,
+  flowsPoints,
+}: {
+  amcs: AmcStockCorrelationEntry[];
+  flowsPoints: MonthlyFlowPoint[] | null;
+}) {
   const [view, setView] = useState<"single" | "all">("single");
   const [amcSlug, setAmcSlug] = useState("hdfc-mutual-fund");
   const [mode, setMode] = useState<AumMode>("average");
   const [isDownloading, setIsDownloading] = useState(false);
+  const [rightView, setRightView] = useState<"flows" | "weekday">("flows");
 
   const entry = useMemo(() => amcs.find((a) => a.slug === amcSlug) ?? null, [amcs, amcSlug]);
 
@@ -629,36 +816,57 @@ export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
           </div>
 
           <div className="overflow-hidden rounded-lg border bg-card">
-            <Table>
-              <TableBody>
-                <BannerRow cols={["Week>>", "Val (In Cr)", "Do 3D", "Do 10D"]} />
-                {data.weekdays.map((section) => (
-                  <Fragment key={section.weekday}>
-                    <TableRow className="bg-muted/40 font-semibold">
-                      <TableCell className="font-semibold">{section.weekday}</TableCell>
-                      <ValCell value={section.top.valCr} />
-                      <PctCell value={section.top.do3dPct} />
-                      <PctCell value={section.top.do10dPct} />
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="pl-6 text-muted-foreground">Average of Last 3 {section.weekday}s</TableCell>
-                      <ValCell value={section.avg3Cr} />
-                      <TableCell />
-                      <TableCell />
-                    </TableRow>
-                    <TableRow>
-                      <TableCell className="pl-6 text-muted-foreground">Average of Last 10 {section.weekday}s</TableCell>
-                      <ValCell value={section.avg10Cr} />
-                      <TableCell />
-                      <TableCell />
-                    </TableRow>
-                  </Fragment>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b p-3">
+              <span className="text-sm font-medium">Industry Flows</span>
+              <div className="flex items-center gap-1" role="group" aria-label="Right panel view">
+                {(["flows", "weekday"] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setRightView(v)}
+                    className={v === rightView ? segmentActive : segmentInactive}
+                  >
+                    {v === "flows" ? "Flows" : "Weekday Seasonality"}
+                  </button>
                 ))}
-              </TableBody>
-            </Table>
+              </div>
+            </div>
+            {rightView === "flows" ? (
+              <FlowsPanel points={flowsPoints ?? []} />
+            ) : (
+              <Table>
+                <TableBody>
+                  <BannerRow cols={["Week>>", "Val (In Cr)", "Do 3D", "Do 10D"]} />
+                  {data.weekdays.map((section) => (
+                    <Fragment key={section.weekday}>
+                      <TableRow className="bg-muted/40 font-semibold">
+                        <TableCell className="font-semibold">{section.weekday}</TableCell>
+                        <ValCell value={section.top.valCr} />
+                        <PctCell value={section.top.do3dPct} />
+                        <PctCell value={section.top.do10dPct} />
+                      </TableRow>
+                      <TableRow>
+                        <TableCell className="pl-6 text-muted-foreground">Average of Last 3 {section.weekday}s</TableCell>
+                        <ValCell value={section.avg3Cr} />
+                        <TableCell />
+                        <TableCell />
+                      </TableRow>
+                      <TableRow>
+                        <TableCell className="pl-6 text-muted-foreground">Average of Last 10 {section.weekday}s</TableCell>
+                        <ValCell value={section.avg10Cr} />
+                        <TableCell />
+                        <TableCell />
+                      </TableRow>
+                    </Fragment>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </div>
         </div>
       )}
+
+      {flowsPoints && flowsPoints.length > 0 && <SipFlowChart points={flowsPoints} />}
     </div>
   );
 }

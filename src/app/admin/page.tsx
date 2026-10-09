@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MonthlyFlowForm } from "@/components/admin/monthly-flow-form";
 import { SettingsForm } from "@/components/admin/settings-form";
 import { SyncActions } from "@/components/admin/sync-actions";
 import { WeekendPriceAnomalies } from "@/components/admin/weekend-price-anomalies";
@@ -76,6 +77,7 @@ export default function AdminPage() {
       <SettingsForm secret={secret} />
       <SyncActions secret={secret} />
       <WeekendPriceAnomalies secret={secret} />
+      <MonthlyFlowForm secret={secret} />
     </div>
   );
 }

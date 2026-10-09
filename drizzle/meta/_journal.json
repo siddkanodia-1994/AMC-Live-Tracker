@@ -162,6 +162,13 @@
       "when": 1789851044899,
       "tag": "0022_ambiguous_otto_octavius",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791572544303,
+      "tag": "0023_simple_liz_osborn",
+      "breakpoints": true
     }
   ]
 }

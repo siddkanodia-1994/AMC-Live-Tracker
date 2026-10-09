@@ -104,7 +104,7 @@ export function pctChange(current: number | null, base: number | null): number |
 // Steps back `n` Indian fiscal quarters from whichever quarter `dateStr`
 // falls in -- n=4 lands on "the same calendar quarter, one fiscal year
 // earlier" (NOT n=3, which lands one quarter short of a true YoY match).
-function nFiscalQuartersBack(dateStr: string, n: number): { start: string; end: string } {
+export function nFiscalQuartersBack(dateStr: string, n: number): { start: string; end: string } {
   let bounds = getFiscalQuarterBounds(dateStr);
   for (let i = 0; i < n; i++) bounds = getPreviousFiscalQuarterBounds(bounds.start);
   return bounds;

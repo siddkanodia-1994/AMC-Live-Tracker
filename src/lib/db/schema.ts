@@ -235,6 +235,24 @@ export const indexDailyLevel = pgTable(
   (t) => [uniqueIndex("index_daily_level_key_date_idx").on(t.indexKey, t.snapshotDate)]
 );
 
+// Industry-wide AMFI monthly data (Summary tab's "Industry Flows" panel) --
+// not per-AMC, one row per calendar month. Bulk Flows is deliberately NOT a
+// column here: it's always computed on read as equityNetFlowsCr -
+// sipContributionsCr (verified exact on every sampled row against the
+// source workbook's own Bulk column), so it can never drift out of sync
+// with the two numbers it's derived from.
+export const industryMonthlyFlow = pgTable(
+  "industry_monthly_flow",
+  {
+    id: serial("id").primaryKey(),
+    monthEndDate: date("month_end_date").notNull(),
+    sipContributionsCr: numeric("sip_contributions_cr", { precision: 18, scale: 4 }).notNull(),
+    equityNetFlowsCr: numeric("equity_net_flows_cr", { precision: 18, scale: 4 }).notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("industry_monthly_flow_month_idx").on(t.monthEndDate)]
+);
+
 // Idempotency guard AND visible audit trail for the automatic DHAN-outage
 // detection+self-correction system (outage-detection.ts/outage-reclaim.ts).
 // One row per (kind, snapshotDate). kind='amc_isin': a calendar date where
