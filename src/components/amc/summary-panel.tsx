@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import type { Worksheet, Workbook } from "exceljs";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { computeSummaryViewData, type AumMode, type SummaryViewData } from "@/lib/aum/summary-view";
 import { formatCr, formatPct } from "@/lib/utils/format";
@@ -49,74 +50,122 @@ function PctCell({ value }: { value?: number | null }) {
   );
 }
 
-function BannerHeader({ cols }: { cols: string[] }) {
+// A banner "section header" row living INSIDE a <TableBody> (not a separate
+// <TableHeader>) -- a <table> may only have one real <thead>, and the whole
+// point here is for Financial Year/Quarter/Month/Trading-window to share ONE
+// <table> (one column-width model) so their Val columns land in the same
+// horizontal position, which a separate <table> per block can't guarantee.
+function BannerRow({ cols }: { cols: [string, string, string, string] }) {
   return (
-    <TableHeader>
-      <TableRow className="bg-foreground hover:bg-foreground">
-        {cols.map((c, i) => (
-          <TableHead key={c} className={`text-background ${i === 0 ? "" : "text-right"}`}>
-            {c}
-          </TableHead>
-        ))}
-      </TableRow>
-    </TableHeader>
+    <TableRow className="bg-foreground hover:bg-foreground">
+      {cols.map((c, i) => (
+        <TableCell key={i} className={`font-semibold text-background ${i === 0 ? "" : "text-right"}`}>
+          {c}
+        </TableCell>
+      ))}
+    </TableRow>
   );
 }
 
 const CR_FORMAT = '"₹"#,##0.00" cr"';
 const PCT_FORMAT = "0.00%";
 
-function setCell(ws: Record<string, unknown>, addr: string, value: string | number | null | undefined, fmt?: string): void {
-  if (value === null || value === undefined) return;
-  ws[addr] = typeof value === "number" ? { t: "n", v: value, ...(fmt ? { z: fmt } : {}) } : { t: "s", v: value };
-}
+// Exact colors from the user's own uploaded reference template.
+const POS_FILL = "FFC6EFCE";
+const POS_FONT = "FF006100";
+const NEG_FILL = "FFFFC7CE";
+const NEG_FONT = "FF9C0006";
+const BANNER_FILL = "FF000000";
+const BANNER_FONT = "FFFFFFFF";
 
 function formatRangeForExport(range?: [string | null, string | null]): string | null {
   if (!range || !range[0] || !range[1]) return null;
   return range[0] === range[1] ? formatRangeDate(range[0]) : `${formatRangeDate(range[0])} - ${formatRangeDate(range[1])}`;
 }
 
-// One AMC's full Summary view (currently-selected AUM mode only) as a
-// static-value worksheet -- no live formulas (fiscal-quarter/weekday-
-// occurrence math doesn't translate cleanly to spreadsheet formulas, and
-// the original reference template itself has none either) and no cell
-// fill/font styling (this app's existing xlsx export, buildAmcWorksheet in
-// stock-correlation-table.tsx, doesn't apply any either -- the underlying
-// SheetJS community build used here only writes per-cell number formats
-// via `z`, not fill/bold styling). Layout mirrors the on-screen blocks
-// exactly: left stack (Financial Year / Quarter / Month / Trading-window,
-// each with its own header row, A-E) and the weekday-seasonality block to
-// the right (G-J) -- one extra "Period" column vs. the live UI's own
-// date-range subtext, since Excel has no sub-cell text.
-function buildSummaryWorksheet(entry: AmcStockCorrelationEntry, mode: AumMode): Record<string, unknown> {
-  const ws: Record<string, unknown> = {};
+function setLabelCell(ws: Worksheet, addr: string, value: string | null | undefined): void {
+  if (value === null || value === undefined) return;
+  ws.getCell(addr).value = value;
+}
+
+function setValCell(ws: Worksheet, addr: string, value: number | null): void {
+  if (value === null) return;
+  const cell = ws.getCell(addr);
+  cell.value = value;
+  cell.numFmt = CR_FORMAT;
+}
+
+// Fill + font color baked in from the value's already-known sign -- a
+// static snapshot (matching the "static values, not live formulas"
+// decision), not a live Excel conditional-formatting rule.
+function setPctCell(ws: Worksheet, addr: string, value: number | null | undefined): void {
+  if (value === null || value === undefined) return;
+  const cell = ws.getCell(addr);
+  cell.value = value;
+  cell.numFmt = PCT_FORMAT;
+  const positive = value >= 0;
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: positive ? POS_FILL : NEG_FILL } };
+  cell.font = { color: { argb: positive ? POS_FONT : NEG_FONT } };
+}
+
+function setBannerCell(ws: Worksheet, addr: string, value: string): void {
+  const cell = ws.getCell(addr);
+  cell.value = value;
+  cell.font = { bold: true, color: { argb: BANNER_FONT } };
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BANNER_FILL } };
+}
+
+// One AMC's full Summary view (currently-selected AUM mode only), written
+// directly into a new worksheet on the given ExcelJS workbook. Static
+// values, no live formulas -- fiscal-quarter/weekday-occurrence math
+// doesn't translate cleanly to spreadsheet formulas, and the original
+// reference template itself has none either. Uses ExcelJS (not this app's
+// usual `xlsx`/SheetJS, see Stock Correlation's own export) specifically
+// because SheetJS's free build silently drops cell fill/font styling --
+// confirmed by inspecting its own raw OOXML output -- while ExcelJS writes
+// real colors for free. Layout mirrors the on-screen blocks exactly: left
+// stack (Financial Year / Quarter / Month / Trading-window, A-E) and the
+// weekday-seasonality block to the right (G-J) -- one extra "Period" column
+// vs. the live UI's own date-range subtext, since Excel has no sub-cell text.
+function buildSummaryWorksheet(workbook: Workbook, entry: AmcStockCorrelationEntry, mode: AumMode): void {
+  const ws = workbook.addWorksheet(entry.overviewName.slice(0, 31));
+  ws.columns = [
+    { width: 26 }, { width: 22 }, { width: 16 }, { width: 11 }, { width: 11 },
+    { width: 2 }, { width: 26 }, { width: 16 }, { width: 11 }, { width: 11 },
+  ];
   const data = computeSummaryViewData(entry.aumHistory, mode, getIstDateString());
 
   let row = 1;
   const writeLeftBlock = (
-    headerCols: [string, string, string, string?],
-    rows: { label: string; range?: [string | null, string | null]; valCr: number | null; change1?: number | null; change2?: number | null }[]
+    headerCols: [string, string, string, string],
+    rows: {
+      label: string;
+      range?: [string | null, string | null];
+      valCr: number | null;
+      change1?: number | null;
+      change2?: number | null;
+    }[]
   ) => {
-    setCell(ws, `A${row}`, headerCols[0]);
-    setCell(ws, `B${row}`, "Period");
-    setCell(ws, `C${row}`, headerCols[1]);
-    setCell(ws, `D${row}`, headerCols[2]);
-    if (headerCols[3]) setCell(ws, `E${row}`, headerCols[3]);
+    setBannerCell(ws, `A${row}`, headerCols[0]);
+    setBannerCell(ws, `B${row}`, "Period");
+    setBannerCell(ws, `C${row}`, headerCols[1]);
+    setBannerCell(ws, `D${row}`, headerCols[2]);
+    setBannerCell(ws, `E${row}`, headerCols[3]);
     row++;
     for (const r of rows) {
-      setCell(ws, `A${row}`, r.label);
-      setCell(ws, `B${row}`, formatRangeForExport(r.range));
-      setCell(ws, `C${row}`, r.valCr, CR_FORMAT);
-      setCell(ws, `D${row}`, r.change1 ?? null, PCT_FORMAT);
-      if (headerCols[3]) setCell(ws, `E${row}`, r.change2 ?? null, PCT_FORMAT);
+      setLabelCell(ws, `A${row}`, r.label);
+      setLabelCell(ws, `B${row}`, formatRangeForExport(r.range));
+      setValCell(ws, `C${row}`, r.valCr);
+      setPctCell(ws, `D${row}`, r.change1 ?? null);
+      setPctCell(ws, `E${row}`, r.change2 ?? null);
       row++;
     }
     row++; // blank spacer row between blocks
   };
 
   writeLeftBlock(
-    ["Financial Year", "Total", "YoY"],
-    data.financialYear.map((r) => ({ label: r.label, range: r.range, valCr: r.valCr, change1: r.yoyPct }))
+    ["Financial Year", "Total", "", "YoY"],
+    data.financialYear.map((r) => ({ label: r.label, range: r.range, valCr: r.valCr, change2: r.yoyPct }))
   );
   writeLeftBlock(
     ["Quarter>>", "Val (In Cr)", "QoQ", "YoY"],
@@ -132,28 +181,42 @@ function buildSummaryWorksheet(entry: AmcStockCorrelationEntry, mode: AumMode): 
   );
 
   let wRow = 1;
-  setCell(ws, `G${wRow}`, "Week>>");
-  setCell(ws, `H${wRow}`, "Val (In Cr)");
-  setCell(ws, `I${wRow}`, "Do 3D");
-  setCell(ws, `J${wRow}`, "Do 10D");
+  setBannerCell(ws, `G${wRow}`, "Week>>");
+  setBannerCell(ws, `H${wRow}`, "Val (In Cr)");
+  setBannerCell(ws, `I${wRow}`, "Do 3D");
+  setBannerCell(ws, `J${wRow}`, "Do 10D");
   wRow++;
   for (const section of data.weekdays) {
-    setCell(ws, `G${wRow}`, section.weekday);
-    setCell(ws, `H${wRow}`, section.top.valCr, CR_FORMAT);
-    setCell(ws, `I${wRow}`, section.top.do3dPct, PCT_FORMAT);
-    setCell(ws, `J${wRow}`, section.top.do10dPct, PCT_FORMAT);
+    setLabelCell(ws, `G${wRow}`, section.weekday);
+    setValCell(ws, `H${wRow}`, section.top.valCr);
+    setPctCell(ws, `I${wRow}`, section.top.do3dPct);
+    setPctCell(ws, `J${wRow}`, section.top.do10dPct);
     wRow++;
-    setCell(ws, `G${wRow}`, `Average of Last 3 ${section.weekday}s`);
-    setCell(ws, `H${wRow}`, section.avg3Cr, CR_FORMAT);
+    setLabelCell(ws, `G${wRow}`, `Average of Last 3 ${section.weekday}s`);
+    setValCell(ws, `H${wRow}`, section.avg3Cr);
     wRow++;
-    setCell(ws, `G${wRow}`, `Average of Last 10 ${section.weekday}s`);
-    setCell(ws, `H${wRow}`, section.avg10Cr, CR_FORMAT);
+    setLabelCell(ws, `G${wRow}`, `Average of Last 10 ${section.weekday}s`);
+    setValCell(ws, `H${wRow}`, section.avg10Cr);
     wRow++;
   }
+}
 
-  ws["!ref"] = `A1:J${Math.max(row, wRow)}`;
-  ws["!cols"] = [{ wch: 26 }, { wch: 24 }, { wch: 16 }, { wch: 11 }, { wch: 11 }];
-  return ws;
+// ExcelJS has no browser writeFile helper (unlike SheetJS's writeFileXLSX)
+// -- write to an in-memory buffer, wrap it in a Blob, and trigger the save
+// via a throwaway <a download> link, same technique used anywhere else a
+// client-side blob needs to become a user-facing file download.
+function saveWorkbookBuffer(buffer: ArrayBuffer | Uint8Array, filename: string): void {
+  const blob = new Blob([buffer as BlobPart], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
@@ -171,29 +234,29 @@ export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
   // One sheet per AMC (all 8, not just the one currently selected), in the
   // currently-selected AUM basis only -- matches the Stock Correlation
   // tab's own "Download Excel" one-sheet-per-AMC convention. Client-side
-  // only, xlsx loaded lazily, same as that button -- every AMC's aumHistory
-  // is already in `amcs`, no new fetch.
+  // only, exceljs loaded lazily -- every AMC's aumHistory is already in
+  // `amcs`, no new fetch.
   async function handleDownloadExcel() {
     if (amcs.length === 0) return;
     setIsDownloading(true);
     try {
-      const { utils, writeFileXLSX } = await import("xlsx");
-      const workbook = utils.book_new();
+      const { Workbook } = await import("exceljs");
+      const workbook = new Workbook();
 
       const modeLabel = mode === "average" ? "Average AUM" : "Exit AUM";
-      const settingsRows = [
-        { Setting: "AUM basis", Value: modeLabel },
-        { Setting: "Generated at", Value: new Date().toISOString() },
-      ];
-      utils.book_append_sheet(workbook, utils.json_to_sheet(settingsRows), "Settings");
+      const settingsSheet = workbook.addWorksheet("Settings");
+      settingsSheet.columns = [{ header: "Setting", width: 24 }, { header: "Value", width: 32 }];
+      settingsSheet.getRow(1).font = { bold: true };
+      settingsSheet.addRow(["AUM basis", modeLabel]);
+      settingsSheet.addRow(["Generated at", new Date().toISOString()]);
 
       for (const a of amcs) {
-        const worksheet = buildSummaryWorksheet(a, mode);
-        utils.book_append_sheet(workbook, worksheet, a.overviewName.slice(0, 31));
+        buildSummaryWorksheet(workbook, a, mode);
       }
 
+      const buffer = await workbook.xlsx.writeBuffer();
       const dateStamp = new Date().toISOString().slice(0, 10);
-      writeFileXLSX(workbook, `Summary_${mode === "average" ? "AverageAUM" : "ExitAUM"}_${dateStamp}.xlsx`);
+      saveWorkbookBuffer(buffer, `Summary_${mode === "average" ? "AverageAUM" : "ExitAUM"}_${dateStamp}.xlsx`);
     } finally {
       setIsDownloading(false);
     }
@@ -251,90 +314,77 @@ export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
         <p className="text-sm text-muted-foreground">No AUM history available for this AMC.</p>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
-          <div className="flex flex-col gap-4">
-            <div className="overflow-hidden rounded-lg border bg-card">
-              <Table>
-                <BannerHeader cols={["Financial Year", "Total", "YoY"]} />
-                <TableBody>
-                  {data.financialYear.map((r) => (
-                    <TableRow key={r.label}>
-                      <TableCell className="font-medium">
+          <div className="overflow-hidden rounded-lg border bg-card">
+            <Table>
+              <TableBody>
+                <BannerRow cols={["Financial Year", "Total", "", "YoY"]} />
+                {data.financialYear.map((r) => (
+                  <TableRow key={r.label}>
+                    <TableCell className="font-medium">
+                      {r.label}
+                      <RangeSub range={r.range} />
+                    </TableCell>
+                    <ValCell value={r.valCr} />
+                    <TableCell />
+                    <PctCell value={r.yoyPct} />
+                  </TableRow>
+                ))}
+              </TableBody>
+
+              <TableBody>
+                <BannerRow cols={["Quarter>>", "Val (In Cr)", "QoQ", "YoY"]} />
+                {data.quarter.map((r) => (
+                  <TableRow key={r.label}>
+                    <TableCell className="font-medium">
+                      {r.label}
+                      <RangeSub range={r.range} />
+                    </TableCell>
+                    <ValCell value={r.valCr} />
+                    <PctCell value={r.qoqPct} />
+                    <PctCell value={r.yoyPct} />
+                  </TableRow>
+                ))}
+              </TableBody>
+
+              <TableBody>
+                <BannerRow cols={["Month>>", "Val (In Cr)", "MoM", "Mo 6M"]} />
+                {data.month.map((r, i) => {
+                  const isSummary = i === data.month.length - 1;
+                  return (
+                    <TableRow key={r.label} className={isSummary ? "bg-muted/40" : undefined}>
+                      <TableCell className={`font-medium ${isSummary ? "pl-6 font-normal italic text-muted-foreground" : ""}`}>
                         {r.label}
                         <RangeSub range={r.range} />
                       </TableCell>
-                      <ValCell value={r.valCr} />
-                      <PctCell value={r.yoyPct} />
+                      <ValCell value={r.valCr} italic={isSummary} />
+                      <PctCell value={r.momPct} />
+                      <PctCell value={r.mo6mPct} />
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  );
+                })}
+              </TableBody>
 
-            <div className="overflow-hidden rounded-lg border bg-card">
-              <Table>
-                <BannerHeader cols={["Quarter>>", "Val (In Cr)", "QoQ", "YoY"]} />
-                <TableBody>
-                  {data.quarter.map((r) => (
-                    <TableRow key={r.label}>
-                      <TableCell className="font-medium">
-                        {r.label}
-                        <RangeSub range={r.range} />
-                      </TableCell>
-                      <ValCell value={r.valCr} />
-                      <PctCell value={r.qoqPct} />
-                      <PctCell value={r.yoyPct} />
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-
-            <div className="overflow-hidden rounded-lg border bg-card">
-              <Table>
-                <BannerHeader cols={["Month>>", "Val (In Cr)", "MoM", "Mo 6M"]} />
-                <TableBody>
-                  {data.month.map((r, i) => {
-                    const isSummary = i === data.month.length - 1;
-                    return (
-                      <TableRow key={r.label} className={isSummary ? "bg-muted/40" : undefined}>
-                        <TableCell className={`font-medium ${isSummary ? "pl-6 font-normal italic text-muted-foreground" : ""}`}>
-                          {r.label}
-                          <RangeSub range={r.range} />
-                        </TableCell>
-                        <ValCell value={r.valCr} italic={isSummary} />
-                        <PctCell value={r.momPct} />
-                        <PctCell value={r.mo6mPct} />
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-
-            <div className="overflow-hidden rounded-lg border bg-card">
-              <Table>
-                <BannerHeader cols={["Week>>", "Val (In Cr)", "WoW", "Wo 10W"]} />
-                <TableBody>
-                  {data.tradingWindow.map((r) => (
-                    <TableRow key={r.label}>
-                      <TableCell className="font-medium">
-                        {r.label}
-                        <RangeSub range={r.range} />
-                      </TableCell>
-                      <ValCell value={r.valCr} />
-                      <PctCell value={r.wowPct} />
-                      <PctCell value={r.wo10wPct} />
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+              <TableBody>
+                <BannerRow cols={["Week>>", "Val (In Cr)", "WoW", "Wo 10W"]} />
+                {data.tradingWindow.map((r) => (
+                  <TableRow key={r.label}>
+                    <TableCell className="font-medium">
+                      {r.label}
+                      <RangeSub range={r.range} />
+                    </TableCell>
+                    <ValCell value={r.valCr} />
+                    <PctCell value={r.wowPct} />
+                    <PctCell value={r.wo10wPct} />
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
 
           <div className="overflow-hidden rounded-lg border bg-card">
             <Table>
-              <BannerHeader cols={["Week>>", "Val (In Cr)", "Do 3D", "Do 10D"]} />
               <TableBody>
+                <BannerRow cols={["Week>>", "Val (In Cr)", "Do 3D", "Do 10D"]} />
                 {data.weekdays.map((section) => (
                   <Fragment key={section.weekday}>
                     <TableRow className="bg-muted/40 font-semibold">
