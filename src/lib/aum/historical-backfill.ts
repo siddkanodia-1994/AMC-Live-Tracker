@@ -34,23 +34,48 @@ export interface HistoricalBackfillResult {
   warnings: string[];
 }
 
+export interface HistoricalBackfillOptions {
+  // Skip the "no share price to compare against yet" truncation entirely
+  // -- for AMCs/windows meant for AUM-only views (e.g. the Summary tab),
+  // which never need a corresponding share price. Default false preserves
+  // the original behavior for every existing caller.
+  ignorePriceFloor?: boolean;
+  // Bound written rows to [minDate, maxDate] (inclusive) regardless of how
+  // far back the anchors would otherwise allow -- lets a caller backfill a
+  // narrower window than this AMC's full anchor history supports, without
+  // touching rows outside that window.
+  minDate?: string;
+  maxDate?: string;
+}
+
 /**
  * Computes and upserts amc_historical_aum_estimate for one AMC, bridging
  * its amc_historical_aum_anchor monthly points with NIFTY_500's daily
  * return (compounded forward each month, then multiplicatively ramped so
  * the month lands exactly on the next anchor -- see the plan's algorithm
- * writeup). Rows are truncated to this AMC's own earliest isin_daily_price
- * date: if that AMC's own stock listed later than some anchors, earlier
- * months are used only to seed the compounding chain, never written as
- * output (per explicit user decision -- don't store AUM for a stretch
- * that has no share price to ever compare it against).
+ * writeup). By default, rows are truncated to this AMC's own earliest
+ * isin_daily_price date: if that AMC's own stock listed later than some
+ * anchors, earlier months are used only to seed the compounding chain,
+ * never written as output (per explicit user decision -- don't store AUM
+ * for a stretch that has no share price to ever compare it against).
+ * `options.ignorePriceFloor` opts a specific call out of this truncation
+ * (confirmed 2026-10: ICICI Prudential/Canara Robeco/SBI Mutual Fund's
+ * own AUM-only Jan-Dec 2025 backfill, for the Summary tab, which has no
+ * share-price dependency at all) -- the compounding/drift-correction math
+ * itself never depends on price either way.
  *
  * Ordering dependency: the AMC's historical share price data must already
  * be ingested (isin_daily_price) before this runs, since the price floor
  * is read from real data, not a config value. If none is found yet, this
- * AMC is skipped entirely (returns rowsWritten: 0) rather than guessing.
+ * AMC is skipped entirely (returns rowsWritten: 0) rather than guessing --
+ * unaffected by `ignorePriceFloor`, which only skips the per-day floor
+ * check below, not this AMC-level "is this AMC's stock tracked at all"
+ * precondition.
  */
-export async function computeHistoricalAumEstimates(amcId: number): Promise<HistoricalBackfillResult> {
+export async function computeHistoricalAumEstimates(
+  amcId: number,
+  options?: HistoricalBackfillOptions
+): Promise<HistoricalBackfillResult> {
   const warnings: string[] = [];
   const anchors = await db
     .select()
@@ -122,7 +147,9 @@ export async function computeHistoricalAumEstimates(amcId: number): Promise<Hist
       const position = j + 1; // 1-indexed; position === n is endDate itself
       const scale = 1 + (scaleFactorFinal - 1) * (position / n);
       const date = rawSeries[j].date;
-      if (date < priceFloorDate) continue; // truncate: no share price to compare against yet
+      if (!options?.ignorePriceFloor && date < priceFloorDate) continue; // truncate: no share price to compare against yet
+      if (options?.minDate && date < options.minDate) continue;
+      if (options?.maxDate && date > options.maxDate) continue;
 
       rowsToWrite.push({
         amcId,

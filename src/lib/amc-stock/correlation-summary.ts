@@ -49,11 +49,22 @@ export async function getAmcStockCorrelationData(): Promise<AmcStockCorrelationD
 
   const amcIds = mappings.map((m) => m.amcId);
   const isins = mappings.map((m) => m.isin);
-  const aumFromDates = new Map(mappings.map((m) => [m.amcId, m.backfillFromDate]));
   const priceFromDates = new Map(mappings.map((m) => [m.isin, m.backfillFromDate]));
 
+  // No floor on the AUM side: backfillFromDate's purpose is "this AMC's own
+  // stock has no price before this date" (still correctly applied below,
+  // to the price query) -- AUM availability isn't gated by the AMC's own
+  // listing date at all (confirmed: computeHistoricalAumEstimates never
+  // reads backfillFromDate; it only truncates to the AMC's own real price
+  // history, a separate mechanism). Discovered 2026-10 that applying this
+  // floor to real liveAumDailySnapshot rows too was a no-op for 7 of 8
+  // AMCs (their own backfillFromDate already predates real data's uniform
+  // 2026-01-01 start) but silently hid 7 months of real AUM data for SBI
+  // Mutual Fund specifically (backfillFromDate 2026-07-21, after real data
+  // starts) -- which then made trimToLastContinuousRun discard everything
+  // before that gap, including the newly-backfilled Jan-Dec 2025 estimate.
   const [aumByAmcId, priceByIsin] = await Promise.all([
-    getAumHistoryForAmcIds(amcIds, aumFromDates),
+    getAumHistoryForAmcIds(amcIds),
     getAmcListedStockPriceHistoryForIsins(isins, priceFromDates),
   ]);
 
