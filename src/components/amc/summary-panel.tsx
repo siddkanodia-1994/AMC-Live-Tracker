@@ -63,9 +63,103 @@ function BannerHeader({ cols }: { cols: string[] }) {
   );
 }
 
+const CR_FORMAT = '"₹"#,##0.00" cr"';
+const PCT_FORMAT = "0.00%";
+
+function setCell(ws: Record<string, unknown>, addr: string, value: string | number | null | undefined, fmt?: string): void {
+  if (value === null || value === undefined) return;
+  ws[addr] = typeof value === "number" ? { t: "n", v: value, ...(fmt ? { z: fmt } : {}) } : { t: "s", v: value };
+}
+
+function formatRangeForExport(range?: [string | null, string | null]): string | null {
+  if (!range || !range[0] || !range[1]) return null;
+  return range[0] === range[1] ? formatRangeDate(range[0]) : `${formatRangeDate(range[0])} - ${formatRangeDate(range[1])}`;
+}
+
+// One AMC's full Summary view (currently-selected AUM mode only) as a
+// static-value worksheet -- no live formulas (fiscal-quarter/weekday-
+// occurrence math doesn't translate cleanly to spreadsheet formulas, and
+// the original reference template itself has none either) and no cell
+// fill/font styling (this app's existing xlsx export, buildAmcWorksheet in
+// stock-correlation-table.tsx, doesn't apply any either -- the underlying
+// SheetJS community build used here only writes per-cell number formats
+// via `z`, not fill/bold styling). Layout mirrors the on-screen blocks
+// exactly: left stack (Financial Year / Quarter / Month / Trading-window,
+// each with its own header row, A-E) and the weekday-seasonality block to
+// the right (G-J) -- one extra "Period" column vs. the live UI's own
+// date-range subtext, since Excel has no sub-cell text.
+function buildSummaryWorksheet(entry: AmcStockCorrelationEntry, mode: AumMode): Record<string, unknown> {
+  const ws: Record<string, unknown> = {};
+  const data = computeSummaryViewData(entry.aumHistory, mode, getIstDateString());
+
+  let row = 1;
+  const writeLeftBlock = (
+    headerCols: [string, string, string, string?],
+    rows: { label: string; range?: [string | null, string | null]; valCr: number | null; change1?: number | null; change2?: number | null }[]
+  ) => {
+    setCell(ws, `A${row}`, headerCols[0]);
+    setCell(ws, `B${row}`, "Period");
+    setCell(ws, `C${row}`, headerCols[1]);
+    setCell(ws, `D${row}`, headerCols[2]);
+    if (headerCols[3]) setCell(ws, `E${row}`, headerCols[3]);
+    row++;
+    for (const r of rows) {
+      setCell(ws, `A${row}`, r.label);
+      setCell(ws, `B${row}`, formatRangeForExport(r.range));
+      setCell(ws, `C${row}`, r.valCr, CR_FORMAT);
+      setCell(ws, `D${row}`, r.change1 ?? null, PCT_FORMAT);
+      if (headerCols[3]) setCell(ws, `E${row}`, r.change2 ?? null, PCT_FORMAT);
+      row++;
+    }
+    row++; // blank spacer row between blocks
+  };
+
+  writeLeftBlock(
+    ["Financial Year", "Total", "YoY"],
+    data.financialYear.map((r) => ({ label: r.label, range: r.range, valCr: r.valCr, change1: r.yoyPct }))
+  );
+  writeLeftBlock(
+    ["Quarter>>", "Val (In Cr)", "QoQ", "YoY"],
+    data.quarter.map((r) => ({ label: r.label, range: r.range, valCr: r.valCr, change1: r.qoqPct, change2: r.yoyPct }))
+  );
+  writeLeftBlock(
+    ["Month>>", "Val (In Cr)", "MoM", "Mo 6M"],
+    data.month.map((r) => ({ label: r.label, range: r.range, valCr: r.valCr, change1: r.momPct, change2: r.mo6mPct }))
+  );
+  writeLeftBlock(
+    ["Week>>", "Val (In Cr)", "WoW", "Wo 10W"],
+    data.tradingWindow.map((r) => ({ label: r.label, range: r.range, valCr: r.valCr, change1: r.wowPct, change2: r.wo10wPct }))
+  );
+
+  let wRow = 1;
+  setCell(ws, `G${wRow}`, "Week>>");
+  setCell(ws, `H${wRow}`, "Val (In Cr)");
+  setCell(ws, `I${wRow}`, "Do 3D");
+  setCell(ws, `J${wRow}`, "Do 10D");
+  wRow++;
+  for (const section of data.weekdays) {
+    setCell(ws, `G${wRow}`, section.weekday);
+    setCell(ws, `H${wRow}`, section.top.valCr, CR_FORMAT);
+    setCell(ws, `I${wRow}`, section.top.do3dPct, PCT_FORMAT);
+    setCell(ws, `J${wRow}`, section.top.do10dPct, PCT_FORMAT);
+    wRow++;
+    setCell(ws, `G${wRow}`, `Average of Last 3 ${section.weekday}s`);
+    setCell(ws, `H${wRow}`, section.avg3Cr, CR_FORMAT);
+    wRow++;
+    setCell(ws, `G${wRow}`, `Average of Last 10 ${section.weekday}s`);
+    setCell(ws, `H${wRow}`, section.avg10Cr, CR_FORMAT);
+    wRow++;
+  }
+
+  ws["!ref"] = `A1:J${Math.max(row, wRow)}`;
+  ws["!cols"] = [{ wch: 26 }, { wch: 24 }, { wch: 16 }, { wch: 11 }, { wch: 11 }];
+  return ws;
+}
+
 export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
   const [amcSlug, setAmcSlug] = useState("hdfc-mutual-fund");
   const [mode, setMode] = useState<AumMode>("average");
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const entry = useMemo(() => amcs.find((a) => a.slug === amcSlug) ?? null, [amcs, amcSlug]);
 
@@ -73,6 +167,37 @@ export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
     if (!entry) return null;
     return computeSummaryViewData(entry.aumHistory, mode, getIstDateString());
   }, [entry, mode]);
+
+  // One sheet per AMC (all 8, not just the one currently selected), in the
+  // currently-selected AUM basis only -- matches the Stock Correlation
+  // tab's own "Download Excel" one-sheet-per-AMC convention. Client-side
+  // only, xlsx loaded lazily, same as that button -- every AMC's aumHistory
+  // is already in `amcs`, no new fetch.
+  async function handleDownloadExcel() {
+    if (amcs.length === 0) return;
+    setIsDownloading(true);
+    try {
+      const { utils, writeFileXLSX } = await import("xlsx");
+      const workbook = utils.book_new();
+
+      const modeLabel = mode === "average" ? "Average AUM" : "Exit AUM";
+      const settingsRows = [
+        { Setting: "AUM basis", Value: modeLabel },
+        { Setting: "Generated at", Value: new Date().toISOString() },
+      ];
+      utils.book_append_sheet(workbook, utils.json_to_sheet(settingsRows), "Settings");
+
+      for (const a of amcs) {
+        const worksheet = buildSummaryWorksheet(a, mode);
+        utils.book_append_sheet(workbook, worksheet, a.overviewName.slice(0, 31));
+      }
+
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      writeFileXLSX(workbook, `Summary_${mode === "average" ? "AverageAUM" : "ExitAUM"}_${dateStamp}.xlsx`);
+    } finally {
+      setIsDownloading(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -106,11 +231,20 @@ export function SummaryPanel({ amcs }: { amcs: AmcStockCorrelationEntry[] }) {
             </button>
           ))}
         </div>
-        <span className="ml-auto text-xs text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {mode === "average"
             ? "Mean of daily Live AUM across each period."
             : "Live AUM as of the last day in each period (closing value)."}
         </span>
+        <button
+          type="button"
+          onClick={handleDownloadExcel}
+          disabled={isDownloading || amcs.length === 0}
+          title={`Download all 8 AMCs' Summary view (${mode === "average" ? "Average AUM" : "Exit AUM"}), one sheet per AMC`}
+          className="ml-auto rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+        >
+          {isDownloading ? "Preparing…" : "Download Excel"}
+        </button>
       </div>
 
       {!entry || !data ? (
