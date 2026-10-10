@@ -751,6 +751,11 @@ function FlowTrendChart({ points }: { points: MonthlyFlowPoint[] }) {
     () => computeYAxisDomain(yoyValues, yoyBands ? Object.values(yoyBands) : []),
     [yoyValues, yoyBands]
   );
+  // Absolute view's own Y-axis auto-fits to the currently-visible range too
+  // (was previously always anchored at ₹0, so a 6M/1Y zoom squished the
+  // real month-to-month variation into a thin band near the top).
+  const absValues = useMemo(() => series.map((p) => p.value), [series]);
+  const absDomain = useMemo(() => computeYAxisDomain(absValues, []), [absValues]);
   const currentYoy = yoyValues.length > 0 ? yoyValues[yoyValues.length - 1] : null;
   const yoyZScore =
     yoyStats && currentYoy !== null && yoyStats.stdDev !== 0 ? (currentYoy - yoyStats.mean) / yoyStats.stdDev : null;
@@ -820,6 +825,7 @@ function FlowTrendChart({ points }: { points: MonthlyFlowPoint[] }) {
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="date" tickFormatter={formatShortDateWithYear} tick={{ fontSize: 12 }} />
                 <YAxis
+                  domain={absDomain}
                   tick={{ fontSize: 12 }}
                   tickFormatter={(v: number) => formatCrRounded(v)}
                   width={80}
@@ -1008,12 +1014,18 @@ export function SummaryPanel({
       ) : !entry || !data ? (
         <p className="text-sm text-muted-foreground">No AUM history available for this AMC.</p>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-[5fr_7fr]">
           <div className="overflow-hidden rounded-lg border bg-card">
             <div className="flex items-center border-b p-3">
               <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">AMC AUM Summary</span>
             </div>
-            <Table>
+            <Table className="table-fixed">
+              <colgroup>
+                <col className="w-[32%]" />
+                <col className="w-[26%]" />
+                <col className="w-[21%]" />
+                <col className="w-[21%]" />
+              </colgroup>
               <TableBody>
                 <TwoRowBanner title="Financial Year" col1="Total" col2="" col3="YoY" />
                 {data.financialYear.map((r) => (
