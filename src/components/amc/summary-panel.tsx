@@ -6,6 +6,7 @@ import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Too
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
+import { subtractMonths } from "@/lib/aum/date-range";
 import type { MonthlyFlowPoint } from "@/lib/aum/industry-flows";
 import { computeFlowsViewData, type FlowPeriodRow } from "@/lib/aum/flows-view";
 import { computeSummaryViewData, type AumMode, type SummaryViewData } from "@/lib/aum/summary-view";
@@ -612,6 +613,31 @@ function computeFlowChartSeries(points: MonthlyFlowPoint[], metric: FlowChartMet
   });
 }
 
+// Local to this chart (not the shared RangeOption/RANGE_OPTIONS used by
+// aum-trend-chart.tsx) so adding "4Y" here doesn't also add it to that
+// already-shipped chart. YoY is always computed from the FULL series first
+// (computeFlowChartSeries above never sees a trimmed input), then trimmed
+// to the selected range only for display/stats -- a 1Y view still needs the
+// 12 months before it to compute its own first point's YoY correctly.
+type FlowChartRange = "6m" | "1y" | "2y" | "3y" | "4y" | "all";
+
+const FLOW_CHART_RANGE_OPTIONS: { value: FlowChartRange; label: string; months: number | null }[] = [
+  { value: "6m", label: "6M", months: 6 },
+  { value: "1y", label: "1Y", months: 12 },
+  { value: "2y", label: "2Y", months: 24 },
+  { value: "3y", label: "3Y", months: 36 },
+  { value: "4y", label: "4Y", months: 48 },
+  { value: "all", label: "All", months: null },
+];
+
+function trimFlowSeriesToRange<T extends { date: string }>(series: T[], range: FlowChartRange): T[] {
+  if (series.length === 0) return series;
+  const months = FLOW_CHART_RANGE_OPTIONS.find((o) => o.value === range)?.months;
+  if (!months) return series; // "all"
+  const cutoff = subtractMonths(series[series.length - 1].date, months);
+  return series.filter((p) => p.date >= cutoff);
+}
+
 // Population stddev (divide by n, not n-1) -- same math as
 // priceToAumRatioStats (src/lib/aum/series-math.ts), minus the AUM/price
 // pairing specifics, since this is already a single derived series (YoY%).
@@ -693,8 +719,15 @@ function YoyBandTooltip({
 function FlowTrendChart({ points }: { points: MonthlyFlowPoint[] }) {
   const [metric, setMetric] = useState<FlowChartMetric>("sip");
   const [mode, setMode] = useState<"abs" | "yoy">("abs");
+  const [range, setRange] = useState<FlowChartRange>("all");
   const metricLabel = FLOW_CHART_METRIC_LABEL[metric];
-  const series = useMemo(() => computeFlowChartSeries(points, metric), [points, metric]);
+  // YoY always derives from the FULL series (a 1Y view still needs the 12
+  // months before it to compute its own first point's YoY correctly) --
+  // trimmed to the selected range only for what's actually displayed/the
+  // Mean-SD stats below, same convention as aum-trend-chart.tsx's own
+  // Ratio-view bands (computed over the currently-visible series).
+  const fullSeries = useMemo(() => computeFlowChartSeries(points, metric), [points, metric]);
+  const series = useMemo(() => trimFlowSeriesToRange(fullSeries, range), [fullSeries, range]);
 
   const yoyValues = useMemo(
     () => series.map((p) => p.yoyPct).filter((v): v is number => v !== null),
@@ -722,7 +755,7 @@ function FlowTrendChart({ points }: { points: MonthlyFlowPoint[] }) {
   const yoyZScore =
     yoyStats && currentYoy !== null && yoyStats.stdDev !== 0 ? (currentYoy - yoyStats.mean) / yoyStats.stdDev : null;
 
-  if (series.length === 0) return null;
+  if (fullSeries.length === 0) return null;
 
   return (
     <Card>
@@ -730,6 +763,18 @@ function FlowTrendChart({ points }: { points: MonthlyFlowPoint[] }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle>{metricLabel} Trend</CardTitle>
           <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1" role="group" aria-label="Date range">
+              {FLOW_CHART_RANGE_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => setRange(o.value)}
+                  className={o.value === range ? segmentActive : segmentInactive}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center gap-1" role="group" aria-label="Chart metric">
               {(["sip", "netFlow"] as const).map((m) => (
                 <button
