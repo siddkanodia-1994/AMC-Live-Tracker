@@ -91,6 +91,51 @@ function BannerRow({ cols }: { cols: [string, string, string, string] }) {
   );
 }
 
+// Same two-row shape as the Flows panel's own FlowGroupBanner (title row,
+// then a column-label row) instead of BannerRow's single combined row --
+// so the left panel's own banners are the same height as the right panel's,
+// keeping Financial Year/Quarter/Month banners on the same horizontal line
+// across both panels (confirmed via direct pixel measurement; BannerRow
+// itself is kept for the unrelated Weekday table, which was never meant to
+// align row-for-row with this panel).
+function TwoRowBanner({ title, col1, col2, col3 }: { title: string; col1: string; col2: string; col3: string }) {
+  return (
+    <>
+      <TableRow className="bg-foreground hover:bg-foreground">
+        <TableCell colSpan={4} className="font-semibold text-background">
+          {title}
+        </TableCell>
+      </TableRow>
+      <TableRow className="hover:bg-transparent">
+        <TableCell />
+        <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">{col1}</TableCell>
+        <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">{col2}</TableCell>
+        <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">{col3}</TableCell>
+      </TableRow>
+    </>
+  );
+}
+
+// A blank row matching a real data row's height exactly (same two-line
+// label + range-subtext markup, just invisible) rather than a hardcoded
+// pixel value -- used to pad the Financial Year and Month blocks on the
+// left up to the right panel's own row count (3 and 5 rows respectively),
+// so every later banner stays aligned too. Confirmed: a pure visual
+// spacer, not new data.
+function SpacerRow() {
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableCell className="font-medium">
+        <span className="invisible">spacer</span>
+        <div className="invisible text-[10.5px] font-normal">spacer</div>
+      </TableCell>
+      <TableCell />
+      <TableCell />
+      <TableCell />
+    </TableRow>
+  );
+}
+
 const CR_FORMAT = '"₹"#,##0" cr"'; // whole crores, no decimals -- matches the web UI's own rounding
 const PCT_FORMAT = "0.00%";
 
@@ -920,9 +965,12 @@ export function SummaryPanel({
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="overflow-hidden rounded-lg border bg-card">
+            <div className="flex items-center border-b p-3">
+              <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">AMC AUM Summary</span>
+            </div>
             <Table>
               <TableBody>
-                <BannerRow cols={["Financial Year", "Total", "", "YoY"]} />
+                <TwoRowBanner title="Financial Year" col1="Total" col2="" col3="YoY" />
                 {data.financialYear.map((r) => (
                   <TableRow key={r.label}>
                     <TableCell className="font-medium">
@@ -934,10 +982,11 @@ export function SummaryPanel({
                     <PctCell value={r.yoyPct} />
                   </TableRow>
                 ))}
+                <SpacerRow />
               </TableBody>
 
               <TableBody>
-                <BannerRow cols={["Quarter>>", "Val (In Cr)", "QoQ", "YoY"]} />
+                <TwoRowBanner title="Quarter>>" col1="Val (In Cr)" col2="QoQ" col3="YoY" />
                 {data.quarter.map((r) => (
                   <TableRow key={r.label}>
                     <TableCell className="font-medium">
@@ -952,7 +1001,7 @@ export function SummaryPanel({
               </TableBody>
 
               <TableBody>
-                <BannerRow cols={["Month>>", "Val (In Cr)", "MoM", "Mo 6M"]} />
+                <TwoRowBanner title="Month>>" col1="Val (In Cr)" col2="MoM" col3="Mo 6M" />
                 {data.month.map((r, i) => {
                   const isSummary = i === data.month.length - 1;
                   return (
@@ -967,10 +1016,11 @@ export function SummaryPanel({
                     </TableRow>
                   );
                 })}
+                <SpacerRow />
               </TableBody>
 
               <TableBody>
-                <BannerRow cols={["Week>>", "Val (In Cr)", "WoW", "Wo 10W"]} />
+                <TwoRowBanner title="Week>>" col1="Val (In Cr)" col2="WoW" col3="Wo 10W" />
                 {data.tradingWindow.map((r) => (
                   <TableRow key={r.label}>
                     <TableCell className="font-medium">
