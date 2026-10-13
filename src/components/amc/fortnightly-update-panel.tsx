@@ -29,10 +29,22 @@ function LabelRow({ label, children, bold }: { label: string; children: React.Re
   );
 }
 
+// Same Excel-style cell-fill colours as the Summary tab's own PctCell
+// (summary-panel.tsx) -- #C6EFCE/#006100 positive, #FFC7CE/#9C0006
+// negative in light mode, adapted darker/desaturated tones in dark mode.
+// Kept in sync with that file's copy rather than shared, same precedent
+// as that file's own "local copy of small pure helpers" convention.
 function PctCell({ value, className }: { value: number | null; className?: string }) {
   if (value === null) return <TableCell className={`text-right tabular-nums text-muted-foreground ${className ?? ""}`}>—</TableCell>;
+  const positive = value >= 0;
   return (
-    <TableCell className={`text-right tabular-nums ${value >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"} ${className ?? ""}`}>
+    <TableCell
+      className={`text-right tabular-nums font-semibold ${
+        positive
+          ? "bg-[#C6EFCE] text-[#006100] dark:bg-[#0d3b2b] dark:text-[#6ee7b7]"
+          : "bg-[#FFC7CE] text-[#9C0006] dark:bg-[#4c1113] dark:text-[#fca5a5]"
+      } ${className ?? ""}`}
+    >
       {formatPct(value, { alwaysSign: true })}
     </TableCell>
   );
@@ -40,6 +52,20 @@ function PctCell({ value, className }: { value: number | null; className?: strin
 
 function PriceCell({ value }: { value: number | null }) {
   return <TableCell className="text-right tabular-nums font-semibold">{value === null ? "—" : formatPriceInr(value)}</TableCell>;
+}
+
+// Solid banner-bar section title, matching the Summary tab's own
+// TwoRowBanner/BannerRow convention -- a full-width TableRow living INSIDE
+// the Table (not a <div> sibling above it), so every card's title reads
+// the same as "Financial Year"/"Quarter>>" do there.
+function SectionBanner({ title, colSpan }: { title: string; colSpan: number }) {
+  return (
+    <TableRow className="bg-foreground hover:bg-foreground">
+      <TableCell colSpan={colSpan} className="font-semibold text-background">
+        {title}
+      </TableCell>
+    </TableRow>
+  );
 }
 
 export function FortnightlyUpdatePanel() {
@@ -224,9 +250,9 @@ function ScenarioHeaderRow() {
   return (
     <TableRow>
       <TableCell />
-      <TableCell className="text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Bear</TableCell>
-      <TableCell className="text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Base</TableCell>
-      <TableCell className="text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">Bull</TableCell>
+      <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Bear</TableCell>
+      <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Base</TableCell>
+      <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Bull</TableCell>
     </TableRow>
   );
 }
@@ -300,162 +326,170 @@ function FortnightlySheetView({
   const v = sheet.valuation;
 
   return (
-    <div className="space-y-6">
-      {/* Header: Stock / CMP / Shares */}
-      <div className="overflow-x-auto rounded-lg border bg-card">
-        <Table>
-          <TableBody>
-            <LabelRow label="Stock" bold>
-              <TableCell className="text-right font-semibold">{sheet.overviewName}</TableCell>
-            </LabelRow>
-            <LabelRow label="CMP">
-              <TableCell className="text-right tabular-nums" title="Latest EOD close on or before the As-of date, pulled from the dashboard">
-                {sheet.cmpInr === null ? "—" : formatPriceInr(sheet.cmpInr)}
-              </TableCell>
-            </LabelRow>
-            <LabelRow label="No of Shares (Cr)">
-              <ManualCell value={m.noOfSharesCr} onSave={(val) => onSave("noOfSharesCr", val)} />
-            </LabelRow>
-          </TableBody>
-        </Table>
-      </div>
-
-      {/* PAT / CAGR */}
-      <div className="overflow-x-auto rounded-lg border bg-card">
-        <Table>
-          <TableBody>
-            <TableRow>
-              <TableCell className="font-semibold">Period</TableCell>
-              <TableCell className="text-right text-xs font-semibold text-muted-foreground">FY26A</TableCell>
-              <TableCell className="text-right text-xs font-semibold text-muted-foreground">FY27E</TableCell>
-              <TableCell className="text-right text-xs font-semibold text-muted-foreground">FY28E</TableCell>
-              <TableCell className="text-right text-xs font-semibold text-muted-foreground">2Y CAGR</TableCell>
-            </TableRow>
-            <TableRow>
-              <TableCell className="font-semibold">PAT (Cr)</TableCell>
-              <ManualCell value={m.patFy26aCr} onSave={(val) => onSave("patFy26aCr", val)} />
-              <ManualCell value={m.patFy27eCr} onSave={(val) => onSave("patFy27eCr", val)} />
-              <ManualCell value={m.patFy28eCr} onSave={(val) => onSave("patFy28eCr", val)} />
-              <PctCell value={v.cagr2yPct} />
-            </TableRow>
-          </TableBody>
-        </Table>
-      </div>
-
-      {/* Bear / Base / Bull valuation block */}
-      <div className="overflow-x-auto rounded-lg border bg-card">
-        <Table>
-          <TableBody>
-            <ScenarioHeaderRow />
-            <ScenarioEditRow
-              label="Target PE"
-              bear={m.targetPeBear}
-              base={m.targetPeBase}
-              bull={m.targetPeBull}
-              onSave={onSave}
-              title="Manual -- FY28 Target Market Cap = PAT FY28E x Target PE"
-            />
-            <ScenarioMcapRow label="FY28 Target Market Cap (Cr)" values={v.fy28TargetMcapCr} />
-            <ScenarioPriceRow label="Target Price" values={v.fy28TargetPriceInr} bold />
-            <ScenarioPctRow label="Upside %" values={v.fy28UpsidePct} />
-
-            <TableRow>
-              <TableCell className="pt-4 font-semibold">FY27 Discounted</TableCell>
-              <TableCell className="pt-4 text-right text-xs text-muted-foreground" colSpan={2}>
-                Discount rate (%)
-              </TableCell>
-              <EditNumberCell
-                value={numOrZero(m.discountRateFy27Pct !== null ? m.discountRateFy27Pct * 100 : null)}
-                isOverridden={m.discountRateFy27Pct !== null}
-                onSave={(val) => onSave("discountRateFy27Pct", val === null ? null : val / 100)}
-                title="Manual -- annual discount rate (%) applied to bring the FY28 target price back to an FY27 value"
-              />
-            </TableRow>
-            <ScenarioPriceRow label="FY27 Discounted Price" values={v.fy27DiscountedPriceInr} />
-            <ScenarioPctRow label="Upside %" values={v.fy27UpsidePct} />
-
-            <TableRow>
-              <TableCell className="pt-4 font-semibold">FY26 Discounted</TableCell>
-              <TableCell className="pt-4 text-right text-xs text-muted-foreground" colSpan={2}>
-                Discount rate (%)
-              </TableCell>
-              <EditNumberCell
-                value={numOrZero(m.discountRateFy26Pct !== null ? m.discountRateFy26Pct * 100 : null)}
-                isOverridden={m.discountRateFy26Pct !== null}
-                onSave={(val) => onSave("discountRateFy26Pct", val === null ? null : val / 100)}
-                title="Manual -- additional annual discount rate (%), compounded with the FY27 rate, to bring the FY28 target price back to an FY26 value"
-              />
-            </TableRow>
-            <ScenarioPriceRow label="FY26 Discounted Price" values={v.fy26DiscountedPriceInr} />
-            <ScenarioPctRow label="Upside %" values={v.fy26UpsidePct} />
-          </TableBody>
-        </Table>
-      </div>
-
-      {/* Quarterly Averages (QAAUM) -- pulled, read-only */}
-      <div className="overflow-x-auto rounded-lg border bg-card">
-        <div className="border-b px-3 py-2 text-sm font-semibold">Quarterly Averages — QAAUM</div>
-        <Table>
-          <TableBody>
-            <TableRow>
-              <TableCell className="text-xs font-semibold text-muted-foreground">Period</TableCell>
-              <TableCell className="text-right text-xs font-semibold text-muted-foreground">Val (Cr)</TableCell>
-              <TableCell className="text-right text-xs font-semibold text-muted-foreground">QoQ</TableCell>
-              <TableCell className="text-right text-xs font-semibold text-muted-foreground">YoY</TableCell>
-            </TableRow>
-            {sheet.qaaum.map((row) => (
-              <TableRow key={row.label}>
-                <TableCell>
-                  <div className="font-semibold">{row.label}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {formatShortDate(row.range[0])} – {formatShortDate(row.range[1])}
-                  </div>
+    <div className="space-y-4">
+      {/* Row 1: Stock/CMP/Shares + PAT/CAGR */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <Table>
+            <TableBody>
+              <SectionBanner title="Stock" colSpan={2} />
+              <LabelRow label="Stock" bold>
+                <TableCell className="text-right font-semibold">{sheet.overviewName}</TableCell>
+              </LabelRow>
+              <LabelRow label="CMP">
+                <TableCell className="text-right tabular-nums" title="Latest EOD close on or before the As-of date, pulled from the dashboard">
+                  {sheet.cmpInr === null ? "—" : formatPriceInr(sheet.cmpInr)}
                 </TableCell>
-                <TableCell className="text-right tabular-nums">{row.valCr === null ? "—" : formatCr(row.valCr)}</TableCell>
-                <PctCell value={row.qoqPct ?? null} />
-                <PctCell value={row.yoyPct ?? null} />
+              </LabelRow>
+              <LabelRow label="No of Shares (Cr)">
+                <ManualCell value={m.noOfSharesCr} onSave={(val) => onSave("noOfSharesCr", val)} />
+              </LabelRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <Table>
+            <TableBody>
+              <SectionBanner title="PAT" colSpan={5} />
+              <TableRow>
+                <TableCell className="font-semibold">Period</TableCell>
+                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">FY26A</TableCell>
+                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">FY27E</TableCell>
+                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">FY28E</TableCell>
+                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">2Y CAGR</TableCell>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+              <TableRow>
+                <TableCell className="font-semibold">PAT (Cr)</TableCell>
+                <ManualCell value={m.patFy26aCr} onSave={(val) => onSave("patFy26aCr", val)} />
+                <ManualCell value={m.patFy27eCr} onSave={(val) => onSave("patFy27eCr", val)} />
+                <ManualCell value={m.patFy28eCr} onSave={(val) => onSave("patFy28eCr", val)} />
+                <PctCell value={v.cagr2yPct} />
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
-      {/* SIP AMC Growth / SIP Industry Growth -- fully manual */}
+      {/* Row 2: Bear/Base/Bull valuation block + QAAUM */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <Table>
+            <TableBody>
+              <SectionBanner title="Valuation (Bear / Base / Bull)" colSpan={4} />
+              <ScenarioHeaderRow />
+              <ScenarioEditRow
+                label="Target PE"
+                bear={m.targetPeBear}
+                base={m.targetPeBase}
+                bull={m.targetPeBull}
+                onSave={onSave}
+                title="Manual -- FY28 Target Market Cap = PAT FY28E x Target PE"
+              />
+              <ScenarioMcapRow label="FY28 Target Market Cap (Cr)" values={v.fy28TargetMcapCr} />
+              <ScenarioPriceRow label="Target Price" values={v.fy28TargetPriceInr} bold />
+              <ScenarioPctRow label="Upside %" values={v.fy28UpsidePct} />
+
+              <TableRow>
+                <TableCell className="pt-4 font-semibold">FY27 Discounted</TableCell>
+                <TableCell className="pt-4 text-right text-xs text-muted-foreground" colSpan={2}>
+                  Discount rate (%)
+                </TableCell>
+                <EditNumberCell
+                  value={numOrZero(m.discountRateFy27Pct !== null ? m.discountRateFy27Pct * 100 : null)}
+                  isOverridden={m.discountRateFy27Pct !== null}
+                  onSave={(val) => onSave("discountRateFy27Pct", val === null ? null : val / 100)}
+                  title="Manual -- annual discount rate (%) applied to bring the FY28 target price back to an FY27 value"
+                />
+              </TableRow>
+              <ScenarioPriceRow label="FY27 Discounted Price" values={v.fy27DiscountedPriceInr} />
+              <ScenarioPctRow label="Upside %" values={v.fy27UpsidePct} />
+
+              <TableRow>
+                <TableCell className="pt-4 font-semibold">FY26 Discounted</TableCell>
+                <TableCell className="pt-4 text-right text-xs text-muted-foreground" colSpan={2}>
+                  Discount rate (%)
+                </TableCell>
+                <EditNumberCell
+                  value={numOrZero(m.discountRateFy26Pct !== null ? m.discountRateFy26Pct * 100 : null)}
+                  isOverridden={m.discountRateFy26Pct !== null}
+                  onSave={(val) => onSave("discountRateFy26Pct", val === null ? null : val / 100)}
+                  title="Manual -- additional annual discount rate (%), compounded with the FY27 rate, to bring the FY28 target price back to an FY26 value"
+                />
+              </TableRow>
+              <ScenarioPriceRow label="FY26 Discounted Price" values={v.fy26DiscountedPriceInr} />
+              <ScenarioPctRow label="Upside %" values={v.fy26UpsidePct} />
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* Quarterly Averages (QAAUM) -- pulled, read-only */}
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <Table>
+            <TableBody>
+              <SectionBanner title="Quarterly Averages — QAAUM" colSpan={4} />
+              <TableRow>
+                <TableCell className="text-[10.5px] font-semibold uppercase text-muted-foreground">Period</TableCell>
+                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Val (Cr)</TableCell>
+                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">QoQ</TableCell>
+                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">YoY</TableCell>
+              </TableRow>
+              {sheet.qaaum.map((row) => (
+                <TableRow key={row.label}>
+                  <TableCell>
+                    <div className="font-semibold">{row.label}</div>
+                    <div className="text-[10.5px] font-normal text-muted-foreground/70">
+                      {formatShortDate(row.range[0])} – {formatShortDate(row.range[1])}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{row.valCr === null ? "—" : formatCr(row.valCr)}</TableCell>
+                  <PctCell value={row.qoqPct ?? null} />
+                  <PctCell value={row.yoyPct ?? null} />
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      {/* Row 3: SIP AMC Growth / SIP Industry Growth -- fully manual */}
       <div className="grid gap-4 lg:grid-cols-2">
         <SipAmcGrowthTable sheet={sheet} onSave={onSave} />
         <SipIndustryGrowthTable sheet={sheet} onSave={onSave} />
       </div>
 
-      {/* Ratio section -- pulled, read-only */}
-      <div className="overflow-x-auto rounded-lg border bg-card">
-        <div className="border-b px-3 py-2 text-sm font-semibold">Ratio (Price / Avg AUM)</div>
-        <Table>
-          <TableBody>
-            <LabelRow label="SD Level">
-              <TableCell className="text-right tabular-nums">
-                {sheet.ratio?.sdLevel === null || sheet.ratio?.sdLevel === undefined ? "—" : sheet.ratio.sdLevel.toFixed(2)}
-              </TableCell>
-            </LabelRow>
-            <LabelRow label="Upside to Mean">
-              <PctCell value={sheet.ratio?.upsideToMeanPct ?? null} />
-            </LabelRow>
-            <LabelRow label="Time Period">
-              <TableCell className="text-right">{sheet.ratio?.timePeriodLabel ?? "—"}</TableCell>
-            </LabelRow>
-            <LabelRow label="Avg AUM Days">
-              <TableCell className="text-right">{sheet.ratio ? `${sheet.ratio.avgAumDays} Days` : "—"}</TableCell>
-            </LabelRow>
-            <LabelRow label="Correlation">
-              <PctCell value={sheet.ratio?.correlationPct ?? null} />
-            </LabelRow>
-            <LabelRow label="R-Square">
-              <PctCell value={sheet.ratio?.rSquared ?? null} />
-            </LabelRow>
-          </TableBody>
-        </Table>
-        <p className="border-t px-3 py-2 text-xs text-muted-foreground">
-          Uses the Stock Correlation tab&apos;s own shared Date Range / Moving Avg settings.
-        </p>
+      {/* Row 4: Ratio section -- pulled, read-only (trailing, no pair) */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <Table>
+            <TableBody>
+              <SectionBanner title="Ratio (Price / Avg AUM)" colSpan={2} />
+              <LabelRow label="SD Level">
+                <TableCell className="text-right tabular-nums">
+                  {sheet.ratio?.sdLevel === null || sheet.ratio?.sdLevel === undefined ? "—" : sheet.ratio.sdLevel.toFixed(2)}
+                </TableCell>
+              </LabelRow>
+              <LabelRow label="Upside to Mean">
+                <PctCell value={sheet.ratio?.upsideToMeanPct ?? null} />
+              </LabelRow>
+              <LabelRow label="Time Period">
+                <TableCell className="text-right">{sheet.ratio?.timePeriodLabel ?? "—"}</TableCell>
+              </LabelRow>
+              <LabelRow label="Avg AUM Days">
+                <TableCell className="text-right">{sheet.ratio ? `${sheet.ratio.avgAumDays} Days` : "—"}</TableCell>
+              </LabelRow>
+              <LabelRow label="Correlation">
+                <PctCell value={sheet.ratio?.correlationPct ?? null} />
+              </LabelRow>
+              <LabelRow label="R-Square">
+                <PctCell value={sheet.ratio?.rSquared ?? null} />
+              </LabelRow>
+            </TableBody>
+          </Table>
+          <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+            Uses the Stock Correlation tab&apos;s own shared Date Range / Moving Avg settings.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -485,16 +519,16 @@ function SipAmcGrowthTable({
   const yoyByRow = [yoy, yoyPrev, null, null, null];
 
   return (
-    <div className="overflow-x-auto rounded-lg border bg-card">
-      <div className="border-b px-3 py-2 text-sm font-semibold">SIP AMC Growth</div>
+    <div className="overflow-hidden rounded-lg border bg-card">
       <Table>
         <TableBody>
+          <SectionBanner title="SIP AMC Growth" colSpan={5} />
           <TableRow>
-            <TableCell className="text-xs font-semibold text-muted-foreground">Period</TableCell>
-            <TableCell className="text-right text-xs font-semibold text-muted-foreground">Val (Cr)</TableCell>
-            <TableCell className="text-right text-xs font-semibold text-muted-foreground">QoQ</TableCell>
-            <TableCell className="text-right text-xs font-semibold text-muted-foreground">YoY</TableCell>
-            <TableCell className="text-right text-xs font-semibold text-muted-foreground">SIP/Equity AUM</TableCell>
+            <TableCell className="text-[10.5px] font-semibold uppercase text-muted-foreground">Period</TableCell>
+            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Val (Cr)</TableCell>
+            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">QoQ</TableCell>
+            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">YoY</TableCell>
+            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">SIP/Equity AUM</TableCell>
           </TableRow>
           {rows.map((row, i) => (
             <TableRow key={row.label}>
@@ -541,15 +575,15 @@ function SipIndustryGrowthTable({
   const yoyByRow = [yoy, yoyPrev, null, null, null];
 
   return (
-    <div className="overflow-x-auto rounded-lg border bg-card">
-      <div className="border-b px-3 py-2 text-sm font-semibold">SIP Industry Growth</div>
+    <div className="overflow-hidden rounded-lg border bg-card">
       <Table>
         <TableBody>
+          <SectionBanner title="SIP Industry Growth" colSpan={4} />
           <TableRow>
-            <TableCell className="text-xs font-semibold text-muted-foreground">Period</TableCell>
-            <TableCell className="text-right text-xs font-semibold text-muted-foreground">Val (Cr)</TableCell>
-            <TableCell className="text-right text-xs font-semibold text-muted-foreground">MoM</TableCell>
-            <TableCell className="text-right text-xs font-semibold text-muted-foreground">YoY</TableCell>
+            <TableCell className="text-[10.5px] font-semibold uppercase text-muted-foreground">Period</TableCell>
+            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Val (Cr)</TableCell>
+            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">MoM</TableCell>
+            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">YoY</TableCell>
           </TableRow>
           {rows.map((row, i) => (
             <TableRow key={row.label}>
