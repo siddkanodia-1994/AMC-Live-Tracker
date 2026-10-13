@@ -723,6 +723,60 @@ export const amcManualNetFlowLog = pgTable(
   (t) => [index("amc_manual_net_flow_log_amc_period_idx").on(t.amcId, t.reportPeriod)]
 );
 
+// One dated snapshot per (amcId, asOfDate) for the "Fortnightly AMC
+// Update" tab's hand-entered analyst fields (share count, PAT estimates,
+// target PE, discount rates, SIP growth) -- scoped to the 8
+// amc_listed_stock AMCs, though not FK-restricted to them at the schema
+// level (enforced by the UI/API only, same convention as
+// amc_manual_net_flow). Deliberately a NEW ROW per fortnight, never
+// overwritten in place -- the dated-row model itself is the audit trail,
+// unlike amc_manual_net_flow's single current-value-per-period design.
+// Every pulled/computed field on that tab (CMP, QAAUM, correlation stats)
+// is derived fresh at read time from this row's own asOfDate -- nothing
+// about those lives in this table.
+export const amcFortnightlyUpdate = pgTable(
+  "amc_fortnightly_update",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    asOfDate: date("as_of_date").notNull(),
+    noOfSharesCr: numeric("no_of_shares_cr", { precision: 18, scale: 4 }),
+    patFy26aCr: numeric("pat_fy26a_cr", { precision: 18, scale: 4 }),
+    patFy27eCr: numeric("pat_fy27e_cr", { precision: 18, scale: 4 }),
+    patFy28eCr: numeric("pat_fy28e_cr", { precision: 18, scale: 4 }),
+    targetPeBear: numeric("target_pe_bear", { precision: 10, scale: 2 }),
+    targetPeBase: numeric("target_pe_base", { precision: 10, scale: 2 }),
+    targetPeBull: numeric("target_pe_bull", { precision: 10, scale: 2 }),
+    discountRateFy27Pct: numeric("discount_rate_fy27_pct", { precision: 7, scale: 4 }),
+    discountRateFy26Pct: numeric("discount_rate_fy26_pct", { precision: 7, scale: 4 }),
+    // SIP AMC Growth -- 5 periods (QTD, prior quarter, prior-prior
+    // quarter, same quarter last year, prior quarter last year), each
+    // with its own Val and SIP/Equity AUM % -- QoQ/YoY are computed from
+    // these Vals, never stored.
+    sipAmcQtdValCr: numeric("sip_amc_qtd_val_cr", { precision: 18, scale: 4 }),
+    sipAmcQtdPct: numeric("sip_amc_qtd_pct", { precision: 7, scale: 4 }),
+    sipAmcPrevQValCr: numeric("sip_amc_prev_q_val_cr", { precision: 18, scale: 4 }),
+    sipAmcPrevQPct: numeric("sip_amc_prev_q_pct", { precision: 7, scale: 4 }),
+    sipAmcPrevQ2ValCr: numeric("sip_amc_prev_q2_val_cr", { precision: 18, scale: 4 }),
+    sipAmcPrevQ2Pct: numeric("sip_amc_prev_q2_pct", { precision: 7, scale: 4 }),
+    sipAmcYoyQValCr: numeric("sip_amc_yoy_q_val_cr", { precision: 18, scale: 4 }),
+    sipAmcYoyQPct: numeric("sip_amc_yoy_q_pct", { precision: 7, scale: 4 }),
+    sipAmcYoyQ2ValCr: numeric("sip_amc_yoy_q2_val_cr", { precision: 18, scale: 4 }),
+    sipAmcYoyQ2Pct: numeric("sip_amc_yoy_q2_pct", { precision: 7, scale: 4 }),
+    // SIP Industry Growth -- same 5-period shape, monthly instead of
+    // quarterly, Val only (no per-row %, matching the sample layout).
+    sipIndustryMtdValCr: numeric("sip_industry_mtd_val_cr", { precision: 18, scale: 4 }),
+    sipIndustryPrevMValCr: numeric("sip_industry_prev_m_val_cr", { precision: 18, scale: 4 }),
+    sipIndustryPrevM2ValCr: numeric("sip_industry_prev_m2_val_cr", { precision: 18, scale: 4 }),
+    sipIndustryYoyMValCr: numeric("sip_industry_yoy_m_val_cr", { precision: 18, scale: 4 }),
+    sipIndustryYoyM2ValCr: numeric("sip_industry_yoy_m2_val_cr", { precision: 18, scale: 4 }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("amc_fortnightly_update_amc_date_idx").on(t.amcId, t.asOfDate)]
+);
+
 // User-provided ground-truth monthly exit equity AUM for the 8
 // amc_listed_stock AMCs, covering 2022-12 through 2025-12 -- the period
 // before any real monthly holdings import exists (earliest real

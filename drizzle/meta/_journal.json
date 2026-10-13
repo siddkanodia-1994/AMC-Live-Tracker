@@ -176,6 +176,13 @@
       "when": 1791915930213,
       "tag": "0024_magical_banshee",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791922909260,
+      "tag": "0025_calm_scrambler",
+      "breakpoints": true
     }
   ]
 }

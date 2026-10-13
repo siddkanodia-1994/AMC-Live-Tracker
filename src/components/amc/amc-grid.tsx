@@ -16,6 +16,7 @@ import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-tabl
 import { SectoralHoldingsTable } from "./sectoral-holdings-table";
 import { EtfTable } from "@/components/etf/etf-table";
 import { StockCorrelationTable } from "./stock-correlation-table";
+import { FortnightlyUpdatePanel } from "./fortnightly-update-panel";
 import { SummaryPage } from "./summary-page";
 import { BacktestPage } from "./backtest-page";
 import { StockTab } from "@/components/stock/stock-tab";
@@ -888,6 +889,9 @@ export function AmcGrid({
               <TabsTrigger value="amc-stock-correlation" className="after:bg-[var(--toolbar-accent)]">
                 Stock Correlation
               </TabsTrigger>
+              <TabsTrigger value="fortnightly-update" className="after:bg-[var(--toolbar-accent)]">
+                Fortnightly AMC Update
+              </TabsTrigger>
               <TabsTrigger value="summary" className="after:bg-[var(--toolbar-accent)]">
                 Summary
               </TabsTrigger>
@@ -1250,6 +1254,9 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="amc-stock-correlation">
           <StockCorrelationTable />
+        </TabsContent>
+        <TabsContent value="fortnightly-update">
+          <FortnightlyUpdatePanel />
         </TabsContent>
         <TabsContent value="summary">
           <SummaryPage />
