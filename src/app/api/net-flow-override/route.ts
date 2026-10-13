@@ -4,6 +4,7 @@ import { db } from "@/lib/db/client";
 import { amcListedStock, amcManualNetFlow, amcManualNetFlowLog } from "@/lib/db/schema";
 import { withErrorHandling } from "@/lib/api/with-error-handling";
 import { getAvailableReportPeriods } from "@/lib/aum/aum-growth";
+import { invalidateLiveAumCache } from "@/lib/aum/cache";
 
 // GET ?reportPeriod=2026-08 -> which AMCs get the editable column at all
 // (listedStockAmcIds) plus the current manual net flow overrides for that
@@ -89,6 +90,11 @@ export const POST = withErrorHandling(async (request: Request) => {
 
   if (changed) {
     await db.insert(amcManualNetFlowLog).values({ amcId, reportPeriod, oldValueCr: oldValue, newValueCr: newValue });
+    // Same reasoning as mute-stock/dismiss-last-close: without this, the
+    // Overview table and AMC detail page keep serving computeLiveAum's
+    // in-memory cached result (up to OFF_HOURS_CACHE_TTL_MS stale) and the
+    // override wouldn't show up until that cache naturally expired.
+    invalidateLiveAumCache();
   }
 
   return NextResponse.json({ ok: true, amcId, reportPeriod, netFlowOverrideCr });
