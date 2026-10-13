@@ -165,7 +165,17 @@ export function AmcDetailView({
           value={amc.netFlowCr !== null ? formatDeltaCr(amc.netFlowCr) : "—"}
           badge={
             amc.netFlowCr !== null && amc.netFlowPct !== null ? (
-              <AumDeltaBadge deltaCr={amc.netFlowCr} deltaPct={amc.netFlowPct} />
+              <>
+                <AumDeltaBadge deltaCr={amc.netFlowCr} deltaPct={amc.netFlowPct} />
+                {amc.netFlowIsManual && (
+                  <span
+                    className="rounded-sm border px-1 text-[9px] font-semibold uppercase text-muted-foreground"
+                    title="Manually entered -- overrides the calculated estimate. Edit it from the Equity AUM Growth tab."
+                  >
+                    Manual
+                  </span>
+                )}
+              </>
             ) : undefined
           }
           subtext={

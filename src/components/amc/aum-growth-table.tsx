@@ -9,8 +9,13 @@ import { formatCr, formatDeltaCr, formatPct, formatShortDate } from "@/lib/utils
 import { closestDateAtOrBefore } from "@/lib/aum/report-period";
 import type { TopNOption } from "@/lib/utils/top-n";
 import { useAumGrowth } from "@/hooks/use-aum-growth";
+import { useNetFlowOverrides } from "@/hooks/use-net-flow-overrides";
+import { EditNumberCell } from "./edit-number-cell";
 import { FieldBox } from "./field-box";
 import type { AumGrowthRow, RepriceBasis } from "@/lib/aum/aum-growth";
+
+const MANUAL_NET_FLOW_TITLE =
+  "Manually entered, for the 8 amc_listed_stock AMCs only -- once saved, overrides the calculated Est. Net Flow on the Overview table, the AMC detail page, and the Incl. Est. Flow toggle's Live AUM / Average AUM figures. Does not change the Net Flow / Price Performance / Growth columns in THIS table, which stay on the calculated figure. Only enterable here while comparing the two most recent periods (basis A) -- the override is keyed to one specific report period, not an arbitrary comparison.";
 
 type SortKey =
   | "overviewName"
@@ -130,6 +135,8 @@ function TotalsRow({ label, totals, muted }: { label: string; totals: GrowthTota
       <PctCell value={totals.totalPricePerformancePct} />
       <DeltaCrCell value={totals.totalNetFlowCr} />
       <PctCell value={totals.totalNetFlowPct} />
+      {/* No meaningful "total" across independently-timed manual entries. */}
+      <TableCell className="text-right tabular-nums text-muted-foreground border-l">—</TableCell>
     </TableRow>
   );
 }
@@ -189,6 +196,37 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
   const datesForB = data?.datesForB ?? [];
   const activeDates = effectiveBasis === "B" ? datesForB : datesForA;
   const hasCustomRepricing = selectedBasis !== null || selectedAsOfDate !== null;
+
+  // The Manual Net Flow column is only meaningful while comparing the two
+  // most recent periods under basis A -- the override is keyed to one
+  // report period (effectiveB), not an arbitrary pair, and basis B doesn't
+  // even show a calculated Net Flow to begin with. Deliberately checked
+  // against the ACTUAL resolved period/basis, not whether the picker was
+  // "touched" (hasCustomRepricing) -- re-selecting the same default pair is
+  // still the default view.
+  const latestPeriod = allPeriods.length > 0 ? allPeriods[allPeriods.length - 1] : null;
+  const isDefaultNetFlowView = effectiveBasis === "A" && effectiveB !== null && effectiveB === latestPeriod;
+  const { data: overridesData, mutate: mutateOverrides } = useNetFlowOverrides(
+    isDefaultNetFlowView && effectiveB ? effectiveB : undefined
+  );
+  const listedStockAmcIds = useMemo(
+    () => new Set(overridesData?.listedStockAmcIds ?? []),
+    [overridesData]
+  );
+
+  async function saveManualNetFlow(amcId: number, netFlowOverrideCr: number | null) {
+    if (!effectiveB) return;
+    const res = await fetch("/api/net-flow-override", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amcId, reportPeriod: effectiveB, netFlowOverrideCr }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error ?? "Failed to save manual net flow");
+    }
+    await mutateOverrides();
+  }
 
   // The most recent period can never be a valid "earlier" side -- there's
   // nothing after it to compare against yet.
@@ -291,6 +329,10 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
       "Price Performance (%)": row.pricePerformancePct !== null ? row.pricePerformancePct * 100 : null,
       "Net Flow (Cr)": row.netFlowCr,
       [`Net Flow % of ${effectiveA} AUM`]: row.netFlowPct !== null ? row.netFlowPct * 100 : null,
+      "Manual Net Flow (Cr)":
+        isDefaultNetFlowView && listedStockAmcIds.has(row.amcId)
+          ? (overridesData?.overrides[row.amcId]?.netFlowOverrideCr ?? null)
+          : null,
     })),
   }));
 
@@ -451,6 +493,9 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
                 {...headProps}
                 title={netFlowTitle(effectiveBasis, effectiveA, effectiveB)}
               />
+              <TableHead className="text-right border-l" title={MANUAL_NET_FLOW_TITLE}>
+                Manual Net Flow (Cr)
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -470,6 +515,18 @@ export function AumGrowthTable({ topN }: { topN: TopNOption }) {
                 <PctCell value={row.pricePerformancePct} />
                 <DeltaCrCell value={row.netFlowCr} />
                 <PctCell value={row.netFlowPct} />
+                {isDefaultNetFlowView && listedStockAmcIds.has(row.amcId) ? (
+                  <EditNumberCell
+                    value={overridesData?.overrides[row.amcId]?.netFlowOverrideCr ?? row.netFlowCr ?? 0}
+                    isOverridden={overridesData?.overrides[row.amcId] !== undefined}
+                    title={MANUAL_NET_FLOW_TITLE}
+                    onSave={(v) => saveManualNetFlow(row.amcId, v)}
+                  />
+                ) : (
+                  <TableCell className="text-right tabular-nums text-muted-foreground border-l" title={MANUAL_NET_FLOW_TITLE}>
+                    —
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>

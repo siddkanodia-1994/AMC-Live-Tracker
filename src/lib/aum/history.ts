@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcHistoricalAumEstimate, amcPeriods, amcs, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
+import { amcHistoricalAumEstimate, amcManualNetFlow, amcPeriods, amcs, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { addDaysToDateString, getIstDateString } from "../utils/date";
 import { firstDayOfNextMonth, lastDayOfReportMonth } from "./report-period";
 
@@ -50,13 +50,14 @@ export interface FlowAdjustmentContext {
  * Everything flowAdjustmentForDate needs for "the current report period",
  * built once per request and threaded into getAverageAumForRange wherever a
  * window can include days from the still-open period (see the flow-estimate
- * averages audit). A fresh getNetFlowForPeriod query, independent of
- * whatever single netFlows map a caller may already hold -- kept this way so
- * getRolling90DayAverages/getOverviewAdjustments don't have to restructure
- * their own already-parallel Promise.all just to share one.
+ * averages audit). A fresh getEffectiveNetFlowForPeriod query (calculated
+ * net flow with any amc_listed_stock manual overrides applied), independent
+ * of whatever single netFlows map a caller may already hold -- kept this
+ * way so getRolling90DayAverages/getOverviewAdjustments don't have to
+ * restructure their own already-parallel Promise.all just to share one.
  */
 export async function getFlowAdjustmentContext(reportPeriod: string): Promise<FlowAdjustmentContext> {
-  const netFlows = await getNetFlowForPeriod(reportPeriod);
+  const netFlows = await getEffectiveNetFlowForPeriod(reportPeriod);
   return {
     anchorMonthEndDate: lastDayOfReportMonth(reportPeriod),
     netFlowCrByAmcId: new Map([...netFlows].map(([amcId, nf]) => [amcId, nf.netFlowCr])),
@@ -564,6 +565,10 @@ export interface NetFlowEstimate {
   priorPeriodReportedAumCr: number;
   baselineCr: number;
   monthEndDate: string;
+  // true when netFlowCr/netFlowPct came from amcManualNetFlow (see
+  // getEffectiveNetFlowForPeriod below) instead of the calculated formula.
+  // Always false from getNetFlowForPeriod itself.
+  netFlowIsManual: boolean;
 }
 
 /**
@@ -663,9 +668,72 @@ export async function getNetFlowForPeriod(reportPeriod: string): Promise<Map<num
     const reportedAumCr = Number(cur.reportedAumCr);
     const netFlowCr = reportedAumCr - baselineCr;
     const netFlowPct = priorPeriodReportedAumCr !== 0 ? netFlowCr / priorPeriodReportedAumCr : null;
-    map.set(cur.amcId, { netFlowCr, netFlowPct, priorPeriod, priorPeriodReportedAumCr, baselineCr, monthEndDate });
+    map.set(cur.amcId, {
+      netFlowCr,
+      netFlowPct,
+      priorPeriod,
+      priorPeriodReportedAumCr,
+      baselineCr,
+      monthEndDate,
+      netFlowIsManual: false,
+    });
   }
 
+  return map;
+}
+
+/**
+ * Non-null manual net flow overrides for one report period, keyed by amcId
+ * -- see amcManualNetFlow in db/schema.ts. Only ever meaningfully populated
+ * for the amc_listed_stock AMCs (the UI only offers the input for those 8),
+ * but not restricted at the query level -- whatever's actually in the table
+ * applies.
+ */
+export async function getManualNetFlowOverrides(reportPeriod: string): Promise<Map<number, number>> {
+  const rows = await db
+    .select({ amcId: amcManualNetFlow.amcId, netFlowOverrideCr: amcManualNetFlow.netFlowOverrideCr })
+    .from(amcManualNetFlow)
+    .where(eq(amcManualNetFlow.reportPeriod, reportPeriod));
+
+  const map = new Map<number, number>();
+  for (const r of rows) {
+    if (r.netFlowOverrideCr !== null) map.set(r.amcId, Number(r.netFlowOverrideCr));
+  }
+  return map;
+}
+
+/**
+ * getNetFlowForPeriod, with any amcManualNetFlow overrides for this period
+ * applied on top -- the single point every consumer of net flow should call
+ * instead of getNetFlowForPeriod directly, so a manually-entered figure for
+ * one of the 8 listed-stock AMCs reaches the Overview table, the AMC detail
+ * page, and the flow-adjustment toggle's Live AUM/Average AUM figures all
+ * at once. Deliberately NOT applied inside getAumGrowthComparison (the
+ * Equity AUM Growth tab's own, separately-computed Net Flow/Price
+ * Performance/Growth columns) -- see the manual-net-flow-override plan's
+ * audit finding: those three figures hold an exact algebraic identity
+ * (Price Performance + Net Flow = Growth) that an override here would
+ * silently break, so that tab's own column for these 8 AMCs is deliberately
+ * a separate, read-only-everywhere-else add-on instead.
+ */
+export async function getEffectiveNetFlowForPeriod(reportPeriod: string): Promise<Map<number, NetFlowEstimate>> {
+  const [calculated, overrides] = await Promise.all([
+    getNetFlowForPeriod(reportPeriod),
+    getManualNetFlowOverrides(reportPeriod),
+  ]);
+  if (overrides.size === 0) return calculated;
+
+  const map = new Map(calculated);
+  for (const [amcId, netFlowOverrideCr] of overrides) {
+    const base = map.get(amcId);
+    if (!base) continue; // no calculated baseline to override (e.g. no prior period yet) -- skip rather than fabricate one
+    map.set(amcId, {
+      ...base,
+      netFlowCr: netFlowOverrideCr,
+      netFlowPct: base.priorPeriodReportedAumCr !== 0 ? netFlowOverrideCr / base.priorPeriodReportedAumCr : null,
+      netFlowIsManual: true,
+    });
+  }
   return map;
 }
 

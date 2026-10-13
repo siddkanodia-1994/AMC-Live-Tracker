@@ -684,6 +684,45 @@ export const amcListedStock = pgTable(
   (t) => [uniqueIndex("amc_listed_stock_amc_id_idx").on(t.amcId)]
 );
 
+// User-provided monthly net flow for the amc_listed_stock AMCs -- these 8
+// disclose their own flow figures as separately-listed companies, more
+// authoritative than this app's own getNetFlowForPeriod approximation.
+// One row per AMC per report period; null netFlowOverrideCr means "not
+// overridden, use the calculated figure" (same convention as
+// totalAumGrowthOverrides below). Always editable -- re-saving overwrites.
+// A read-time overlay only: see getEffectiveNetFlowForPeriod in
+// src/lib/aum/history.ts -- never written into live_aum_daily_snapshot.
+export const amcManualNetFlow = pgTable(
+  "amc_manual_net_flow",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    reportPeriod: text("report_period").notNull(),
+    netFlowOverrideCr: numeric("net_flow_override_cr", { precision: 18, scale: 4 }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("amc_manual_net_flow_amc_period_idx").on(t.amcId, t.reportPeriod)]
+);
+
+// Audit trail for the manual net flow edits above -- same shape/reasoning
+// as totalAumGrowthOverrideLog below, just one field so no `field` column.
+export const amcManualNetFlowLog = pgTable(
+  "amc_manual_net_flow_log",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    reportPeriod: text("report_period").notNull(),
+    oldValueCr: numeric("old_value_cr", { precision: 18, scale: 4 }),
+    newValueCr: numeric("new_value_cr", { precision: 18, scale: 4 }),
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("amc_manual_net_flow_log_amc_period_idx").on(t.amcId, t.reportPeriod)]
+);
+
 // User-provided ground-truth monthly exit equity AUM for the 8
 // amc_listed_stock AMCs, covering 2022-12 through 2025-12 -- the period
 // before any real monthly holdings import exists (earliest real

@@ -169,6 +169,13 @@
       "when": 1791572544303,
       "tag": "0023_simple_liz_osborn",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791915930213,
+      "tag": "0024_magical_banshee",
+      "breakpoints": true
     }
   ]
 }

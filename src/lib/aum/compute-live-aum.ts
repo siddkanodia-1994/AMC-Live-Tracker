@@ -27,7 +27,7 @@ import {
 import {
   flowAdjustmentForDate,
   getAverageAumSinceReport,
-  getNetFlowForPeriod,
+  getEffectiveNetFlowForPeriod,
   getPreviousDayIsinPrices,
   getPreviousDayLiveAum,
   getRolling90DayAverages,
@@ -605,6 +605,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       oneDayChangePct: null,
       netFlowCr: null,
       netFlowPct: null,
+      netFlowIsManual: false,
       netFlowPriorPeriod: null,
       netFlowPriorPeriodReportedAumCr: null,
       netFlowBaselineCr: null,
@@ -730,7 +731,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   const [averages, previousDay, netFlows, rolling90] = await Promise.all([
     getAverageAumSinceReport(reportPeriod).catch(() => new Map()),
     getPreviousDayLiveAum().catch(() => new Map()),
-    getNetFlowForPeriod(reportPeriod).catch(() => new Map()),
+    getEffectiveNetFlowForPeriod(reportPeriod).catch(() => new Map()),
     getRolling90DayAverages(reportPeriod).catch(() => null),
   ]);
   if (rolling90) {
@@ -780,6 +781,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
     if (netFlow) {
       amc.netFlowCr = netFlow.netFlowCr;
       amc.netFlowPct = netFlow.netFlowPct;
+      amc.netFlowIsManual = netFlow.netFlowIsManual;
       amc.netFlowPriorPeriod = netFlow.priorPeriod;
       amc.netFlowPriorPeriodReportedAumCr = netFlow.priorPeriodReportedAumCr;
       amc.netFlowBaselineCr = netFlow.baselineCr;

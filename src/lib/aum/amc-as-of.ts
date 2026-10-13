@@ -241,6 +241,7 @@ export async function computeAmcAsOf(
     oneDayChangePct: amcOneDayChangePct,
     netFlowCr: null,
     netFlowPct: null,
+    netFlowIsManual: false,
     netFlowPriorPeriod: null,
     netFlowPriorPeriodReportedAumCr: null,
     netFlowBaselineCr: null,

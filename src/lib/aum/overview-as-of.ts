@@ -199,6 +199,7 @@ export async function computeOverviewAsOf(
       oneDayChangePct: s.prevLiveAumCr !== null && s.prevLiveAumCr !== 0 ? s.liveAumCr / s.prevLiveAumCr - 1 : null,
       netFlowCr: null,
       netFlowPct: null,
+      netFlowIsManual: false,
       netFlowPriorPeriod: null,
       netFlowPriorPeriodReportedAumCr: null,
       netFlowBaselineCr: null,

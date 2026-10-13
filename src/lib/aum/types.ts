@@ -121,6 +121,12 @@ export interface AmcLiveAum {
   // the Overview table and the AUM Growth tab never show two different
   // percentages for the same underlying flow amount.
   netFlowPct: number | null;
+  // true when netFlowCr/netFlowPct came from a manually-entered
+  // amc_listed_stock override (see getEffectiveNetFlowForPeriod in
+  // history.ts) instead of the calculated formula -- drives the "Manual"
+  // badge on the Overview table and AMC detail page. Never true outside
+  // live mode (amc-as-of.ts/overview-as-of.ts force netFlowCr to null).
+  netFlowIsManual: boolean;
   netFlowPriorPeriod: string | null;
   netFlowPriorPeriodReportedAumCr: number | null;
   netFlowBaselineCr: number | null;

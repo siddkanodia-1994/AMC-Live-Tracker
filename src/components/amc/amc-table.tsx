@@ -740,7 +740,25 @@ export function AmcTable({
                 <TableCell className="text-right tabular-nums">{historical ? "—" : amc.livePricedCount}</TableCell>
                 {showNetFlow && (
                   <>
-                    <DeltaCrCell value={amc.netFlowCr} />
+                    <TableCell className="text-right tabular-nums">
+                      {amc.netFlowCr === null ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <span
+                          className={amc.netFlowCr >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}
+                        >
+                          {formatDeltaCr(amc.netFlowCr)}
+                        </span>
+                      )}
+                      {amc.netFlowIsManual && (
+                        <span
+                          className="ml-1 rounded-sm border px-1 text-[9px] font-semibold uppercase text-muted-foreground"
+                          title="Manually entered -- overrides the calculated estimate. Edit it from the Equity AUM Growth tab."
+                        >
+                          Manual
+                        </span>
+                      )}
+                    </TableCell>
                     <PctCell value={amc.netFlowPct} />
                   </>
                 )}
