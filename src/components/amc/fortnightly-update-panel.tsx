@@ -200,6 +200,26 @@ function ManualCell({
   return <EditNumberCell value={numOrZero(value)} isOverridden={value !== null} onSave={onSave} title={title} />;
 }
 
+// Like ManualCell, but with an auto-pulled default: shows the manual
+// override when one has been entered, otherwise falls back to a live value
+// pulled from elsewhere in the dashboard. "Overridden" (amber border, reset
+// button) reflects whether a MANUAL value is on file, not whether the
+// effective value differs from the auto default.
+function ManualOrAutoCell({
+  manualValue,
+  autoValue,
+  onSave,
+  title,
+}: {
+  manualValue: number | null;
+  autoValue: number | null;
+  onSave: (v: number | null) => Promise<void>;
+  title?: string;
+}) {
+  const effective = manualValue ?? autoValue;
+  return <EditNumberCell value={numOrZero(effective)} isOverridden={manualValue !== null} onSave={onSave} title={title} />;
+}
+
 function ScenarioHeaderRow() {
   return (
     <TableRow>
@@ -503,18 +523,20 @@ function SipIndustryGrowthTable({
   onSave: (field: FortnightlyFieldName, value: number | null) => Promise<void>;
 }) {
   const m = sheet.manual;
-  const labels = sheet.sipIndustryLabels;
-  const rows: { label: string; field: FortnightlyFieldName; val: number | null }[] = [
-    { label: `Latest Available Month (${labels.qtd})`, field: "sipIndustryMtdValCr", val: m.sipIndustryMtdValCr },
-    { label: `Previous Month (${labels.prevQ})`, field: "sipIndustryPrevMValCr", val: m.sipIndustryPrevMValCr },
-    { label: `Previous Month (${labels.prevQ2})`, field: "sipIndustryPrevM2ValCr", val: m.sipIndustryPrevM2ValCr },
-    { label: `Last Year Month (${labels.yoyQ})`, field: "sipIndustryYoyMValCr", val: m.sipIndustryYoyMValCr },
-    { label: `Last Year Month (${labels.yoyQ2})`, field: "sipIndustryYoyM2ValCr", val: m.sipIndustryYoyM2ValCr },
+  const auto = sheet.sipIndustryAuto;
+  const withPeriod = (base: string, period: string | undefined) => (period ? `${base} (${period})` : base);
+  const rows: { label: string; field: FortnightlyFieldName; manualVal: number | null; autoVal: number | null }[] = [
+    { label: withPeriod("Latest Available Month", auto?.labels.qtd), field: "sipIndustryMtdValCr", manualVal: m.sipIndustryMtdValCr, autoVal: auto?.values.mtd ?? null },
+    { label: withPeriod("Previous Month", auto?.labels.prevQ), field: "sipIndustryPrevMValCr", manualVal: m.sipIndustryPrevMValCr, autoVal: auto?.values.prevM ?? null },
+    { label: withPeriod("Previous Month", auto?.labels.prevQ2), field: "sipIndustryPrevM2ValCr", manualVal: m.sipIndustryPrevM2ValCr, autoVal: auto?.values.prevM2 ?? null },
+    { label: withPeriod("Last Year Month", auto?.labels.yoyQ), field: "sipIndustryYoyMValCr", manualVal: m.sipIndustryYoyMValCr, autoVal: auto?.values.yoyM ?? null },
+    { label: withPeriod("Last Year Month", auto?.labels.yoyQ2), field: "sipIndustryYoyM2ValCr", manualVal: m.sipIndustryYoyM2ValCr, autoVal: auto?.values.yoyM2 ?? null },
   ];
-  const mom = rows[1].val !== null && rows[0].val !== null && rows[1].val !== 0 ? rows[0].val / rows[1].val - 1 : null;
-  const momPrev = rows[2].val !== null && rows[1].val !== null && rows[2].val !== 0 ? rows[1].val / rows[2].val - 1 : null;
-  const yoy = rows[3].val !== null && rows[0].val !== null && rows[3].val !== 0 ? rows[0].val / rows[3].val - 1 : null;
-  const yoyPrev = rows[4].val !== null && rows[1].val !== null && rows[4].val !== 0 ? rows[1].val / rows[4].val - 1 : null;
+  const effectiveVals = rows.map((row) => row.manualVal ?? row.autoVal);
+  const mom = effectiveVals[1] !== null && effectiveVals[0] !== null && effectiveVals[1] !== 0 ? effectiveVals[0] / effectiveVals[1] - 1 : null;
+  const momPrev = effectiveVals[2] !== null && effectiveVals[1] !== null && effectiveVals[2] !== 0 ? effectiveVals[1] / effectiveVals[2] - 1 : null;
+  const yoy = effectiveVals[3] !== null && effectiveVals[0] !== null && effectiveVals[3] !== 0 ? effectiveVals[0] / effectiveVals[3] - 1 : null;
+  const yoyPrev = effectiveVals[4] !== null && effectiveVals[1] !== null && effectiveVals[4] !== 0 ? effectiveVals[1] / effectiveVals[4] - 1 : null;
   const momByRow = [mom, momPrev, null, null, null];
   const yoyByRow = [yoy, yoyPrev, null, null, null];
 
@@ -532,7 +554,12 @@ function SipIndustryGrowthTable({
           {rows.map((row, i) => (
             <TableRow key={row.label}>
               <TableCell>{row.label}</TableCell>
-              <ManualCell value={row.val} onSave={(v) => onSave(row.field, v)} />
+              <ManualOrAutoCell
+                manualValue={row.manualVal}
+                autoValue={row.autoVal}
+                onSave={(v) => onSave(row.field, v)}
+                title="Auto-pulled from the Summary tab's industry-wide SIP data; type a value to override"
+              />
               <PctCell value={momByRow[i]} />
               <PctCell value={yoyByRow[i]} />
             </TableRow>

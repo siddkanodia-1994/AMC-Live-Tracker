@@ -11,9 +11,10 @@ import {
   alignSeriesByDate,
   type DatedValue,
 } from "./series-math";
-import { computeRangeCutoffDate, filterByCutoff } from "./date-range";
+import { computeRangeCutoffDate, filterByCutoff, subtractMonths } from "./date-range";
 import { computeSummaryViewData, type QuarterRow } from "./summary-view";
 import { getAmcAumHistory, getAmcListedStockPriceHistoryForIsins, type AmcStockPricePoint } from "./history";
+import { getAllMonthlyFlows } from "./industry-flows";
 import {
   getFiscalQuarterBounds,
   getPreviousFiscalQuarterBounds,
@@ -320,23 +321,81 @@ function monthLabel(year: number, month0: number): string {
   return `${MONTH_NAMES[month0]} ${year}`;
 }
 
-export function getSipIndustryPeriodLabels(asOfDate: string): SipPeriodLabels {
-  const [y, m] = asOfDate.split("-").map(Number);
-  const step = (fromYear: number, fromMonth0: number, back: number) => {
-    const total = fromYear * 12 + fromMonth0 - back;
-    return { year: Math.floor(total / 12), month0: ((total % 12) + 12) % 12 };
+function monthEndToLabel(monthEndDate: string): string {
+  const [y, m] = monthEndDate.split("-").map(Number);
+  return monthLabel(y, m - 1);
+}
+
+// Re-snaps a date to ITS OWN month's last day. subtractMonths preserves the
+// source day-of-month (clamped), so chaining it across months of different
+// lengths drifts off month-end (e.g. Sep 30 minus 1 month lands on Aug 30,
+// not Aug 31) -- wrapping every step in this fixes that, matching
+// flows-view.ts's own `monthBounds(subtractMonthsLocal(...)).end` pattern.
+function monthEndOf(dateStr: string): string {
+  const [y, m] = dateStr.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+}
+
+export interface SipIndustryValues {
+  mtd: number | null;
+  prevM: number | null;
+  prevM2: number | null;
+  yoyM: number | null;
+  yoyM2: number | null;
+}
+
+export interface SipIndustryAuto {
+  labels: SipPeriodLabels;
+  values: SipIndustryValues;
+}
+
+// Auto-pulled default for "SIP Industry Growth" -- the same industry-wide
+// monthly SIP figure the Summary tab's own "Industry Flows" panel already
+// tracks (industry_monthly_flow / getAllMonthlyFlows), so this never needs
+// re-entering by hand for each of the 8 AMCs. "Latest Available Month" is
+// NOT simply the current calendar month -- AMFI publishes with a lag, so it
+// mirrors flows-view.ts's own computeFlowsViewData convention exactly:
+// one synthetic month rolled forward from the latest REAL entry, carrying
+// that same entry's own value as a placeholder (e.g. if August is the last
+// real row, "latest" is labeled September and shows August's own figure,
+// replaced automatically the moment a real September row is entered via
+// the Admin form) -- confirmed against that file's own documented design.
+// Deliberately NOT gated by this snapshot's own asOfDate -- industry-wide
+// SIP has no "as of a past date" concept the way this app's per-AMC AUM
+// history does; it always reflects whatever's currently the latest entry.
+export async function getSipIndustryAutoValues(): Promise<SipIndustryAuto | null> {
+  const flows = await getAllMonthlyFlows();
+  if (flows.length === 0) return null;
+  const latestReal = flows[flows.length - 1];
+  const estimatedMonth = monthEndOf(subtractMonths(latestReal.monthEndDate, -1));
+
+  const sipByMonthEnd = new Map(flows.map((f) => [f.monthEndDate, f.sipContributionsCr]));
+  sipByMonthEnd.set(estimatedMonth, latestReal.sipContributionsCr);
+
+  const monthEnds = {
+    mtd: estimatedMonth,
+    prevM: monthEndOf(subtractMonths(estimatedMonth, 1)),
+    prevM2: monthEndOf(subtractMonths(estimatedMonth, 2)),
+    yoyM: monthEndOf(subtractMonths(estimatedMonth, 12)),
+    yoyM2: monthEndOf(subtractMonths(estimatedMonth, 13)),
   };
-  const cur = { year: y, month0: m - 1 };
-  const prev = step(y, m - 1, 1);
-  const prev2 = step(y, m - 1, 2);
-  const yoy = step(y, m - 1, 12);
-  const yoy2 = step(y, m - 1, 13);
+
   return {
-    qtd: monthLabel(cur.year, cur.month0),
-    prevQ: monthLabel(prev.year, prev.month0),
-    prevQ2: monthLabel(prev2.year, prev2.month0),
-    yoyQ: monthLabel(yoy.year, yoy.month0),
-    yoyQ2: monthLabel(yoy2.year, yoy2.month0),
+    labels: {
+      qtd: monthEndToLabel(monthEnds.mtd),
+      prevQ: monthEndToLabel(monthEnds.prevM),
+      prevQ2: monthEndToLabel(monthEnds.prevM2),
+      yoyQ: monthEndToLabel(monthEnds.yoyM),
+      yoyQ2: monthEndToLabel(monthEnds.yoyM2),
+    },
+    values: {
+      mtd: sipByMonthEnd.get(monthEnds.mtd) ?? null,
+      prevM: sipByMonthEnd.get(monthEnds.prevM) ?? null,
+      prevM2: sipByMonthEnd.get(monthEnds.prevM2) ?? null,
+      yoyM: sipByMonthEnd.get(monthEnds.yoyM) ?? null,
+      yoyM2: sipByMonthEnd.get(monthEnds.yoyM2) ?? null,
+    },
   };
 }
 
@@ -427,7 +486,7 @@ export interface FortnightlySheet {
   qaaum: QuarterRow[];
   ratio: RatioSection | null;
   sipAmcLabels: SipPeriodLabels;
-  sipIndustryLabels: SipPeriodLabels;
+  sipIndustryAuto: SipIndustryAuto | null;
   manual: FortnightlyManualFields;
   valuation: ValuationBlock;
 }
@@ -442,7 +501,7 @@ export async function getFortnightlySheet(amcId: number, requestedAsOfDate?: str
 
   const [listedStock] = await db.select().from(amcListedStock).where(eq(amcListedStock.amcId, amcId));
 
-  const [savedRow, cmpInr, aumHistory, priceByIsin, correlationSettings] = await Promise.all([
+  const [savedRow, cmpInr, aumHistory, priceByIsin, correlationSettings, sipIndustryAuto] = await Promise.all([
     db
       .select()
       .from(amcFortnightlyUpdate)
@@ -459,6 +518,7 @@ export async function getFortnightlySheet(amcId: number, requestedAsOfDate?: str
       ? getAmcListedStockPriceHistoryForIsins([listedStock.isin], new Map([[listedStock.isin, listedStock.backfillFromDate]]))
       : Promise.resolve(new Map<string, AmcStockPricePoint[]>()),
     getStockCorrelationDefaults(),
+    getSipIndustryAutoValues(),
   ]);
 
   const manual = savedRow ? rowToManualFields(savedRow) : EMPTY_MANUAL;
@@ -484,7 +544,7 @@ export async function getFortnightlySheet(amcId: number, requestedAsOfDate?: str
     qaaum,
     ratio,
     sipAmcLabels: getSipAmcPeriodLabels(asOfDate),
-    sipIndustryLabels: getSipIndustryPeriodLabels(asOfDate),
+    sipIndustryAuto,
     manual,
     valuation,
   };

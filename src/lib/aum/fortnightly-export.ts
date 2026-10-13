@@ -82,12 +82,14 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     rows: [["Period", "Val (Cr)", "SIP/Equity AUM"], ...sipAmcRows.map(([label, val, p]) => [label, cr(val), p === null ? "—" : pct(p)])],
   };
 
+  const industryAuto = sheet.sipIndustryAuto;
+  const withPeriod = (base: string, period: string | undefined) => (period ? `${base} (${period})` : base);
   const sipIndustryRows: [string, number | null][] = [
-    [`Latest Available Month (${sheet.sipIndustryLabels.qtd})`, m.sipIndustryMtdValCr],
-    [`Previous Month (${sheet.sipIndustryLabels.prevQ})`, m.sipIndustryPrevMValCr],
-    [`Previous Month (${sheet.sipIndustryLabels.prevQ2})`, m.sipIndustryPrevM2ValCr],
-    [`Last Year Month (${sheet.sipIndustryLabels.yoyQ})`, m.sipIndustryYoyMValCr],
-    [`Last Year Month (${sheet.sipIndustryLabels.yoyQ2})`, m.sipIndustryYoyM2ValCr],
+    [withPeriod("Latest Available Month", industryAuto?.labels.qtd), m.sipIndustryMtdValCr ?? industryAuto?.values.mtd ?? null],
+    [withPeriod("Previous Month", industryAuto?.labels.prevQ), m.sipIndustryPrevMValCr ?? industryAuto?.values.prevM ?? null],
+    [withPeriod("Previous Month", industryAuto?.labels.prevQ2), m.sipIndustryPrevM2ValCr ?? industryAuto?.values.prevM2 ?? null],
+    [withPeriod("Last Year Month", industryAuto?.labels.yoyQ), m.sipIndustryYoyMValCr ?? industryAuto?.values.yoyM ?? null],
+    [withPeriod("Last Year Month", industryAuto?.labels.yoyQ2), m.sipIndustryYoyM2ValCr ?? industryAuto?.values.yoyM2 ?? null],
   ];
   const sipIndustry: ExportSection = {
     title: "SIP Industry Growth",
