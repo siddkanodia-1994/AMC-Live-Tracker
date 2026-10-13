@@ -156,8 +156,11 @@ function SortableHead({
 
 interface Totals {
   totalLiveAumCr: number;
+  totalLiveAumCrFlowAdjusted: number;
   totalAvgAumCr: number;
+  totalAvgAumCrFlowAdjusted: number;
   totalCurrentQuarterAvgAumCr: number;
+  totalCurrentQuarterAvgAumCrFlowAdjusted: number;
   totalAvgAumQoQChangePct: number | null;
   totalAvgAumCrCombined: number;
   totalCurrentQuarterAvgAumCrCombined: number;
@@ -174,8 +177,17 @@ interface Totals {
 
 function computeTotals(list: AmcLiveAum[], etfTotalsByAmc: Record<string, number>): Totals {
   const totalLiveAumCr = list.reduce((sum, a) => sum + a.liveAumCr, 0);
+  const totalLiveAumCrFlowAdjusted = list.reduce((sum, a) => sum + (a.flowAdjustedLiveAumCr ?? a.liveAumCr), 0);
   const totalAvgAumCr = list.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
+  const totalAvgAumCrFlowAdjusted = list.reduce(
+    (sum, a) => sum + (a.avgLiveAumCrFlowAdjusted ?? a.avgLiveAumCr ?? a.reportedAumCr),
+    0
+  );
   const totalCurrentQuarterAvgAumCr = list.reduce((sum, a) => sum + (a.currentQuarterAvgLiveAumCr ?? a.reportedAumCr), 0);
+  const totalCurrentQuarterAvgAumCrFlowAdjusted = list.reduce(
+    (sum, a) => sum + (a.currentQuarterAvgLiveAumCrFlowAdjusted ?? a.currentQuarterAvgLiveAumCr ?? a.reportedAumCr),
+    0
+  );
   const totalAvgAumQoQChangePct = totalAvgAumCr !== 0 ? totalCurrentQuarterAvgAumCr / totalAvgAumCr - 1 : null;
   // Sum the combined (equity + Gold/Silver) per-AMC figures first, THEN
   // divide -- never sum each AMC's own already-computed combined QoQ%,
@@ -210,8 +222,11 @@ function computeTotals(list: AmcLiveAum[], etfTotalsByAmc: Record<string, number
 
   return {
     totalLiveAumCr,
+    totalLiveAumCrFlowAdjusted,
     totalAvgAumCr,
+    totalAvgAumCrFlowAdjusted,
     totalCurrentQuarterAvgAumCr,
+    totalCurrentQuarterAvgAumCrFlowAdjusted,
     totalAvgAumQoQChangePct,
     totalAvgAumCrCombined,
     totalCurrentQuarterAvgAumCrCombined,
@@ -245,11 +260,21 @@ function TotalsRow({
   showNetFlow: boolean;
   showGoldSilver: boolean;
 }) {
+  const { includeFlowEstimate } = useFlowEstimateDisplay();
   return (
     <TableRow>
       <TableCell>{label}</TableCell>
-      <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalCurrentQuarterAvgAumCr)}</TableCell>
-      <TableCell className="text-right tabular-nums">{historical ? "—" : formatCr(totals.totalAvgAumCr)}</TableCell>
+      <TableCell className="text-right tabular-nums">
+        {historical
+          ? "—"
+          : formatCr(includeFlowEstimate ? totals.totalCurrentQuarterAvgAumCrFlowAdjusted : totals.totalCurrentQuarterAvgAumCr)}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {historical ? "—" : formatCr(includeFlowEstimate ? totals.totalAvgAumCrFlowAdjusted : totals.totalAvgAumCr)}
+      </TableCell>
+      {/* QoQ% stays anchored to the pure totals either way -- same
+          "comparison stays on the real series" precedent used throughout
+          this feature. */}
       <PctCell value={historical ? null : totals.totalAvgAumQoQChangePct} className={GROUP_DIVIDER_CLASS} />
       {showGoldSilver && (
         <>
@@ -265,7 +290,9 @@ function TotalsRow({
           />
         </>
       )}
-      <TableCell className="text-right tabular-nums">{formatCr(totals.totalLiveAumCr)}</TableCell>
+      <TableCell className="text-right tabular-nums">
+        {formatCr(includeFlowEstimate ? totals.totalLiveAumCrFlowAdjusted : totals.totalLiveAumCr)}
+      </TableCell>
       <PctCell value={totals.totalOneDayChangePct} />
       <TableCell className="text-right tabular-nums">{formatCr(totals.totalReportedAumCr)}</TableCell>
       <PctCell value={totals.totalLiveVsReportedPct} className={GROUP_DIVIDER_CLASS} />
@@ -416,6 +443,8 @@ export function AmcTable({
     : includeFlowEstimate
       ? "Live AUM (Incl. Est. Flow)"
       : "Live AUM";
+  const currentAvgWindowExportLabel = includeFlowEstimate ? `${currentAvgWindowLabel}, Incl. Est. Flow` : currentAvgWindowLabel;
+  const avgWindowExportLabel = includeFlowEstimate ? `${avgWindowLabel}, Incl. Est. Flow` : avgWindowLabel;
 
   useRegisterExport(() => ({
     fileName: `overview-${asOfDate ?? new Date().toISOString().slice(0, 10)}`,
@@ -425,8 +454,16 @@ export function AmcTable({
         const combined = combinedAvgFigures(amc, etfTotalsByAmc);
         return {
           AMC: amc.overviewName,
-          [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: historical ? null : (amc.currentQuarterAvgLiveAumCr ?? null),
-          [`Avg AUM (${avgWindowLabel}) (Cr)`]: historical ? null : amc.avgLiveAumCr,
+          [`Avg Live AUM (${currentAvgWindowExportLabel}) (Cr)`]: historical
+            ? null
+            : (includeFlowEstimate
+                ? (amc.currentQuarterAvgLiveAumCrFlowAdjusted ?? amc.currentQuarterAvgLiveAumCr)
+                : amc.currentQuarterAvgLiveAumCr) ?? null,
+          [`Avg AUM (${avgWindowExportLabel}) (Cr)`]: historical
+            ? null
+            : includeFlowEstimate
+              ? (amc.avgLiveAumCrFlowAdjusted ?? amc.avgLiveAumCr)
+              : amc.avgLiveAumCr,
           "Avg AUM QoQ Change (%)": !historical && amc.avgAumQoQChangePct != null ? amc.avgAumQoQChangePct * 100 : null,
           // WYSIWYG: only exported while the toggle is on, unlike Est. Net
           // Flow below (which always exports regardless of its own toggle) --
@@ -457,8 +494,13 @@ export function AmcTable({
       // on-screen for these columns -- same treatment for Gold/Silver.
       ...indexBenchmarkRows.map((row) => ({
         AMC: row.displayName,
-        [`Avg Live AUM (${currentAvgWindowLabel}) (Cr)`]: row.avgLiveAumCr,
-        [`Avg AUM (${avgWindowLabel}) (Cr)`]: row.avgAumCr,
+        // Same (possibly "Incl. Est. Flow"-suffixed) column keys as the AMC
+        // rows above -- an index has no net-flow concept, so its own value
+        // here is always the pure figure, but the COLUMN must match or the
+        // export ends up with two separate, mostly-empty columns instead of
+        // one shared one.
+        [`Avg Live AUM (${currentAvgWindowExportLabel}) (Cr)`]: row.avgLiveAumCr,
+        [`Avg AUM (${avgWindowExportLabel}) (Cr)`]: row.avgAumCr,
         "Avg AUM QoQ Change (%)": row.avgAumQoQChangePct != null ? row.avgAumQoQChangePct * 100 : null,
         ...(showGoldSilver && {
           [`Avg Live AUM + Gold/Silver (${currentAvgWindowLabel}) (Cr)`]: null,
@@ -561,11 +603,16 @@ export function AmcTable({
               </TableHead>
               <SortableHead
                 label="Avg Live AUM"
-                sublabel={currentAvgWindowLabel}
+                sublabel={includeFlowEstimate ? `${currentAvgWindowLabel} · Incl. Est. Flow` : currentAvgWindowLabel}
                 sk="currentQuarterAvgLiveAumCr"
                 {...headProps}
               />
-              <SortableHead label="Avg AUM" sublabel={avgWindowLabel} sk="avgLiveAumCr" {...headProps} />
+              <SortableHead
+                label="Avg AUM"
+                sublabel={includeFlowEstimate ? `${avgWindowLabel} · Incl. Est. Flow` : avgWindowLabel}
+                sk="avgLiveAumCr"
+                {...headProps}
+              />
               <SortableHead
                 label="Avg AUM"
                 sublabel="QoQ Change"
@@ -653,10 +700,18 @@ export function AmcTable({
                   </Link>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {amc.currentQuarterAvgLiveAumCr != null ? formatCr(amc.currentQuarterAvgLiveAumCr) : "—"}
+                  {(() => {
+                    const v = includeFlowEstimate
+                      ? (amc.currentQuarterAvgLiveAumCrFlowAdjusted ?? amc.currentQuarterAvgLiveAumCr)
+                      : amc.currentQuarterAvgLiveAumCr;
+                    return v != null ? formatCr(v) : "—";
+                  })()}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {amc.avgLiveAumCr !== null ? formatCr(amc.avgLiveAumCr) : "—"}
+                  {(() => {
+                    const v = includeFlowEstimate ? (amc.avgLiveAumCrFlowAdjusted ?? amc.avgLiveAumCr) : amc.avgLiveAumCr;
+                    return v != null ? formatCr(v) : "—";
+                  })()}
                 </TableCell>
                 <PctCell value={amc.avgAumQoQChangePct} className={GROUP_DIVIDER_CLASS} />
                 {showGoldSilver && (

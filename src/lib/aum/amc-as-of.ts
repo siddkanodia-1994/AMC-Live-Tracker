@@ -235,6 +235,7 @@ export async function computeAmcAsOf(
     avgVsReportedPct: null,
     avgWindowDays: 0,
     avgLiveAumCr90d: null,
+    avgLiveAumCr90dFlowAdjusted: null,
     avgLiveAumCrPrev90d: null,
     previousDayLiveAumCr,
     oneDayChangePct: amcOneDayChangePct,

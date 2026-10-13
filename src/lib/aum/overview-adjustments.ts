@@ -4,7 +4,14 @@ import { appSettings } from "../db/schema";
 import type { IndexKey } from "../dhan/indices";
 import { getIstDateString } from "../utils/date";
 import { getAvailableReportPeriods } from "./aum-growth";
-import { getAllAmcsLiveAumAsOf, getAverageAumForRange, getCanonicalSnapshotDateBounds, getReportedAumForPeriod } from "./history";
+import {
+  getAllAmcsLiveAumAsOf,
+  getAverageAumForRange,
+  getCanonicalSnapshotDateBounds,
+  getFlowAdjustmentContext,
+  getReportedAumForPeriod,
+  type AverageAumRange,
+} from "./history";
 import { getAverageIndexLevelForRange, getIndexLevelsAsOf } from "./index-benchmarks";
 import { getFiscalQuarterBounds, getPreviousFiscalQuarterBounds } from "./report-period";
 
@@ -21,10 +28,10 @@ export interface OverviewAdjustments {
   reportedAumByAmcId: Record<number, number>;
   avgFrom: string;
   avgTo: string;
-  avgAumByAmcId: Record<number, { avgLiveAumCr: number; daysCount: number }>;
+  avgAumByAmcId: Record<number, AverageAumRange>;
   currentAvgFrom: string;
   currentAvgTo: string;
-  currentAvgAumByAmcId: Record<number, { avgLiveAumCr: number; daysCount: number }>;
+  currentAvgAumByAmcId: Record<number, AverageAumRange>;
   minSnapshotDate: string | null;
   maxSnapshotDate: string | null;
   // The Overview table's "Hist. Live AUM" toggle mode -- each AMC's live
@@ -93,11 +100,17 @@ export async function getOverviewAdjustments(options?: {
 
   const histLiveDate = options?.histLiveDate ? clamp(options.histLiveDate) : clamp(prevQuarter.end);
 
+  // Always anchored to the REAL current report period, never the possibly-
+  // overridden `reportPeriod` above (picking an older "Reported AUM" month
+  // from that picker shouldn't change what "today's still-open period"
+  // means for flow adjustment) -- see the flow-estimate averages audit.
+  const flowCtx = await getFlowAdjustmentContext(currentReportPeriod);
+
   const [reportedAumMap, avgAumMap, currentAvgAumMap, histLiveAumMap, indexAvgLevelByKey, indexCurrentAvgLevelByKey, indexHistLiveLevelByKey] =
     await Promise.all([
       getReportedAumForPeriod(reportPeriod),
-      getAverageAumForRange(avgFrom, avgTo),
-      getAverageAumForRange(currentAvgFrom, currentAvgTo),
+      getAverageAumForRange(avgFrom, avgTo, flowCtx),
+      getAverageAumForRange(currentAvgFrom, currentAvgTo, flowCtx),
       getAllAmcsLiveAumAsOf(histLiveDate),
       getAverageIndexLevelForRange(avgFrom, avgTo),
       getAverageIndexLevelForRange(currentAvgFrom, currentAvgTo),

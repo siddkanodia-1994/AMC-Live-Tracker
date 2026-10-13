@@ -283,9 +283,11 @@ export function AmcGrid({
           : (adj.reportedAumByAmcId[amc.amcId] ?? amc.reportedAumCr);
       const avgOverride = adj.avgAumByAmcId[amc.amcId];
       const avgLiveAumCr = avgOverride ? avgOverride.avgLiveAumCr : null;
+      const avgLiveAumCrFlowAdjusted = avgOverride ? avgOverride.avgFlowAdjustedLiveAumCr : null;
       const avgWindowDays = avgOverride ? avgOverride.daysCount : 0;
       const currentAvgOverride = adj.currentAvgAumByAmcId[amc.amcId];
       const currentQuarterAvgLiveAumCr = currentAvgOverride ? currentAvgOverride.avgLiveAumCr : null;
+      const currentQuarterAvgLiveAumCrFlowAdjusted = currentAvgOverride ? currentAvgOverride.avgFlowAdjustedLiveAumCr : null;
       const deltaCr = amc.liveAumCr - reportedAumCr;
       const deltaPct = reportedAumCr !== 0 ? deltaCr / reportedAumCr : 0;
       const avgVsReportedPct = avgLiveAumCr !== null && reportedAumCr !== 0 ? avgLiveAumCr / reportedAumCr - 1 : null;
@@ -297,11 +299,13 @@ export function AmcGrid({
         ...amc,
         reportedAumCr,
         avgLiveAumCr,
+        avgLiveAumCrFlowAdjusted,
         avgWindowDays,
         deltaCr,
         deltaPct,
         avgVsReportedPct,
         currentQuarterAvgLiveAumCr,
+        currentQuarterAvgLiveAumCrFlowAdjusted,
         avgAumQoQChangePct,
       };
     });
@@ -400,6 +404,13 @@ export function AmcGrid({
     // sourced from the two rolling-window fields instead of the
     // since-last-report one.
     const total90dAvgAumCr = data.amcs.reduce((sum, a) => sum + (a.avgLiveAumCr90d ?? a.reportedAumCr), 0);
+    // Same per-AMC fallback chain as total90dAvgAumCr, just preferring the
+    // flow-adjusted figure when available (null for a brand-new AMC with no
+    // net-flow estimate yet) -- the 90-day card's own "Incl. Est. Flow" value.
+    const total90dAvgAumCrFlowAdjusted = data.amcs.reduce(
+      (sum, a) => sum + (a.avgLiveAumCr90dFlowAdjusted ?? a.avgLiveAumCr90d ?? a.reportedAumCr),
+      0
+    );
     const totalPrev90dAvgAumCr = data.amcs.reduce((sum, a) => sum + (a.avgLiveAumCrPrev90d ?? a.reportedAumCr), 0);
     const avgDeltaCr90d = total90dAvgAumCr - totalPrev90dAvgAumCr;
     return {
@@ -412,6 +423,7 @@ export function AmcGrid({
       avgDeltaCr,
       avgDeltaPct: data.totalReportedAumCr !== 0 ? avgDeltaCr / data.totalReportedAumCr : 0,
       total90dAvgAumCr,
+      total90dAvgAumCrFlowAdjusted,
       totalPrev90dAvgAumCr,
       avgDeltaCr90d,
       avgDeltaPct90d: totalPrev90dAvgAumCr !== 0 ? avgDeltaCr90d / totalPrev90dAvgAumCr : 0,
@@ -588,6 +600,11 @@ export function AmcGrid({
                   ? "Average Industry AUM (Equity + Gold/Silver, last 90 days)"
                   : "Average Industry Equity AUM (last 90 days)"}
               </CardTitle>
+              {includeFlowEstimate && (
+                <span className="rounded-sm border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Incl. Est. Flow
+                </span>
+              )}
               {showGoldSilver && (
                 <Tooltip>
                   <TooltipTrigger className="text-muted-foreground hover:text-foreground">
@@ -614,11 +631,13 @@ export function AmcGrid({
                 <div className="flex items-center gap-2">
                   <div className="text-3xl font-semibold tabular-nums">
                     {formatCr(
-                      showGoldSilver
-                        ? industryTotals.total90dAvgAumCr + etfIndustryTotalCr
-                        : industryTotals.total90dAvgAumCr
+                      (includeFlowEstimate ? industryTotals.total90dAvgAumCrFlowAdjusted : industryTotals.total90dAvgAumCr) +
+                        (showGoldSilver ? etfIndustryTotalCr : 0)
                     )}
                   </div>
+                  {/* Delta badge stays anchored to the pure MTM series either way --
+                      there's no flow-adjusted equivalent of the prior-90-day
+                      comparison baseline, same precedent as the headline card above. */}
                   <AumDeltaBadge
                     deltaCr={industryTotals.avgDeltaCr90d}
                     deltaPct={

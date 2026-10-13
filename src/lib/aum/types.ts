@@ -82,6 +82,14 @@ export interface AmcLiveAum {
   // least one canonical snapshot in the respective window.
   avgLiveAumCr90d: number | null;
   avgLiveAumCrPrev90d: number | null;
+  // avgLiveAumCr90d's per-day-prorated sibling (see flowAdjustedLiveAumCr
+  // below and getAverageAumForRange's flowCtx) -- the "Incl. Est. Flow"
+  // toggle's version of the 90-day card's headline figure. No flow-adjusted
+  // sibling for avgLiveAumCrPrev90d: that window is the card's comparison
+  // baseline, which stays on the pure MTM series regardless of the toggle,
+  // same "badge stays anchored" precedent as flowAdjustedLiveAumCr's own
+  // delta badge.
+  avgLiveAumCr90dFlowAdjusted: number | null;
   // Overview table-only fields, populated client-side by amc-grid.tsx's
   // adjustedAmcs overlay (never by computeLiveAum/computeOverviewAsOf) --
   // optional so every other AmcLiveAum construction site is unaffected.
@@ -91,6 +99,12 @@ export interface AmcLiveAum {
   // wherever avgLiveAumCr currently resolves to (default or overridden).
   currentQuarterAvgLiveAumCr?: number | null;
   avgAumQoQChangePct?: number | null;
+  // Per-day-prorated siblings of avgLiveAumCr/currentQuarterAvgLiveAumCr
+  // above, from OverviewAdjustments' avgAumByAmcId/currentAvgAumByAmcId --
+  // null whenever no net-flow estimate exists for this AMC yet, same
+  // fallback-to-pure convention as flowAdjustedLiveAumCr.
+  avgLiveAumCrFlowAdjusted?: number | null;
+  currentQuarterAvgLiveAumCrFlowAdjusted?: number | null;
   // Most recent prior day's closing live AUM, and the % change from it to
   // today's liveAumCr — null if no prior-day snapshot exists yet (e.g. a
   // brand-new AMC). May span more than 1 calendar day if collection had a gap.

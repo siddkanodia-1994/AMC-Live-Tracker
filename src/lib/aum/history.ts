@@ -23,21 +23,102 @@ export async function getReportedAumForPeriod(reportPeriod: string): Promise<Map
   return map;
 }
 
+// Fraction of `netFlowCr` to attribute to a single day `dateStr`'s Live AUM,
+// scaling by how far that day falls past the report period's own anchor
+// month-end -- null before the anchor, so a day from an older, already-
+// closed report period is correctly left untouched rather than given a
+// backwards (negative-elapsed-time) adjustment. This is the one place the
+// formula is written; compute-live-aum.ts's point-in-time estimate and
+// getAverageAumForRange's per-day proration below both call it, so neither
+// can drift out of sync with the other (a prior pass that duplicated this
+// formula with a weaker guard made the 90-day average move the WRONG way --
+// see the flow-estimate averages audit).
+export function flowAdjustmentForDate(dateStr: string, netFlowCr: number, anchorMonthEndDate: string): number | null {
+  const daysSinceAnchor = (Date.parse(`${dateStr}T00:00:00Z`) - Date.parse(`${anchorMonthEndDate}T00:00:00Z`)) / 86400000;
+  const daysInAnchorMonth = Number(anchorMonthEndDate.split("-")[2]);
+  if (daysInAnchorMonth <= 0 || daysSinceAnchor < 0) return null;
+  const monthsElapsed = daysSinceAnchor / daysInAnchorMonth;
+  return netFlowCr * monthsElapsed;
+}
+
+export interface FlowAdjustmentContext {
+  anchorMonthEndDate: string;
+  netFlowCrByAmcId: Map<number, number>;
+}
+
+/**
+ * Everything flowAdjustmentForDate needs for "the current report period",
+ * built once per request and threaded into getAverageAumForRange wherever a
+ * window can include days from the still-open period (see the flow-estimate
+ * averages audit). A fresh getNetFlowForPeriod query, independent of
+ * whatever single netFlows map a caller may already hold -- kept this way so
+ * getRolling90DayAverages/getOverviewAdjustments don't have to restructure
+ * their own already-parallel Promise.all just to share one.
+ */
+export async function getFlowAdjustmentContext(reportPeriod: string): Promise<FlowAdjustmentContext> {
+  const netFlows = await getNetFlowForPeriod(reportPeriod);
+  return {
+    anchorMonthEndDate: lastDayOfReportMonth(reportPeriod),
+    netFlowCrByAmcId: new Map([...netFlows].map(([amcId, nf]) => [amcId, nf.netFlowCr])),
+  };
+}
+
+export interface AverageAumRange {
+  avgLiveAumCr: number;
+  // Per-day-prorated average using flowAdjustmentForDate on every day in the
+  // window from the current report period's first live day onward (older,
+  // closed-period days are left as pure MTM). null only when this AMC has no
+  // net-flow estimate at all yet (e.g. a brand-new AMC with no prior
+  // period) -- callers fall back to avgLiveAumCr, same convention as
+  // AmcLiveAum.flowAdjustedLiveAumCr. Always null when no FlowAdjustmentContext
+  // was passed in (the common case -- most callers don't need this).
+  avgFlowAdjustedLiveAumCr: number | null;
+  daysCount: number;
+}
+
 /**
  * Average of daily live-AUM snapshots over an arbitrary [startDate, endDate]
  * window -- the general form getAverageAumSinceReport (below) delegates to
  * with its own hardcoded window, and what the Overview table's Avg AUM
- * date-range picker calls directly for a custom window.
+ * date-range picker calls directly for a custom window. Without a
+ * FlowAdjustmentContext this stays a single SQL AVG()/COUNT() aggregate (the
+ * fast path almost every caller wants); passing one switches to fetching raw
+ * per-day rows so each day can be individually prorated before averaging.
  */
 export async function getAverageAumForRange(
   startDate: string,
-  endDate: string
-): Promise<Map<number, { avgLiveAumCr: number; daysCount: number }>> {
+  endDate: string,
+  flowCtx?: FlowAdjustmentContext
+): Promise<Map<number, AverageAumRange>> {
+  if (!flowCtx) {
+    const rows = await db
+      .select({
+        amcId: liveAumDailySnapshot.amcId,
+        avgLiveAumCr: sql<number>`avg(${liveAumDailySnapshot.liveAumCr})::float`,
+        daysCount: sql<number>`count(*)::int`,
+      })
+      .from(liveAumDailySnapshot)
+      .where(
+        and(
+          gte(liveAumDailySnapshot.snapshotDate, startDate),
+          lte(liveAumDailySnapshot.snapshotDate, endDate),
+          eq(liveAumDailySnapshot.isCanonical, true)
+        )
+      )
+      .groupBy(liveAumDailySnapshot.amcId);
+
+    const map = new Map<number, AverageAumRange>();
+    for (const r of rows) {
+      map.set(r.amcId, { avgLiveAumCr: r.avgLiveAumCr, avgFlowAdjustedLiveAumCr: null, daysCount: r.daysCount });
+    }
+    return map;
+  }
+
   const rows = await db
     .select({
       amcId: liveAumDailySnapshot.amcId,
-      avgLiveAumCr: sql<number>`avg(${liveAumDailySnapshot.liveAumCr})::float`,
-      daysCount: sql<number>`count(*)::int`,
+      snapshotDate: liveAumDailySnapshot.snapshotDate,
+      liveAumCr: liveAumDailySnapshot.liveAumCr,
     })
     .from(liveAumDailySnapshot)
     .where(
@@ -46,12 +127,30 @@ export async function getAverageAumForRange(
         lte(liveAumDailySnapshot.snapshotDate, endDate),
         eq(liveAumDailySnapshot.isCanonical, true)
       )
-    )
-    .groupBy(liveAumDailySnapshot.amcId);
+    );
 
-  const map = new Map<number, { avgLiveAumCr: number; daysCount: number }>();
+  const byAmc = new Map<number, { sum: number; adjustedSum: number; hasNetFlow: boolean; n: number }>();
   for (const r of rows) {
-    map.set(r.amcId, { avgLiveAumCr: r.avgLiveAumCr, daysCount: r.daysCount });
+    const liveAumCr = Number(r.liveAumCr);
+    const netFlowCr = flowCtx.netFlowCrByAmcId.get(r.amcId);
+    const adjustment = netFlowCr !== undefined ? (flowAdjustmentForDate(r.snapshotDate, netFlowCr, flowCtx.anchorMonthEndDate) ?? 0) : 0;
+    let entry = byAmc.get(r.amcId);
+    if (!entry) {
+      entry = { sum: 0, adjustedSum: 0, hasNetFlow: netFlowCr !== undefined, n: 0 };
+      byAmc.set(r.amcId, entry);
+    }
+    entry.sum += liveAumCr;
+    entry.adjustedSum += liveAumCr + adjustment;
+    entry.n += 1;
+  }
+
+  const map = new Map<number, AverageAumRange>();
+  for (const [amcId, e] of byAmc) {
+    map.set(amcId, {
+      avgLiveAumCr: e.sum / e.n,
+      avgFlowAdjustedLiveAumCr: e.hasNetFlow ? e.adjustedSum / e.n : null,
+      daysCount: e.n,
+    });
   }
   return map;
 }
@@ -213,6 +312,7 @@ export async function getAmcListedStockPriceHistoryForIsins(
 
 export interface AverageAumSinceReport {
   avgLiveAumCr: number;
+  avgFlowAdjustedLiveAumCr: number | null;
   daysCount: number;
   windowStart: string;
 }
@@ -235,8 +335,8 @@ export async function getAverageAumSinceReport(reportPeriod: string): Promise<Ma
 }
 
 export interface Rolling90DayAverages {
-  last90ByAmcId: Map<number, { avgLiveAumCr: number; daysCount: number }>;
-  prev90ByAmcId: Map<number, { avgLiveAumCr: number; daysCount: number }>;
+  last90ByAmcId: Map<number, AverageAumRange>;
+  prev90ByAmcId: Map<number, AverageAumRange>;
   last90Start: string;
   last90End: string;
   prev90Start: string;
@@ -251,8 +351,14 @@ export interface Rolling90DayAverages {
  * current report period or fiscal quarter. Both windows' start dates are
  * clamped to the earliest canonical snapshot on record, so this stays
  * well-defined even before 180 days of data exist.
+ *
+ * Only last90 gets flow-adjusted (it's the one that can include today/the
+ * still-open period, and it's the one shown as the card's own headline
+ * figure); prev90 stays pure MTM, same "comparison badge stays anchored to
+ * the real series" precedent as the point-in-time headline card's delta
+ * badge in amc-grid.tsx.
  */
-export async function getRolling90DayAverages(): Promise<Rolling90DayAverages> {
+export async function getRolling90DayAverages(reportPeriod: string): Promise<Rolling90DayAverages> {
   const today = getIstDateString();
   const { minDate } = await getCanonicalSnapshotDateBounds();
 
@@ -264,8 +370,9 @@ export async function getRolling90DayAverages(): Promise<Rolling90DayAverages> {
     if (prev90Start < minDate) prev90Start = minDate;
   }
 
+  const flowCtx = await getFlowAdjustmentContext(reportPeriod);
   const [last90ByAmcId, prev90ByAmcId] = await Promise.all([
-    getAverageAumForRange(last90Start, today),
+    getAverageAumForRange(last90Start, today, flowCtx),
     getAverageAumForRange(prev90Start, prev90End),
   ]);
 

@@ -25,6 +25,7 @@ import {
   setCachedLiveAum,
 } from "./cache";
 import {
+  flowAdjustmentForDate,
   getAverageAumSinceReport,
   getNetFlowForPeriod,
   getPreviousDayIsinPrices,
@@ -181,14 +182,13 @@ async function writeDailyIsinPrices(priceByIsin: Map<string, number>): Promise<v
 // Scaling by elapsed time rather than always assuming exactly one month
 // means a check run just a few days after the anchor only assumes a
 // fraction of a month's flow, while a vendor delay of 6+ weeks assumes
-// proportionally more.
+// proportionally more. Delegates the actual day-vs-anchor math to
+// flowAdjustmentForDate so the Average AUM figures' per-day proration
+// (history.ts's getAverageAumForRange) can never drift out of sync with
+// this point-in-time estimate.
 function computeFlowAdjustedLiveAum(liveAumCr: number, netFlowCr: number, anchorMonthEndDate: string): number | null {
-  const today = getIstDateString();
-  const daysSinceAnchor = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${anchorMonthEndDate}T00:00:00Z`)) / 86400000;
-  const daysInAnchorMonth = Number(anchorMonthEndDate.split("-")[2]);
-  if (daysInAnchorMonth <= 0 || daysSinceAnchor < 0) return null;
-  const monthsElapsed = daysSinceAnchor / daysInAnchorMonth;
-  return liveAumCr + netFlowCr * monthsElapsed;
+  const adjustment = flowAdjustmentForDate(getIstDateString(), netFlowCr, anchorMonthEndDate);
+  return adjustment === null ? null : liveAumCr + adjustment;
 }
 
 async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
@@ -599,6 +599,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       avgVsReportedPct: null,
       avgWindowDays: 0,
       avgLiveAumCr90d: null,
+      avgLiveAumCr90dFlowAdjusted: null,
       avgLiveAumCrPrev90d: null,
       previousDayLiveAumCr: null,
       oneDayChangePct: null,
@@ -730,7 +731,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
     getAverageAumSinceReport(reportPeriod).catch(() => new Map()),
     getPreviousDayLiveAum().catch(() => new Map()),
     getNetFlowForPeriod(reportPeriod).catch(() => new Map()),
-    getRolling90DayAverages().catch(() => null),
+    getRolling90DayAverages(reportPeriod).catch(() => null),
   ]);
   if (rolling90) {
     snapshot.last90Start = rolling90.last90Start;
@@ -748,7 +749,10 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
 
     if (rolling90) {
       const last90 = rolling90.last90ByAmcId.get(amc.amcId);
-      if (last90) amc.avgLiveAumCr90d = last90.avgLiveAumCr;
+      if (last90) {
+        amc.avgLiveAumCr90d = last90.avgLiveAumCr;
+        amc.avgLiveAumCr90dFlowAdjusted = last90.avgFlowAdjustedLiveAumCr;
+      }
       const prev90 = rolling90.prev90ByAmcId.get(amc.amcId);
       if (prev90) amc.avgLiveAumCrPrev90d = prev90.avgLiveAumCr;
     }
