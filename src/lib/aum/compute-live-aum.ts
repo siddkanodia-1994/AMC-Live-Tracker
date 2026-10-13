@@ -174,6 +174,23 @@ async function writeDailyIsinPrices(priceByIsin: Map<string, number>): Promise<v
   );
 }
 
+// liveAumCr + (this period's own last-known net flow, scaled by how many
+// of that period's "months" have elapsed since its month-end) -- a
+// display-only estimate (see AmcLiveAum.flowAdjustedLiveAumCr in types.ts
+// for why this must never be persisted into live_aum_daily_snapshot).
+// Scaling by elapsed time rather than always assuming exactly one month
+// means a check run just a few days after the anchor only assumes a
+// fraction of a month's flow, while a vendor delay of 6+ weeks assumes
+// proportionally more.
+function computeFlowAdjustedLiveAum(liveAumCr: number, netFlowCr: number, anchorMonthEndDate: string): number | null {
+  const today = getIstDateString();
+  const daysSinceAnchor = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${anchorMonthEndDate}T00:00:00Z`)) / 86400000;
+  const daysInAnchorMonth = Number(anchorMonthEndDate.split("-")[2]);
+  if (daysInAnchorMonth <= 0 || daysSinceAnchor < 0) return null;
+  const monthsElapsed = daysSinceAnchor / daysInAnchorMonth;
+  return liveAumCr + netFlowCr * monthsElapsed;
+}
+
 async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   const tradingDay = isTradingDay();
   // Whether to actually ask DHAN this run: during market hours on a trading
@@ -590,6 +607,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       netFlowPriorPeriod: null,
       netFlowPriorPeriodReportedAumCr: null,
       netFlowBaselineCr: null,
+      flowAdjustedLiveAumCr: null,
     });
   }
 
@@ -761,6 +779,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       amc.netFlowPriorPeriod = netFlow.priorPeriod;
       amc.netFlowPriorPeriodReportedAumCr = netFlow.priorPeriodReportedAumCr;
       amc.netFlowBaselineCr = netFlow.baselineCr;
+      amc.flowAdjustedLiveAumCr = computeFlowAdjustedLiveAum(amc.liveAumCr, netFlow.netFlowCr, netFlow.monthEndDate);
     }
   }
 

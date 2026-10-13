@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { DownloadExcelButton } from "./download-excel-button";
+import { FlowEstimateToggle } from "./flow-estimate-toggle";
 import { LiveClockBadge } from "./live-clock-badge";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -18,6 +19,7 @@ export function Header() {
           >
             Admin
           </Link>
+          <FlowEstimateToggle />
           <LiveClockBadge />
           <ThemeToggle />
         </nav>

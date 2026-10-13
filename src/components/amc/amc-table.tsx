@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { useRegisterExport } from "@/components/layout/export-context";
+import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
 import { formatCr, formatDeltaCr, formatIndexLevel, formatPct, formatReportPeriodLabel, formatShortDate } from "@/lib/utils/format";
 import type { TopNOption } from "@/lib/utils/top-n";
 import type { AmcLiveAum, IndexBenchmarkRow } from "@/lib/aum/types";
@@ -352,6 +353,7 @@ export function AmcTable({
   // Hidden by default so the rest of the table can use a larger base font --
   // these 2 columns are the ones that force everything else to shrink to fit.
   const [showNetFlow, setShowNetFlow] = useState(false);
+  const { includeFlowEstimate } = useFlowEstimateDisplay();
 
   // Top-N is always by Live AUM specifically, independent of whatever column
   // the table is currently sorted by for display — and skipped entirely
@@ -409,7 +411,11 @@ export function AmcTable({
   const headProps = { sortKey, sortDesc, onToggle: toggleSort };
   const periodLabel = formatReportPeriodLabel(reportPeriod);
   const historical = asOfDate !== null;
-  const liveAumLabel = asOfDate ? `Live AUM (${formatShortDate(asOfDate)})` : "Live AUM";
+  const liveAumLabel = asOfDate
+    ? `Live AUM (${formatShortDate(asOfDate)})`
+    : includeFlowEstimate
+      ? "Live AUM (Incl. Est. Flow)"
+      : "Live AUM";
 
   useRegisterExport(() => ({
     fileName: `overview-${asOfDate ?? new Date().toISOString().slice(0, 10)}`,
@@ -431,7 +437,9 @@ export function AmcTable({
             "Avg AUM QoQ Change + Gold/Silver (%)":
               !historical && combined.avgAumQoQChangePctCombined != null ? combined.avgAumQoQChangePctCombined * 100 : null,
           }),
-          [`${liveAumLabel} (Cr)`]: amc.liveAumCr,
+          // WYSIWYG, same as the Gold/Silver columns above: exports the
+          // flow-adjusted figure only while the header toggle is on.
+          [`${liveAumLabel} (Cr)`]: includeFlowEstimate && amc.flowAdjustedLiveAumCr !== null ? amc.flowAdjustedLiveAumCr : amc.liveAumCr,
           "1D Change (%)": amc.oneDayChangePct !== null ? amc.oneDayChangePct * 100 : null,
           [`${reportedColumnLabel} ${reportedColumnSublabel} (Cr)`]: amc.reportedAumCr,
           "Exit AUM QoQ Change (%)": amc.deltaPct * 100,
@@ -597,7 +605,7 @@ export function AmcTable({
               )}
               <SortableHead
                 label="Live AUM"
-                sublabel={asOfDate ? formatShortDate(asOfDate) : undefined}
+                sublabel={asOfDate ? formatShortDate(asOfDate) : includeFlowEstimate ? "Incl. Est. Flow" : undefined}
                 sk="liveAumCr"
                 {...headProps}
               />
@@ -662,7 +670,9 @@ export function AmcTable({
                     <PctCell value={combined.avgAumQoQChangePctCombined} className={`${GS_CELL_CLASS} ${GROUP_DIVIDER_CLASS}`} />
                   </>
                 )}
-                <TableCell className="text-right tabular-nums">{formatCr(amc.liveAumCr)}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {formatCr(includeFlowEstimate && amc.flowAdjustedLiveAumCr !== null ? amc.flowAdjustedLiveAumCr : amc.liveAumCr)}
+                </TableCell>
                 <PctCell value={amc.oneDayChangePct} />
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {formatCr(amc.reportedAumCr)}

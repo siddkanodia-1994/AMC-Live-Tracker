@@ -201,6 +201,7 @@ export async function computeOverviewAsOf(
       netFlowPriorPeriod: null,
       netFlowPriorPeriodReportedAumCr: null,
       netFlowBaselineCr: null,
+      flowAdjustedLiveAumCr: null,
     });
   }
   rows.sort((a, b) => b.liveAumCr - a.liveAumCr);

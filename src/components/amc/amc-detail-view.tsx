@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { useLiveAumDetail, type AmcDetailResponse } from "@/hooks/use-live-aum-detail";
+import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
 import { AumDeltaBadge } from "./aum-delta-badge";
 import { AmcSwitcher } from "./amc-switcher";
 import { AumTrendChart } from "./aum-trend-chart";
@@ -45,6 +46,7 @@ export function AmcDetailView({
   // independently, so it's naturally unaffected either way.
   const [asOfDate, setAsOfDate] = useState<string | null>(null);
   const { data, error, isLoading } = useLiveAumDetail(slug, initialData, asOfDate ?? undefined);
+  const { includeFlowEstimate } = useFlowEstimateDisplay();
 
   if (error && !data) {
     return (
@@ -64,6 +66,11 @@ export function AmcDetailView({
   if (!data) return null;
 
   const { amc, holdings } = data;
+  // flowAdjustedLiveAumCr is only ever populated in live mode (null in
+  // historical/as-of views, see amc-as-of.ts), so asOfDate alone is enough
+  // to gate this -- no need to also re-check it against amc.flowAdjustedLiveAumCr.
+  const showFlowAdjusted = includeFlowEstimate && !asOfDate && amc.flowAdjustedLiveAumCr !== null;
+  const displayLiveAumCr = showFlowAdjusted ? amc.flowAdjustedLiveAumCr! : amc.liveAumCr;
 
   return (
     <div className="amc-detail-darker-text space-y-6">
@@ -120,8 +127,9 @@ export function AmcDetailView({
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
         <Stat
           label="Live AUM"
-          value={formatCr(amc.liveAumCr)}
+          value={formatCr(displayLiveAumCr)}
           badge={<AumDeltaBadge deltaCr={amc.deltaCr} deltaPct={amc.deltaPct} />}
+          subtext={showFlowAdjusted ? "Incl. Est. Flow" : undefined}
         />
         <Stat
           label="Daily % Change"

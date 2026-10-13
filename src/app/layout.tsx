@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Carlito, Source_Serif_4 } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/layout/theme-provider";
 import { ExportProvider } from "@/components/layout/export-context";
+import { FlowEstimateProvider } from "@/components/layout/flow-estimate-context";
 import { Toaster } from "@/components/ui/sonner";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
@@ -54,10 +55,12 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <ExportProvider>
-            <Header />
-            <main className="flex-1">{children}</main>
-            <Footer />
-            <Toaster />
+            <FlowEstimateProvider>
+              <Header />
+              <main className="flex-1">{children}</main>
+              <Footer />
+              <Toaster />
+            </FlowEstimateProvider>
           </ExportProvider>
         </ThemeProvider>
       </body>

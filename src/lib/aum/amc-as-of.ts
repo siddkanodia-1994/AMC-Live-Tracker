@@ -243,6 +243,7 @@ export async function computeAmcAsOf(
     netFlowPriorPeriod: null,
     netFlowPriorPeriodReportedAumCr: null,
     netFlowBaselineCr: null,
+    flowAdjustedLiveAumCr: null,
   };
 
   return {

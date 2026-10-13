@@ -22,6 +22,7 @@ import { StockTab } from "@/components/stock/stock-tab";
 import { DailyDataTable } from "./daily-data-table";
 import { CorrectionsLog } from "./corrections-log";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
+import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
 import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -149,6 +150,7 @@ export function AmcGrid({
   // two modes keep independent state, so switching back and forth doesn't
   // lose either one's last selection.
   const [reportedAumMode, setReportedAumMode] = useState<"reported" | "hist-live">("hist-live");
+  const { includeFlowEstimate } = useFlowEstimateDisplay();
   const [histLiveDate, setHistLiveDate] = useState<string | null>(null);
   // Date-range Excel export (Total + AMC-wise AUM across multiple days) --
   // a disconnected, purpose-built query, not a reflection of an on-screen
@@ -419,6 +421,17 @@ export function AmcGrid({
     };
   }, [data, lastQuarterEndLiveAumCr]);
 
+  // Display-only: the "vs quarter-end"/"vs yesterday" badges above stay
+  // anchored to the pure MTM series (there's no flow-adjusted equivalent of
+  // that persisted history to compare against) -- only the headline number
+  // itself switches when the toggle is on. Falls back to liveAumCr per-AMC
+  // for any AMC with no prior period yet (see flowAdjustedLiveAumCr in
+  // types.ts), same pattern as industryTotals' own per-AMC fallbacks above.
+  const totalFlowAdjustedLiveAumCr = useMemo(() => {
+    if (!data) return null;
+    return data.amcs.reduce((sum, a) => sum + (a.flowAdjustedLiveAumCr ?? a.liveAumCr), 0);
+  }, [data]);
+
   if (error && !data) {
     return (
       <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
@@ -534,11 +547,18 @@ export function AmcGrid({
                 Total Industry Equity Live AUM
               </CardTitle>
               <MarketStatusBadge />
+              {includeFlowEstimate && (
+                <span className="rounded-sm border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Incl. Est. Flow
+                </span>
+              )}
             </div>
           </CardHeader>
           <CardContent className="space-y-1">
             <div className="flex items-center gap-2">
-              <div className="text-3xl font-bold tabular-nums">{formatCr(data.totalLiveAumCr)}</div>
+              <div className="text-3xl font-bold tabular-nums">
+                {formatCr(includeFlowEstimate && totalFlowAdjustedLiveAumCr !== null ? totalFlowAdjustedLiveAumCr : data.totalLiveAumCr)}
+              </div>
               {industryTotals.liveDeltaCr !== null && industryTotals.liveDeltaPct !== null && (
                 <AumDeltaBadge deltaCr={industryTotals.liveDeltaCr} deltaPct={industryTotals.liveDeltaPct} />
               )}

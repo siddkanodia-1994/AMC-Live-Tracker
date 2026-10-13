@@ -110,6 +110,18 @@ export interface AmcLiveAum {
   netFlowPriorPeriod: string | null;
   netFlowPriorPeriodReportedAumCr: number | null;
   netFlowBaselineCr: number | null;
+  // liveAumCr + (netFlowCr * monthsElapsed), where monthsElapsed scales
+  // netFlowCr (this period's own calculated flow, the most recent one
+  // available) by how long it's actually been since this period's own
+  // month-end -- a display-only estimate of what Live AUM might be if
+  // this period's flow pace continued. Never written to
+  // live_aum_daily_snapshot (see compute-live-aum.ts's writeDailySnapshot)
+  // -- that table's own net-flow baseline must stay pure MTM, or next
+  // period's getNetFlowForPeriod would net a real reported AUM against an
+  // already-inflated baseline and permanently understate that period's
+  // true flow. null whenever netFlowCr itself is null (e.g. a brand-new
+  // AMC with no prior period yet) -- liveAumCr is always the fallback.
+  flowAdjustedLiveAumCr: number | null;
 }
 
 // Overview table-only benchmark row (Nifty 50 / Nifty 500) -- computed
