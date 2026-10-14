@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { TableCell } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
-// Comma-grouped, 1 decimal -- same en-IN convention as formatCr elsewhere, just one
-// fewer decimal place (as requested) since these are manually-typed working figures,
-// not display-only currency values.
-function formatDisplay(value: number): string {
-  return value.toLocaleString("en-IN", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+// Comma-grouped, 1 decimal by default -- same en-IN convention as formatCr
+// elsewhere, just one fewer decimal place (as requested) since these are
+// manually-typed working figures, not display-only currency values. A
+// caller can pass `decimals` to round further (e.g. whole-crore amounts).
+function formatDisplay(value: number, decimals: number): string {
+  return value.toLocaleString("en-IN", { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
 }
 
 /**
@@ -24,6 +26,8 @@ export function EditNumberCell({
   isOverridden,
   onSave,
   title,
+  decimals = 1,
+  inputClassName,
 }: {
   value: number;
   isOverridden: boolean;
@@ -31,8 +35,15 @@ export function EditNumberCell({
   // Hover text for the input -- used for the override audit-trail note
   // ("Overridden {date} — was {value}").
   title?: string;
+  // Display precision at rest -- defaults to 1 (every existing caller's
+  // behavior, unchanged); a caller can pass 0 for whole-amount fields.
+  decimals?: number;
+  // Extra classes merged onto the <input> itself, for a caller that wants
+  // its own visual theme (background/font colour) without affecting every
+  // other EditNumberCell in the app.
+  inputClassName?: string;
 }) {
-  const [draft, setDraft] = useState(() => formatDisplay(value));
+  const [draft, setDraft] = useState(() => formatDisplay(value, decimals));
   const [prevValue, setPrevValue] = useState(value);
   const [focused, setFocused] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -45,7 +56,7 @@ export function EditNumberCell({
   // in-flight edit is never clobbered by a background refetch.
   if (value !== prevValue && !focused) {
     setPrevValue(value);
-    setDraft(formatDisplay(value));
+    setDraft(formatDisplay(value, decimals));
   }
 
   useEffect(() => () => {
@@ -62,11 +73,11 @@ export function EditNumberCell({
     const cleaned = draft.replace(/,/g, "").trim();
     const parsed = cleaned === "" ? null : Number(cleaned);
     if (parsed !== null && !Number.isFinite(parsed)) {
-      setDraft(formatDisplay(value));
+      setDraft(formatDisplay(value, decimals));
       return;
     }
     if (parsed === null ? !isOverridden : parsed === value && !isOverridden) {
-      setDraft(formatDisplay(value));
+      setDraft(formatDisplay(value, decimals));
       return;
     }
     setSaving(true);
@@ -78,10 +89,10 @@ export function EditNumberCell({
       // prop differs from before, which it won't if the saved amount happens
       // to match what was already stored (e.g. re-saving an unchanged
       // override), otherwise leaving the raw unformatted draft on screen.
-      if (parsed !== null) setDraft(formatDisplay(parsed));
+      if (parsed !== null) setDraft(formatDisplay(parsed, decimals));
     } catch {
       showFlash("error");
-      setDraft(formatDisplay(value));
+      setDraft(formatDisplay(value, decimals));
     } finally {
       setSaving(false);
     }
@@ -120,14 +131,23 @@ export function EditNumberCell({
           onKeyDown={(e) => {
             if (e.key === "Enter") e.currentTarget.blur();
             if (e.key === "Escape") {
-              setDraft(formatDisplay(value));
+              setDraft(formatDisplay(value, decimals));
               setFocused(false);
               e.currentTarget.blur();
             }
           }}
-          className={`w-28 rounded border bg-transparent px-1.5 py-0.5 text-right text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-foreground/40 ${
-            isOverridden ? "border-amber-500/60" : ""
-          }`}
+          className={cn(
+            "w-28 rounded border bg-transparent px-1.5 py-0.5 text-right text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-foreground/40",
+            // inputClassName (a caller's own background/border theme) comes
+            // before the override border, via cn()'s tailwind-merge, so a
+            // caller-supplied bg/border actually replaces the defaults
+            // instead of colliding with them in the generated stylesheet --
+            // and the amber override border, when present, still wins over
+            // a themed border colour (same conflict-resolution order keeps
+            // the override indicator visible regardless of caller theme).
+            inputClassName,
+            isOverridden && "border-amber-500/60"
+          )}
         />
         {isOverridden && !saving && (
           <button

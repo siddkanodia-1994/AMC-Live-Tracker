@@ -1,0 +1,2 @@
+ALTER TABLE "amc_fortnightly_update" ADD COLUMN "sip_industry_latest_year" numeric(6, 0);--> statement-breakpoint
+ALTER TABLE "amc_fortnightly_update" ADD COLUMN "sip_industry_latest_month" numeric(2, 0);

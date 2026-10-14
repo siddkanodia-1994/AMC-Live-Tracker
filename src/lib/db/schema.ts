@@ -765,6 +765,13 @@ export const amcFortnightlyUpdate = pgTable(
     sipAmcYoyQPct: numeric("sip_amc_yoy_q_pct", { precision: 7, scale: 4 }),
     sipAmcYoyQ2ValCr: numeric("sip_amc_yoy_q2_val_cr", { precision: 18, scale: 4 }),
     sipAmcYoyQ2Pct: numeric("sip_amc_yoy_q2_pct", { precision: 7, scale: 4 }),
+    // Which fiscal quarter the 5 SIP AMC Growth rows above are anchored to
+    // (e.g. fy=2027, quarter=3 -> "Q3FY27") -- unlike SIP Industry Growth,
+    // there's no live per-AMC SIP data source to auto-derive "latest
+    // available" from, so the analyst picks it directly; null until first
+    // set, falling back to today's own calendar fiscal quarter.
+    sipAmcLatestFy: numeric("sip_amc_latest_fy", { precision: 6, scale: 0 }),
+    sipAmcLatestQuarter: numeric("sip_amc_latest_quarter", { precision: 1, scale: 0 }),
     // SIP Industry Growth -- same 5-period shape, monthly instead of
     // quarterly, Val only (no per-row %, matching the sample layout).
     sipIndustryMtdValCr: numeric("sip_industry_mtd_val_cr", { precision: 18, scale: 4 }),
@@ -772,6 +779,12 @@ export const amcFortnightlyUpdate = pgTable(
     sipIndustryPrevM2ValCr: numeric("sip_industry_prev_m2_val_cr", { precision: 18, scale: 4 }),
     sipIndustryYoyMValCr: numeric("sip_industry_yoy_m_val_cr", { precision: 18, scale: 4 }),
     sipIndustryYoyM2ValCr: numeric("sip_industry_yoy_m2_val_cr", { precision: 18, scale: 4 }),
+    // Optional one-off override of which month the 5 rows above are
+    // anchored to -- unlike sipAmcLatestFy/Quarter, this does NOT carry
+    // forward to the next snapshot (see createFortnightlySnapshot); null
+    // falls back to the system's own auto-detected latest month.
+    sipIndustryLatestYear: numeric("sip_industry_latest_year", { precision: 6, scale: 0 }),
+    sipIndustryLatestMonth: numeric("sip_industry_latest_month", { precision: 2, scale: 0 }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("amc_fortnightly_update_amc_date_idx").on(t.amcId, t.asOfDate)]

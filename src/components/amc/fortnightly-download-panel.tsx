@@ -3,8 +3,36 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useFortnightlyEligibleAmcs } from "@/hooks/use-fortnightly-update";
-import { buildFortnightlyExportSections } from "@/lib/aum/fortnightly-export";
+import { buildFortnightlyExportSections, buildFortnightlySheetExcel } from "@/lib/aum/fortnightly-export";
 import type { FortnightlySheet } from "@/lib/aum/fortnightly-update";
+
+// ExcelJS has no browser writeFile helper (unlike SheetJS's writeFileXLSX) --
+// write to an in-memory buffer, wrap it in a Blob, and trigger the save via
+// a throwaway <a download> link. Local copy of summary-panel.tsx's own
+// helper of the same name/shape (not shared/exported from there).
+function saveWorkbookBuffer(buffer: ArrayBuffer | Uint8Array, filename: string): void {
+  const blob = new Blob([buffer as BlobPart], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// Same black banner / green-red percentage colors as the live tab and
+// summary-panel.tsx's own Excel export -- applied via autoTable's
+// didParseCell since jsPDF-autotable has no per-row "kind" of its own.
+const BANNER_RGB: [number, number, number] = [0, 0, 0];
+const BANNER_TEXT_RGB: [number, number, number] = [255, 255, 255];
+const POS_RGB: [number, number, number] = [198, 239, 206];
+const POS_TEXT_RGB: [number, number, number] = [0, 97, 0];
+const NEG_RGB: [number, number, number] = [255, 199, 206];
+const NEG_TEXT_RGB: [number, number, number] = [156, 0, 6];
 
 const addSelectClass =
   "min-w-0 max-w-[240px] rounded-md border border-dashed bg-background px-2 py-1 text-sm text-muted-foreground hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
@@ -52,22 +80,15 @@ export function FortnightlyDownloadPanel() {
     if (selected.length === 0) return;
     setDownloading("excel");
     try {
-      const { utils, writeFileXLSX } = await import("xlsx");
-      const workbook = utils.book_new();
+      const { Workbook } = await import("exceljs");
+      const workbook = new Workbook();
       for (const amcId of selected) {
         const sheet = await fetchLatestSheet(amcId);
-        const sections = buildFortnightlyExportSections(sheet);
-        const aoa: string[][] = [];
-        for (const section of sections) {
-          aoa.push([section.title]);
-          aoa.push(...section.rows);
-          aoa.push([]);
-        }
-        const worksheet = utils.aoa_to_sheet(aoa);
-        utils.book_append_sheet(workbook, worksheet, sheet.overviewName.slice(0, 31));
+        buildFortnightlySheetExcel(workbook, sheet);
       }
       const dateStamp = new Date().toISOString().slice(0, 10);
-      writeFileXLSX(workbook, `Fortnightly_AMC_Update_${dateStamp}.xlsx`);
+      const buffer = await workbook.xlsx.writeBuffer();
+      saveWorkbookBuffer(buffer, `Fortnightly_AMC_Update_${dateStamp}.xlsx`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to build Excel file");
     } finally {
@@ -82,6 +103,7 @@ export function FortnightlyDownloadPanel() {
       const { jsPDF } = await import("jspdf");
       const autoTable = (await import("jspdf-autotable")).default;
       const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
       for (let i = 0; i < selected.length; i++) {
         if (i > 0) doc.addPage();
         const sheet = await fetchLatestSheet(selected[i]);
@@ -89,20 +111,45 @@ export function FortnightlyDownloadPanel() {
         let cursorY = 14;
         doc.setFontSize(14);
         doc.text(sections[0].title, 14, cursorY);
-        cursorY += 6;
+        cursorY += 8;
         for (const section of sections.slice(1)) {
-          doc.setFontSize(11);
-          doc.text(section.title, 14, cursorY);
+          // Section banner bar -- same black-fill/white-text as the
+          // dashboard's own SectionBanner and the Excel export's writeBanner.
+          doc.setFillColor(...BANNER_RGB);
+          doc.rect(14, cursorY - 4.5, pageWidth - 28, 6.5, "F");
+          doc.setTextColor(...BANNER_TEXT_RGB);
+          doc.setFontSize(10);
+          doc.setFont("helvetica", "bold");
+          doc.text(section.title, 16, cursorY);
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(0, 0, 0);
+          cursorY += 4;
           autoTable(doc, {
-            startY: cursorY + 2,
+            startY: cursorY,
             head: [section.rows[0]],
             body: section.rows.slice(1),
             styles: { fontSize: 8, cellPadding: 1.5 },
-            headStyles: { fillColor: [230, 230, 230], textColor: 20 },
+            headStyles: { fillColor: BANNER_RGB, textColor: BANNER_TEXT_RGB, fontStyle: "bold" },
+            // Same green/red percentage fill as the dashboard's own PctCell
+            // and the Excel export's writePct -- autoTable has no per-cell
+            // "kind" of its own, so detect it from the already-formatted
+            // "+12.34%"/"-1.23%" string instead of threading extra metadata
+            // through buildFortnightlyExportSections just for this.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            didParseCell: (data: any) => {
+              if (data.section !== "body") return;
+              const text = String(data.cell.raw ?? "").trim();
+              if (/^[+-]?\d[\d,.]*%$/.test(text)) {
+                const positive = !text.startsWith("-");
+                data.cell.styles.fillColor = positive ? POS_RGB : NEG_RGB;
+                data.cell.styles.textColor = positive ? POS_TEXT_RGB : NEG_TEXT_RGB;
+                data.cell.styles.fontStyle = "bold";
+              }
+            },
             margin: { left: 14, right: 14 },
           });
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          cursorY = (doc as any).lastAutoTable.finalY + 8;
+          cursorY = (doc as any).lastAutoTable.finalY + 10;
         }
       }
       const dateStamp = new Date().toISOString().slice(0, 10);

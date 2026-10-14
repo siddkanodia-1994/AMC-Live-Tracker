@@ -7,14 +7,59 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EditNumberCell } from "./edit-number-cell";
 import { FortnightlyDownloadPanel } from "./fortnightly-download-panel";
 import { useFortnightlyEligibleAmcs, useFortnightlySheet } from "@/hooks/use-fortnightly-update";
-import { formatCr, formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
+import { formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
 import type { FortnightlyFieldName, FortnightlySheet, ScenarioValues } from "@/lib/aum/fortnightly-update";
 
 const selectClass =
   "min-w-0 max-w-[260px] rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
+// Picked from the style preview Artifact (d7ecff fill / a9d2f2 border) --
+// applied to every editable/dropdown cell INSIDE the sheet (manual number
+// cells, the Quarter/FY and Month/Year pickers), not the AMC/As-of
+// navigation selects above the sheet, which stay their plain neutral style.
+const INPUT_CELL_CLASS = "bg-[#d7ecff] border-[#a9d2f2] text-[#0b2338]";
+
+const inlineSelectClass = `rounded-md border px-2 py-1 hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40 ${INPUT_CELL_CLASS}`;
+
+// "Comfortable" type scale from the style preview, applied to every <Table>
+// in this tab (overrides shadcn's own text-sm default via tailwind-merge).
+const TABLE_TEXT_CLASS = "text-[15px]";
+
+// "High contrast" font shade from the style preview, replacing this tab's
+// own text-muted-foreground usages (labels, captions, column headers) --
+// hardcoded at each call site below rather than referencing this constant,
+// matching the file's existing convention of inlining Tailwind classes.
+
+// A wide net around whatever quarter/FY is currently selected (not "today"
+// -- a past frozen snapshot's own selection may be years away from today's
+// calendar quarter, and the dropdown must always include it) so the
+// analyst can move the anchor forward or back without the option simply
+// not existing.
+function fyOptionsAround(selectedFy: number): number[] {
+  const options: number[] = [];
+  for (let fy = selectedFy - 10; fy <= selectedFy + 5; fy++) options.push(fy);
+  return options;
+}
+
+// Same "wide net around whatever's currently selected" rationale as
+// fyOptionsAround, for the SIP Industry Growth month picker.
+function yearOptionsAround(selectedYear: number): number[] {
+  const options: number[] = [];
+  for (let y = selectedYear - 10; y <= selectedYear + 5; y++) options.push(y);
+  return options;
+}
+
+const MONTH_ABBREV = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
 function numOrZero(v: number | null): number {
   return v ?? 0;
+}
+
+// Whole crores, no decimals -- scoped to just this tab (per user request),
+// NOT the shared formatCr() used everywhere else in the app (same
+// precedent as summary-panel.tsx's own local formatCrRounded).
+function formatCrRounded(valueCr: number): string {
+  return `₹${Math.round(valueCr).toLocaleString("en-IN")} cr`;
 }
 
 // A thin label/value row for sections that aren't naturally a multi-column
@@ -35,7 +80,7 @@ function LabelRow({ label, children, bold }: { label: string; children: React.Re
 // Kept in sync with that file's copy rather than shared, same precedent
 // as that file's own "local copy of small pure helpers" convention.
 function PctCell({ value, className }: { value: number | null; className?: string }) {
-  if (value === null) return <TableCell className={`text-right tabular-nums text-muted-foreground ${className ?? ""}`}>—</TableCell>;
+  if (value === null) return <TableCell className={`text-right tabular-nums text-[#262626] dark:text-[#d4d4d4] ${className ?? ""}`}>—</TableCell>;
   const positive = value >= 0;
   return (
     <TableCell
@@ -135,18 +180,18 @@ export function FortnightlyUpdatePanel() {
   }
 
   if (error) {
-    return <p className="text-center text-muted-foreground">Failed to load: {error.message}</p>;
+    return <p className="text-center text-[#262626] dark:text-[#d4d4d4]">Failed to load: {error.message}</p>;
   }
 
   if (!amcsData || amcsData.amcs.length === 0) {
-    return <p className="text-center text-sm text-muted-foreground">No listed-stock AMCs configured yet.</p>;
+    return <p className="text-center text-sm text-[#262626] dark:text-[#d4d4d4]">No listed-stock AMCs configured yet.</p>;
   }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end gap-3 rounded-lg border bg-card p-3">
         <div className="flex flex-col gap-1">
-          <label htmlFor="fortnightly-amc" className="text-xs text-muted-foreground">
+          <label htmlFor="fortnightly-amc" className="text-xs text-[#262626] dark:text-[#d4d4d4]">
             AMC
           </label>
           <select
@@ -164,7 +209,7 @@ export function FortnightlyUpdatePanel() {
         </div>
         {sheet && (
           <div className="flex flex-col gap-1">
-            <label htmlFor="fortnightly-date" className="text-xs text-muted-foreground">
+            <label htmlFor="fortnightly-date" className="text-xs text-[#262626] dark:text-[#d4d4d4]">
               As of
             </label>
             <select
@@ -218,12 +263,23 @@ function ManualCell({
   value,
   onSave,
   title,
+  decimals,
 }: {
   value: number | null;
   onSave: (v: number | null) => Promise<void>;
   title?: string;
+  decimals?: number;
 }) {
-  return <EditNumberCell value={numOrZero(value)} isOverridden={value !== null} onSave={onSave} title={title} />;
+  return (
+    <EditNumberCell
+      value={numOrZero(value)}
+      isOverridden={value !== null}
+      onSave={onSave}
+      title={title}
+      decimals={decimals}
+      inputClassName={INPUT_CELL_CLASS}
+    />
+  );
 }
 
 // Like ManualCell, but with an auto-pulled default: shows the manual
@@ -236,23 +292,34 @@ function ManualOrAutoCell({
   autoValue,
   onSave,
   title,
+  decimals,
 }: {
   manualValue: number | null;
   autoValue: number | null;
   onSave: (v: number | null) => Promise<void>;
   title?: string;
+  decimals?: number;
 }) {
   const effective = manualValue ?? autoValue;
-  return <EditNumberCell value={numOrZero(effective)} isOverridden={manualValue !== null} onSave={onSave} title={title} />;
+  return (
+    <EditNumberCell
+      value={numOrZero(effective)}
+      isOverridden={manualValue !== null}
+      onSave={onSave}
+      title={title}
+      decimals={decimals}
+      inputClassName={INPUT_CELL_CLASS}
+    />
+  );
 }
 
 function ScenarioHeaderRow() {
   return (
     <TableRow>
       <TableCell />
-      <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Bear</TableCell>
-      <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Base</TableCell>
-      <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Bull</TableCell>
+      <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Bear</TableCell>
+      <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Base</TableCell>
+      <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Bull</TableCell>
     </TableRow>
   );
 }
@@ -271,7 +338,7 @@ function ScenarioPriceRow({ label, values, bold }: { label: string; values: Scen
 function ScenarioPctRow({ label, values }: { label: string; values: ScenarioValues }) {
   return (
     <TableRow>
-      <TableCell className="text-muted-foreground">{label}</TableCell>
+      <TableCell className="text-[#262626] dark:text-[#d4d4d4]">{label}</TableCell>
       <PctCell value={values.bear} />
       <PctCell value={values.base} />
       <PctCell value={values.bull} />
@@ -283,9 +350,9 @@ function ScenarioMcapRow({ label, values }: { label: string; values: ScenarioVal
   return (
     <TableRow>
       <TableCell>{label}</TableCell>
-      <TableCell className="text-right tabular-nums">{values.bear === null ? "—" : formatCr(values.bear)}</TableCell>
-      <TableCell className="text-right tabular-nums">{values.base === null ? "—" : formatCr(values.base)}</TableCell>
-      <TableCell className="text-right tabular-nums">{values.bull === null ? "—" : formatCr(values.bull)}</TableCell>
+      <TableCell className="text-right tabular-nums">{values.bear === null ? "—" : formatCrRounded(values.bear)}</TableCell>
+      <TableCell className="text-right tabular-nums">{values.base === null ? "—" : formatCrRounded(values.base)}</TableCell>
+      <TableCell className="text-right tabular-nums">{values.bull === null ? "—" : formatCrRounded(values.bull)}</TableCell>
     </TableRow>
   );
 }
@@ -330,7 +397,7 @@ function FortnightlySheetView({
       {/* Row 1: Stock/CMP/Shares + PAT/CAGR */}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="overflow-hidden rounded-lg border bg-card">
-          <Table>
+          <Table className={TABLE_TEXT_CLASS}>
             <TableBody>
               <SectionBanner title="Stock" colSpan={2} />
               <LabelRow label="Stock" bold>
@@ -349,21 +416,21 @@ function FortnightlySheetView({
         </div>
 
         <div className="overflow-hidden rounded-lg border bg-card">
-          <Table>
+          <Table className={TABLE_TEXT_CLASS}>
             <TableBody>
               <SectionBanner title="PAT" colSpan={5} />
               <TableRow>
                 <TableCell className="font-semibold">Period</TableCell>
-                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">FY26A</TableCell>
-                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">FY27E</TableCell>
-                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">FY28E</TableCell>
-                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">2Y CAGR</TableCell>
+                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">FY26A</TableCell>
+                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">FY27E</TableCell>
+                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">FY28E</TableCell>
+                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">2Y CAGR</TableCell>
               </TableRow>
               <TableRow>
                 <TableCell className="font-semibold">PAT (Cr)</TableCell>
-                <ManualCell value={m.patFy26aCr} onSave={(val) => onSave("patFy26aCr", val)} />
-                <ManualCell value={m.patFy27eCr} onSave={(val) => onSave("patFy27eCr", val)} />
-                <ManualCell value={m.patFy28eCr} onSave={(val) => onSave("patFy28eCr", val)} />
+                <ManualCell value={m.patFy26aCr} onSave={(val) => onSave("patFy26aCr", val)} decimals={0} />
+                <ManualCell value={m.patFy27eCr} onSave={(val) => onSave("patFy27eCr", val)} decimals={0} />
+                <ManualCell value={m.patFy28eCr} onSave={(val) => onSave("patFy28eCr", val)} decimals={0} />
                 <PctCell value={v.cagr2yPct} />
               </TableRow>
             </TableBody>
@@ -374,7 +441,7 @@ function FortnightlySheetView({
       {/* Row 2: Bear/Base/Bull valuation block + QAAUM */}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="overflow-hidden rounded-lg border bg-card">
-          <Table>
+          <Table className={TABLE_TEXT_CLASS}>
             <TableBody>
               <SectionBanner title="Valuation (Bear / Base / Bull)" colSpan={4} />
               <ScenarioHeaderRow />
@@ -392,7 +459,7 @@ function FortnightlySheetView({
 
               <TableRow>
                 <TableCell className="pt-4 font-semibold">FY27 Discounted</TableCell>
-                <TableCell className="pt-4 text-right text-xs text-muted-foreground" colSpan={2}>
+                <TableCell className="pt-4 text-right text-xs text-[#262626] dark:text-[#d4d4d4]" colSpan={2}>
                   Discount rate (%)
                 </TableCell>
                 <EditNumberCell
@@ -400,6 +467,7 @@ function FortnightlySheetView({
                   isOverridden={m.discountRateFy27Pct !== null}
                   onSave={(val) => onSave("discountRateFy27Pct", val === null ? null : val / 100)}
                   title="Manual -- annual discount rate (%) applied to bring the FY28 target price back to an FY27 value"
+                  inputClassName={INPUT_CELL_CLASS}
                 />
               </TableRow>
               <ScenarioPriceRow label="FY27 Discounted Price" values={v.fy27DiscountedPriceInr} />
@@ -407,7 +475,7 @@ function FortnightlySheetView({
 
               <TableRow>
                 <TableCell className="pt-4 font-semibold">FY26 Discounted</TableCell>
-                <TableCell className="pt-4 text-right text-xs text-muted-foreground" colSpan={2}>
+                <TableCell className="pt-4 text-right text-xs text-[#262626] dark:text-[#d4d4d4]" colSpan={2}>
                   Discount rate (%)
                 </TableCell>
                 <EditNumberCell
@@ -415,6 +483,7 @@ function FortnightlySheetView({
                   isOverridden={m.discountRateFy26Pct !== null}
                   onSave={(val) => onSave("discountRateFy26Pct", val === null ? null : val / 100)}
                   title="Manual -- additional annual discount rate (%), compounded with the FY27 rate, to bring the FY28 target price back to an FY26 value"
+                  inputClassName={INPUT_CELL_CLASS}
                 />
               </TableRow>
               <ScenarioPriceRow label="FY26 Discounted Price" values={v.fy26DiscountedPriceInr} />
@@ -425,24 +494,24 @@ function FortnightlySheetView({
 
         {/* Quarterly Averages (QAAUM) -- pulled, read-only */}
         <div className="overflow-hidden rounded-lg border bg-card">
-          <Table>
+          <Table className={TABLE_TEXT_CLASS}>
             <TableBody>
               <SectionBanner title="Quarterly Averages — QAAUM" colSpan={4} />
               <TableRow>
-                <TableCell className="text-[10.5px] font-semibold uppercase text-muted-foreground">Period</TableCell>
-                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Val (Cr)</TableCell>
-                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">QoQ</TableCell>
-                <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">YoY</TableCell>
+                <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
+                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Val (Cr)</TableCell>
+                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">QoQ</TableCell>
+                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">YoY</TableCell>
               </TableRow>
               {sheet.qaaum.map((row) => (
                 <TableRow key={row.label}>
                   <TableCell>
                     <div className="font-semibold">{row.label}</div>
-                    <div className="text-[10.5px] font-normal text-muted-foreground/70">
+                    <div className="text-[12px] font-normal text-[#262626]/70 dark:text-[#d4d4d4]/70">
                       {formatShortDate(row.range[0])} – {formatShortDate(row.range[1])}
                     </div>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{row.valCr === null ? "—" : formatCr(row.valCr)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{row.valCr === null ? "—" : formatCrRounded(row.valCr)}</TableCell>
                   <PctCell value={row.qoqPct ?? null} />
                   <PctCell value={row.yoyPct ?? null} />
                 </TableRow>
@@ -461,7 +530,7 @@ function FortnightlySheetView({
       {/* Row 4: Ratio section -- pulled, read-only (trailing, no pair) */}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="overflow-hidden rounded-lg border bg-card">
-          <Table>
+          <Table className={TABLE_TEXT_CLASS}>
             <TableBody>
               <SectionBanner title="Ratio (Price / Avg AUM)" colSpan={2} />
               <LabelRow label="SD Level">
@@ -486,7 +555,7 @@ function FortnightlySheetView({
               </LabelRow>
             </TableBody>
           </Table>
-          <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+          <p className="border-t px-3 py-2 text-xs text-[#262626] dark:text-[#d4d4d4]">
             Uses the Stock Correlation tab&apos;s own shared Date Range / Moving Avg settings.
           </p>
         </div>
@@ -520,20 +589,56 @@ function SipAmcGrowthTable({
 
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
-      <Table>
+      <Table className={TABLE_TEXT_CLASS}>
         <TableBody>
           <SectionBanner title="SIP AMC Growth" colSpan={5} />
           <TableRow>
-            <TableCell className="text-[10.5px] font-semibold uppercase text-muted-foreground">Period</TableCell>
-            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Val (Cr)</TableCell>
-            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">QoQ</TableCell>
-            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">YoY</TableCell>
-            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">SIP/Equity AUM</TableCell>
+            <TableCell className="font-semibold">Latest Available Quarter</TableCell>
+            <TableCell colSpan={2} />
+            <TableCell>
+              <div className="flex justify-end">
+                <select
+                  value={sheet.sipAmcLatestQuarter}
+                  onChange={(e) => onSave("sipAmcLatestQuarter", Number(e.target.value))}
+                  title="Which fiscal quarter the AMC's own SIP figures below are reported for -- no live data source for this, so pick it directly"
+                  className={`${inlineSelectClass} w-16`}
+                >
+                  {[1, 2, 3, 4].map((q) => (
+                    <option key={q} value={q}>
+                      Q{q}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </TableCell>
+            <TableCell>
+              <div className="flex justify-end">
+                <select
+                  value={sheet.sipAmcLatestFy}
+                  onChange={(e) => onSave("sipAmcLatestFy", Number(e.target.value))}
+                  title="Fiscal year for the quarter above"
+                  className={`${inlineSelectClass} w-20`}
+                >
+                  {fyOptionsAround(sheet.sipAmcLatestFy).map((fy) => (
+                    <option key={fy} value={fy}>
+                      FY{String(fy).slice(-2)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </TableCell>
+          </TableRow>
+          <TableRow>
+            <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Val (Cr)</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">QoQ</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">YoY</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">SIP/Equity AUM</TableCell>
           </TableRow>
           {rows.map((row, i) => (
             <TableRow key={row.label}>
               <TableCell>{row.label}</TableCell>
-              <ManualCell value={row.val} onSave={(v) => onSave(row.valField, v)} />
+              <ManualCell value={row.val} onSave={(v) => onSave(row.valField, v)} decimals={0} />
               <PctCell value={qoqByRow[i]} />
               <PctCell value={yoyByRow[i]} />
               <ManualCell
@@ -558,6 +663,8 @@ function SipIndustryGrowthTable({
 }) {
   const m = sheet.manual;
   const auto = sheet.sipIndustryAuto;
+  const effectiveMonth = m.sipIndustryLatestMonth ?? auto?.defaultAnchorMonth ?? null;
+  const effectiveYear = m.sipIndustryLatestYear ?? auto?.defaultAnchorYear ?? null;
   const withPeriod = (base: string, period: string | undefined) => (period ? `${base} (${period})` : base);
   const rows: { label: string; field: FortnightlyFieldName; manualVal: number | null; autoVal: number | null }[] = [
     { label: withPeriod("Latest Available Month", auto?.labels.qtd), field: "sipIndustryMtdValCr", manualVal: m.sipIndustryMtdValCr, autoVal: auto?.values.mtd ?? null },
@@ -576,14 +683,52 @@ function SipIndustryGrowthTable({
 
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
-      <Table>
+      <Table className={TABLE_TEXT_CLASS}>
         <TableBody>
           <SectionBanner title="SIP Industry Growth" colSpan={4} />
+          {effectiveMonth !== null && effectiveYear !== null && (
+            <TableRow>
+              <TableCell className="font-semibold">Latest Available Month</TableCell>
+              <TableCell />
+              <TableCell>
+                <div className="flex justify-end">
+                  <select
+                    value={effectiveMonth}
+                    onChange={(e) => onSave("sipIndustryLatestMonth", Number(e.target.value))}
+                    title="Which month the industry-wide SIP figures below are reported for -- defaults to the system's own auto-detected latest month; an override here applies only to this one snapshot"
+                    className={`${inlineSelectClass} w-20`}
+                  >
+                    {MONTH_ABBREV.map((name, i) => (
+                      <option key={name} value={i + 1}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex justify-end">
+                  <select
+                    value={effectiveYear}
+                    onChange={(e) => onSave("sipIndustryLatestYear", Number(e.target.value))}
+                    title="Year for the month above"
+                    className={`${inlineSelectClass} w-20`}
+                  >
+                    {yearOptionsAround(effectiveYear).map((y) => (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </TableCell>
+            </TableRow>
+          )}
           <TableRow>
-            <TableCell className="text-[10.5px] font-semibold uppercase text-muted-foreground">Period</TableCell>
-            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">Val (Cr)</TableCell>
-            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">MoM</TableCell>
-            <TableCell className="text-right text-[10.5px] font-semibold uppercase text-muted-foreground">YoY</TableCell>
+            <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Val (Cr)</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">MoM</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">YoY</TableCell>
           </TableRow>
           {rows.map((row, i) => (
             <TableRow key={row.label}>
@@ -593,6 +738,7 @@ function SipIndustryGrowthTable({
                 autoValue={row.autoVal}
                 onSave={(v) => onSave(row.field, v)}
                 title="Auto-pulled from the Summary tab's industry-wide SIP data; type a value to override"
+                decimals={0}
               />
               <PctCell value={momByRow[i]} />
               <PctCell value={yoyByRow[i]} />

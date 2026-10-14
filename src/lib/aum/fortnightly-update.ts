@@ -46,11 +46,15 @@ export interface FortnightlyManualFields {
   sipAmcYoyQPct: number | null;
   sipAmcYoyQ2ValCr: number | null;
   sipAmcYoyQ2Pct: number | null;
+  sipAmcLatestFy: number | null;
+  sipAmcLatestQuarter: number | null;
   sipIndustryMtdValCr: number | null;
   sipIndustryPrevMValCr: number | null;
   sipIndustryPrevM2ValCr: number | null;
   sipIndustryYoyMValCr: number | null;
   sipIndustryYoyM2ValCr: number | null;
+  sipIndustryLatestYear: number | null;
+  sipIndustryLatestMonth: number | null;
 }
 
 export const MANUAL_FIELD_NAMES = [
@@ -73,11 +77,15 @@ export const MANUAL_FIELD_NAMES = [
   "sipAmcYoyQPct",
   "sipAmcYoyQ2ValCr",
   "sipAmcYoyQ2Pct",
+  "sipAmcLatestFy",
+  "sipAmcLatestQuarter",
   "sipIndustryMtdValCr",
   "sipIndustryPrevMValCr",
   "sipIndustryPrevM2ValCr",
   "sipIndustryYoyMValCr",
   "sipIndustryYoyM2ValCr",
+  "sipIndustryLatestYear",
+  "sipIndustryLatestMonth",
 ] as const satisfies readonly (keyof FortnightlyManualFields)[];
 
 export type FortnightlyFieldName = (typeof MANUAL_FIELD_NAMES)[number];
@@ -111,11 +119,15 @@ function rowToManualFields(row: typeof amcFortnightlyUpdate.$inferSelect): Fortn
     sipAmcYoyQPct: toNum(row.sipAmcYoyQPct),
     sipAmcYoyQ2ValCr: toNum(row.sipAmcYoyQ2ValCr),
     sipAmcYoyQ2Pct: toNum(row.sipAmcYoyQ2Pct),
+    sipAmcLatestFy: toNum(row.sipAmcLatestFy),
+    sipAmcLatestQuarter: toNum(row.sipAmcLatestQuarter),
     sipIndustryMtdValCr: toNum(row.sipIndustryMtdValCr),
     sipIndustryPrevMValCr: toNum(row.sipIndustryPrevMValCr),
     sipIndustryPrevM2ValCr: toNum(row.sipIndustryPrevM2ValCr),
     sipIndustryYoyMValCr: toNum(row.sipIndustryYoyMValCr),
     sipIndustryYoyM2ValCr: toNum(row.sipIndustryYoyM2ValCr),
+    sipIndustryLatestYear: toNum(row.sipIndustryLatestYear),
+    sipIndustryLatestMonth: toNum(row.sipIndustryLatestMonth),
   };
 }
 
@@ -164,6 +176,14 @@ async function getMostRecentSnapshotOnOrBefore(
 export async function createFortnightlySnapshot(amcId: number, asOfDate: string): Promise<void> {
   const prior = await getMostRecentSnapshotOnOrBefore(amcId, asOfDate);
   const carryForward = prior ? rowToManualFields(prior) : EMPTY_MANUAL;
+  // Unlike every other manual field, the SIP Industry "latest available
+  // month" override deliberately does NOT carry forward -- the system's own
+  // auto-detection already advances correctly on its own as real data
+  // arrives, so a prior one-off override (e.g. to look at an older month)
+  // would otherwise go stale and silently keep applying fortnight after
+  // fortnight. Each new snapshot starts back at the auto-detected default.
+  carryForward.sipIndustryLatestYear = null;
+  carryForward.sipIndustryLatestMonth = null;
   await db
     .insert(amcFortnightlyUpdate)
     .values({ amcId, asOfDate, ...toDbValues(carryForward) })
@@ -296,18 +316,35 @@ export interface SipPeriodLabels {
   yoyQ2: string;
 }
 
-export function getSipAmcPeriodLabels(asOfDate: string): SipPeriodLabels {
-  const cur = getFiscalYearAndQuarter(asOfDate);
-  const prevQBounds = getPreviousFiscalQuarterBounds(asOfDate);
+// Inverse of getFiscalYearAndQuarter -- the first calendar day of a given
+// (fy, quarter) Indian fiscal quarter, so the existing date-based
+// getPreviousFiscalQuarterBounds/getFiscalYearAndQuarter helpers can step
+// backward from a manually-picked quarter exactly the way they already
+// step backward from asOfDate.
+function fiscalQuarterAnchorDate(fy: number, quarter: number): string {
+  if (quarter === 1) return `${fy - 1}-04-01`;
+  if (quarter === 2) return `${fy - 1}-07-01`;
+  if (quarter === 3) return `${fy - 1}-10-01`;
+  return `${fy}-01-01`; // Q4, Jan-Mar
+}
+
+// Takes the "latest available quarter" as an explicit (fy, quarter) anchor
+// rather than asOfDate -- there's no live per-AMC SIP data source to
+// auto-derive it from (unlike SIP Industry Growth's industry_monthly_flow),
+// so the analyst picks it directly (see sipAmcLatestFy/sipAmcLatestQuarter
+// on getFortnightlySheet's returned sheet).
+export function getSipAmcPeriodLabels(anchorFy: number, anchorQuarter: number): SipPeriodLabels {
+  const anchorDate = fiscalQuarterAnchorDate(anchorFy, anchorQuarter);
+  const prevQBounds = getPreviousFiscalQuarterBounds(anchorDate);
   const prevQ = getFiscalYearAndQuarter(prevQBounds.start);
   const prevQ2Bounds = getPreviousFiscalQuarterBounds(prevQBounds.start);
   const prevQ2 = getFiscalYearAndQuarter(prevQ2Bounds.start);
   const label = (fy: number, q: number) => `Q${q}FY${String(fy).slice(-2)}`;
   return {
-    qtd: label(cur.fy, cur.q),
+    qtd: label(anchorFy, anchorQuarter),
     prevQ: label(prevQ.fy, prevQ.q),
     prevQ2: label(prevQ2.fy, prevQ2.q),
-    yoyQ: label(cur.fy - 1, cur.q),
+    yoyQ: label(anchorFy - 1, anchorQuarter),
     yoyQ2: label(prevQ.fy - 1, prevQ.q),
   };
 }
@@ -348,37 +385,65 @@ export interface SipIndustryValues {
 export interface SipIndustryAuto {
   labels: SipPeriodLabels;
   values: SipIndustryValues;
+  // The system's own auto-detected "latest available month" (year/month,
+  // 1-12) -- the fallback default shown in the picker, and what a brand-new
+  // snapshot always resets to (see sipIndustryLatestYear/Month's "no
+  // carry-forward" handling in createFortnightlySnapshot).
+  defaultAnchorYear: number;
+  defaultAnchorMonth: number;
 }
 
 // Auto-pulled default for "SIP Industry Growth" -- the same industry-wide
 // monthly SIP figure the Summary tab's own "Industry Flows" panel already
 // tracks (industry_monthly_flow / getAllMonthlyFlows), so this never needs
-// re-entering by hand for each of the 8 AMCs. "Latest Available Month" is
-// NOT simply the current calendar month -- AMFI publishes with a lag, so it
-// mirrors flows-view.ts's own computeFlowsViewData convention exactly:
-// one synthetic month rolled forward from the latest REAL entry, carrying
-// that same entry's own value as a placeholder (e.g. if August is the last
-// real row, "latest" is labeled September and shows August's own figure,
-// replaced automatically the moment a real September row is entered via
-// the Admin form) -- confirmed against that file's own documented design.
+// re-entering by hand for each of the 8 AMCs. The system's OWN "latest
+// available month" is NOT simply the current calendar month -- AMFI
+// publishes with a lag, so it mirrors flows-view.ts's own
+// computeFlowsViewData convention exactly: one synthetic month rolled
+// forward from the latest REAL entry, carrying that same entry's own value
+// as a placeholder (e.g. if August is the last real row, "latest" is
+// labeled September and shows August's own figure, replaced automatically
+// the moment a real September row is entered via the Admin form) --
+// confirmed against that file's own documented design.
+//
+// `anchorOverride` lets the analyst manually pin a DIFFERENT month as
+// "latest" for one snapshot (e.g. to temporarily look at an older month) --
+// when given, every one of the 5 periods below is looked up relative to it
+// instead of the system's own estimate, via the SAME sipByMonthEnd map (an
+// already-real month just returns its own real figure; a month with
+// neither real nor synthetic data comes back null, same as any other gap).
+//
 // Deliberately NOT gated by this snapshot's own asOfDate -- industry-wide
 // SIP has no "as of a past date" concept the way this app's per-AMC AUM
-// history does; it always reflects whatever's currently the latest entry.
-export async function getSipIndustryAutoValues(): Promise<SipIndustryAuto | null> {
+// history does; it always reflects whatever's currently the latest entry
+// (or the analyst's explicit override).
+export async function getSipIndustryAutoValues(
+  anchorOverride?: { year: number | null; month: number | null }
+): Promise<SipIndustryAuto | null> {
   const flows = await getAllMonthlyFlows();
   if (flows.length === 0) return null;
   const latestReal = flows[flows.length - 1];
   const estimatedMonth = monthEndOf(subtractMonths(latestReal.monthEndDate, -1));
+  const [defaultAnchorYear, defaultAnchorMonth] = estimatedMonth.split("-").map(Number);
+
+  // Each half of the override resolves independently against its own
+  // default -- the UI lets the analyst change just the month (or just the
+  // year) at a time, so requiring BOTH to be explicitly set before any
+  // override took effect silently ignored a lone month-only or year-only
+  // pick.
+  const anchorYear = anchorOverride?.year ?? defaultAnchorYear;
+  const anchorMonthNum = anchorOverride?.month ?? defaultAnchorMonth;
+  const anchorMonth = monthEndOf(`${anchorYear}-${String(anchorMonthNum).padStart(2, "0")}-01`);
 
   const sipByMonthEnd = new Map(flows.map((f) => [f.monthEndDate, f.sipContributionsCr]));
   sipByMonthEnd.set(estimatedMonth, latestReal.sipContributionsCr);
 
   const monthEnds = {
-    mtd: estimatedMonth,
-    prevM: monthEndOf(subtractMonths(estimatedMonth, 1)),
-    prevM2: monthEndOf(subtractMonths(estimatedMonth, 2)),
-    yoyM: monthEndOf(subtractMonths(estimatedMonth, 12)),
-    yoyM2: monthEndOf(subtractMonths(estimatedMonth, 13)),
+    mtd: anchorMonth,
+    prevM: monthEndOf(subtractMonths(anchorMonth, 1)),
+    prevM2: monthEndOf(subtractMonths(anchorMonth, 2)),
+    yoyM: monthEndOf(subtractMonths(anchorMonth, 12)),
+    yoyM2: monthEndOf(subtractMonths(anchorMonth, 13)),
   };
 
   return {
@@ -396,6 +461,8 @@ export async function getSipIndustryAutoValues(): Promise<SipIndustryAuto | null
       yoyM: sipByMonthEnd.get(monthEnds.yoyM) ?? null,
       yoyM2: sipByMonthEnd.get(monthEnds.yoyM2) ?? null,
     },
+    defaultAnchorYear,
+    defaultAnchorMonth,
   };
 }
 
@@ -486,6 +553,8 @@ export interface FortnightlySheet {
   qaaum: QuarterRow[];
   ratio: RatioSection | null;
   sipAmcLabels: SipPeriodLabels;
+  sipAmcLatestFy: number;
+  sipAmcLatestQuarter: number;
   sipIndustryAuto: SipIndustryAuto | null;
   manual: FortnightlyManualFields;
   valuation: ValuationBlock;
@@ -501,7 +570,7 @@ export async function getFortnightlySheet(amcId: number, requestedAsOfDate?: str
 
   const [listedStock] = await db.select().from(amcListedStock).where(eq(amcListedStock.amcId, amcId));
 
-  const [savedRow, cmpInr, aumHistory, priceByIsin, correlationSettings, sipIndustryAuto] = await Promise.all([
+  const [savedRow, cmpInr, aumHistory, priceByIsin, correlationSettings] = await Promise.all([
     db
       .select()
       .from(amcFortnightlyUpdate)
@@ -518,10 +587,17 @@ export async function getFortnightlySheet(amcId: number, requestedAsOfDate?: str
       ? getAmcListedStockPriceHistoryForIsins([listedStock.isin], new Map([[listedStock.isin, listedStock.backfillFromDate]]))
       : Promise.resolve(new Map<string, AmcStockPricePoint[]>()),
     getStockCorrelationDefaults(),
-    getSipIndustryAutoValues(),
   ]);
 
   const manual = savedRow ? rowToManualFields(savedRow) : EMPTY_MANUAL;
+
+  // Depends on `manual` (the override, if any), so it can't join the
+  // Promise.all above -- the analyst's picked month, when set, takes
+  // precedence over the system's own auto-detected "latest available".
+  const sipIndustryAuto = await getSipIndustryAutoValues({
+    year: manual.sipIndustryLatestYear,
+    month: manual.sipIndustryLatestMonth,
+  });
 
   const aumAsOf = aumHistory.filter((p) => p.date <= asOfDate);
   const qaaum = computeSummaryViewData(aumAsOf, "average", asOfDate).quarter;
@@ -533,6 +609,10 @@ export async function getFortnightlySheet(amcId: number, requestedAsOfDate?: str
 
   const valuation = computeValuationBlock(manual, cmpInr);
 
+  const defaultFyQ = getFiscalYearAndQuarter(asOfDate);
+  const sipAmcLatestFy = manual.sipAmcLatestFy ?? defaultFyQ.fy;
+  const sipAmcLatestQuarter = manual.sipAmcLatestQuarter ?? defaultFyQ.q;
+
   return {
     amcId,
     slug: amc.slug,
@@ -543,7 +623,9 @@ export async function getFortnightlySheet(amcId: number, requestedAsOfDate?: str
     cmpInr,
     qaaum,
     ratio,
-    sipAmcLabels: getSipAmcPeriodLabels(asOfDate),
+    sipAmcLabels: getSipAmcPeriodLabels(sipAmcLatestFy, sipAmcLatestQuarter),
+    sipAmcLatestFy,
+    sipAmcLatestQuarter,
     sipIndustryAuto,
     manual,
     valuation,
