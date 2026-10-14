@@ -11,6 +11,19 @@ export function firstDayOfNextMonth(reportPeriod: string): string {
   return `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
 }
 
+// The reportPeriod one month after the given one (e.g. "2026-08" ->
+// "2026-09") -- a plain reportPeriod-to-reportPeriod step, as distinct
+// from firstDayOfNextMonth's reportPeriod-to-date-string step. Used to
+// find the "extra lag" window's own start: the gap the net-flow estimate
+// patches opens a full calendar month after the current report period,
+// not the day right after it (see flowAdjustmentForDate in history.ts).
+export function nextReportPeriod(reportPeriod: string): string {
+  const [year, month] = reportPeriod.split("-").map(Number);
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+}
+
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 function isLeapYear(year: number): boolean {

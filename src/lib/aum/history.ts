@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcHistoricalAumEstimate, amcManualNetFlow, amcPeriods, amcs, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { addDaysToDateString, getIstDateString } from "../utils/date";
-import { firstDayOfNextMonth, lastDayOfReportMonth } from "./report-period";
+import { firstDayOfNextMonth, lastDayOfReportMonth, nextReportPeriod } from "./report-period";
 
 /**
  * Each AMC's reported AUM for one arbitrary (possibly past) report period --
@@ -23,56 +23,63 @@ export async function getReportedAumForPeriod(reportPeriod: string): Promise<Map
   return map;
 }
 
-// Fraction of `netFlowCr` to attribute to a single day `dateStr`'s Live AUM,
-// scaling by how far that day falls past the report period's own anchor
-// month-end -- null before the anchor, so a day from an older, already-
-// closed report period is correctly left untouched rather than given a
-// backwards (negative-elapsed-time) adjustment. This is the one place the
+// Whether `dateStr` falls in the "extra lag" window this estimate exists to
+// patch, and if so, the flat amount to add -- the SAME amount every
+// qualifying day, never scaled by how far into the gap it is. That window
+// opens a full calendar month after the current report period's own
+// month-end, not the day right after it: e.g. current report period =
+// August -> September is a normal, fully-expected "still using last
+// month's holdings" month (no adjustment at all, regardless of the
+// toggle), and the gap only opens on October 1 -- because by October 1 a
+// whole month (September) has fully closed in reality without its own
+// file having arrived yet, which is specifically the ~15-20 day lag this
+// patches. That boundary is deliberately the exact same date
+// reclaimForwardGap() will later recompute from once the awaited file
+// lands (firstDayOfNextMonth of the NEW period), so the patch covers
+// precisely the days that eventually get overwritten with real data and
+// require no separate "turn it off" step. This is the one place the
 // formula is written; compute-live-aum.ts's point-in-time estimate and
-// getAverageAumForRange's per-day proration below both call it, so neither
-// can drift out of sync with the other (a prior pass that duplicated this
-// formula with a weaker guard made the 90-day average move the WRONG way --
-// see the flow-estimate averages audit).
-export function flowAdjustmentForDate(dateStr: string, netFlowCr: number, anchorMonthEndDate: string): number | null {
-  const daysSinceAnchor = (Date.parse(`${dateStr}T00:00:00Z`) - Date.parse(`${anchorMonthEndDate}T00:00:00Z`)) / 86400000;
-  const daysInAnchorMonth = Number(anchorMonthEndDate.split("-")[2]);
-  if (daysInAnchorMonth <= 0 || daysSinceAnchor < 0) return null;
-  const monthsElapsed = daysSinceAnchor / daysInAnchorMonth;
-  return netFlowCr * monthsElapsed;
+// getAverageAumForRange below both call it, so neither can drift out of
+// sync with the other.
+export function flowAdjustmentForDate(dateStr: string, netFlowCr: number, reportPeriod: string): number | null {
+  const gapStartDate = firstDayOfNextMonth(nextReportPeriod(reportPeriod));
+  return dateStr < gapStartDate ? null : netFlowCr;
 }
 
 export interface FlowAdjustmentContext {
-  anchorMonthEndDate: string;
+  reportPeriod: string;
   netFlowCrByAmcId: Map<number, number>;
 }
 
 /**
  * Everything flowAdjustmentForDate needs for "the current report period",
  * built once per request and threaded into getAverageAumForRange wherever a
- * window can include days from the still-open period (see the flow-estimate
- * averages audit). A fresh getEffectiveNetFlowForPeriod query (calculated
- * net flow with any amc_listed_stock manual overrides applied), independent
- * of whatever single netFlows map a caller may already hold -- kept this
- * way so getRolling90DayAverages/getOverviewAdjustments don't have to
- * restructure their own already-parallel Promise.all just to share one.
+ * window's own end date can reach into the still-open gap. A fresh
+ * getEffectiveNetFlowForPeriod query (calculated net flow with any
+ * amc_listed_stock manual overrides applied), independent of whatever
+ * single netFlows map a caller may already hold -- kept this way so
+ * getRolling90DayAverages/getOverviewAdjustments don't have to restructure
+ * their own already-parallel Promise.all just to share one.
  */
 export async function getFlowAdjustmentContext(reportPeriod: string): Promise<FlowAdjustmentContext> {
   const netFlows = await getEffectiveNetFlowForPeriod(reportPeriod);
   return {
-    anchorMonthEndDate: lastDayOfReportMonth(reportPeriod),
+    reportPeriod,
     netFlowCrByAmcId: new Map([...netFlows].map(([amcId, nf]) => [amcId, nf.netFlowCr])),
   };
 }
 
 export interface AverageAumRange {
   avgLiveAumCr: number;
-  // Per-day-prorated average using flowAdjustmentForDate on every day in the
-  // window from the current report period's first live day onward (older,
-  // closed-period days are left as pure MTM). null only when this AMC has no
-  // net-flow estimate at all yet (e.g. a brand-new AMC with no prior
-  // period) -- callers fall back to avgLiveAumCr, same convention as
-  // AmcLiveAum.flowAdjustedLiveAumCr. Always null when no FlowAdjustmentContext
-  // was passed in (the common case -- most callers don't need this).
+  // avgLiveAumCr plus a single flat flowAdjustmentForDate add-on, gated on
+  // whether THIS WINDOW'S OWN endDate reaches into the still-open gap --
+  // not a per-day proration, so a longer window doesn't dilute it and a
+  // window that ends before the gap opens gets no adjustment at all. null
+  // only when this AMC has no net-flow estimate at all yet (e.g. a
+  // brand-new AMC with no prior period) -- callers fall back to
+  // avgLiveAumCr, same convention as AmcLiveAum.flowAdjustedLiveAumCr.
+  // Always null when no FlowAdjustmentContext was passed in (the common
+  // case -- most callers don't need this).
   avgFlowAdjustedLiveAumCr: number | null;
   daysCount: number;
 }
@@ -81,45 +88,21 @@ export interface AverageAumRange {
  * Average of daily live-AUM snapshots over an arbitrary [startDate, endDate]
  * window -- the general form getAverageAumSinceReport (below) delegates to
  * with its own hardcoded window, and what the Overview table's Avg AUM
- * date-range picker calls directly for a custom window. Without a
- * FlowAdjustmentContext this stays a single SQL AVG()/COUNT() aggregate (the
- * fast path almost every caller wants); passing one switches to fetching raw
- * per-day rows so each day can be individually prorated before averaging.
+ * date-range picker calls directly for a custom window. A single SQL
+ * AVG()/COUNT() aggregate regardless of whether a FlowAdjustmentContext is
+ * passed -- the flow adjustment is a flat, once-per-window add-on (not a
+ * per-day proration), so it never needs raw per-day rows to compute.
  */
 export async function getAverageAumForRange(
   startDate: string,
   endDate: string,
   flowCtx?: FlowAdjustmentContext
 ): Promise<Map<number, AverageAumRange>> {
-  if (!flowCtx) {
-    const rows = await db
-      .select({
-        amcId: liveAumDailySnapshot.amcId,
-        avgLiveAumCr: sql<number>`avg(${liveAumDailySnapshot.liveAumCr})::float`,
-        daysCount: sql<number>`count(*)::int`,
-      })
-      .from(liveAumDailySnapshot)
-      .where(
-        and(
-          gte(liveAumDailySnapshot.snapshotDate, startDate),
-          lte(liveAumDailySnapshot.snapshotDate, endDate),
-          eq(liveAumDailySnapshot.isCanonical, true)
-        )
-      )
-      .groupBy(liveAumDailySnapshot.amcId);
-
-    const map = new Map<number, AverageAumRange>();
-    for (const r of rows) {
-      map.set(r.amcId, { avgLiveAumCr: r.avgLiveAumCr, avgFlowAdjustedLiveAumCr: null, daysCount: r.daysCount });
-    }
-    return map;
-  }
-
   const rows = await db
     .select({
       amcId: liveAumDailySnapshot.amcId,
-      snapshotDate: liveAumDailySnapshot.snapshotDate,
-      liveAumCr: liveAumDailySnapshot.liveAumCr,
+      avgLiveAumCr: sql<number>`avg(${liveAumDailySnapshot.liveAumCr})::float`,
+      daysCount: sql<number>`count(*)::int`,
     })
     .from(liveAumDailySnapshot)
     .where(
@@ -128,30 +111,18 @@ export async function getAverageAumForRange(
         lte(liveAumDailySnapshot.snapshotDate, endDate),
         eq(liveAumDailySnapshot.isCanonical, true)
       )
-    );
-
-  const byAmc = new Map<number, { sum: number; adjustedSum: number; hasNetFlow: boolean; n: number }>();
-  for (const r of rows) {
-    const liveAumCr = Number(r.liveAumCr);
-    const netFlowCr = flowCtx.netFlowCrByAmcId.get(r.amcId);
-    const adjustment = netFlowCr !== undefined ? (flowAdjustmentForDate(r.snapshotDate, netFlowCr, flowCtx.anchorMonthEndDate) ?? 0) : 0;
-    let entry = byAmc.get(r.amcId);
-    if (!entry) {
-      entry = { sum: 0, adjustedSum: 0, hasNetFlow: netFlowCr !== undefined, n: 0 };
-      byAmc.set(r.amcId, entry);
-    }
-    entry.sum += liveAumCr;
-    entry.adjustedSum += liveAumCr + adjustment;
-    entry.n += 1;
-  }
+    )
+    .groupBy(liveAumDailySnapshot.amcId);
 
   const map = new Map<number, AverageAumRange>();
-  for (const [amcId, e] of byAmc) {
-    map.set(amcId, {
-      avgLiveAumCr: e.sum / e.n,
-      avgFlowAdjustedLiveAumCr: e.hasNetFlow ? e.adjustedSum / e.n : null,
-      daysCount: e.n,
-    });
+  for (const r of rows) {
+    let avgFlowAdjustedLiveAumCr: number | null = null;
+    const netFlowCr = flowCtx?.netFlowCrByAmcId.get(r.amcId);
+    if (netFlowCr !== undefined) {
+      const adjustment = flowAdjustmentForDate(endDate, netFlowCr, flowCtx!.reportPeriod);
+      avgFlowAdjustedLiveAumCr = adjustment === null ? r.avgLiveAumCr : r.avgLiveAumCr + adjustment;
+    }
+    map.set(r.amcId, { avgLiveAumCr: r.avgLiveAumCr, avgFlowAdjustedLiveAumCr, daysCount: r.daysCount });
   }
   return map;
 }

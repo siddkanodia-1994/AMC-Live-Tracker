@@ -1,5 +1,5 @@
 import { subtractMonths } from "./date-range";
-import type { AumHistoryPoint } from "./history";
+import { flowAdjustmentForDate, type AumHistoryPoint } from "./history";
 import {
   getFiscalQuarterBounds,
   getFiscalYearAndQuarter,
@@ -81,19 +81,38 @@ function fyOfMonthStart(startDate: string): number {
   return month >= 4 ? year + 1 : year;
 }
 
+// The "Incl. Est. Flow" toggle's input for this AMC -- the current report
+// period's own net-flow estimate, used to patch the "extra lag" gap (see
+// flowAdjustmentForDate in history.ts). Passing this through
+// computeSummaryViewData is the one knob that turns the estimate on;
+// omitting it reproduces today's exact plain-MTM behavior.
+export interface FlowAdjustment {
+  netFlowCr: number;
+  reportPeriod: string;
+}
+
 // Mean (mode="average") or last-point (mode="exit") liveAumCr over
 // [startDate, endDate] inclusive -- the one primitive every block below
-// composes from. null if zero points fall in range.
+// composes from. null if zero points fall in range. `flowAdjustment`, when
+// given, adds a single flat flowAdjustmentForDate add-on gated on THIS
+// CALL'S OWN endDate -- not a per-day proration, so it only ever affects
+// whichever row's own window reaches into the still-open gap (every
+// closed/historical row's endDate is a fixed past date that can never
+// qualify, by construction, so no caller needs to special-case "only the
+// current row").
 export function averageOrExitAum(
   points: AumHistoryPoint[],
   startDate: string,
   endDate: string,
-  mode: AumMode
+  mode: AumMode,
+  flowAdjustment?: FlowAdjustment
 ): number | null {
   const sub = points.filter((p) => p.date >= startDate && p.date <= endDate);
   if (sub.length === 0) return null;
-  if (mode === "exit") return sub[sub.length - 1].liveAumCr;
-  return sub.reduce((sum, p) => sum + p.liveAumCr, 0) / sub.length;
+  const base = mode === "exit" ? sub[sub.length - 1].liveAumCr : sub.reduce((sum, p) => sum + p.liveAumCr, 0) / sub.length;
+  if (!flowAdjustment) return base;
+  const adjustment = flowAdjustmentForDate(endDate, flowAdjustment.netFlowCr, flowAdjustment.reportPeriod);
+  return adjustment === null ? base : base + adjustment;
 }
 
 export function pctChange(current: number | null, base: number | null): number | null {
@@ -123,7 +142,8 @@ export function getTradingDayWindow(
   today: string,
   windowSize: number,
   offsetWindows: number,
-  mode: AumMode
+  mode: AumMode,
+  flowAdjustment?: FlowAdjustment
 ): { valueCr: number | null; windowStart: string | null; windowEnd: string | null } {
   const eligible = points.filter((p) => p.date <= today);
   const endIdx = eligible.length - offsetWindows * windowSize;
@@ -132,11 +152,14 @@ export function getTradingDayWindow(
     return { valueCr: null, windowStart: null, windowEnd: null };
   }
   const window = eligible.slice(startIdx, endIdx);
-  const value =
+  const windowEnd = window[window.length - 1].date;
+  const base =
     mode === "exit"
       ? window[window.length - 1].liveAumCr
       : window.reduce((sum, p) => sum + p.liveAumCr, 0) / window.length;
-  return { valueCr: value, windowStart: window[0].date, windowEnd: window[window.length - 1].date };
+  const adjustment = flowAdjustment ? flowAdjustmentForDate(windowEnd, flowAdjustment.netFlowCr, flowAdjustment.reportPeriod) : null;
+  const value = adjustment === null ? base : base + adjustment;
+  return { valueCr: value, windowStart: window[0].date, windowEnd };
 }
 
 // The `count` most recent dates <= today matching `weekdayIndex` (Date's
@@ -161,14 +184,19 @@ function clampToToday(end: string, today: string): string {
   return end < today ? end : today;
 }
 
-function buildFinancialYearBlock(points: AumHistoryPoint[], today: string, mode: AumMode): FinancialYearRow[] {
+function buildFinancialYearBlock(
+  points: AumHistoryPoint[],
+  today: string,
+  mode: AumMode,
+  flowAdjustment?: FlowAdjustment
+): FinancialYearRow[] {
   const cur = getFiscalYearBounds(today);
   const prev = getPreviousFiscalYearBounds(today);
   const prevPrev = getPreviousFiscalYearBounds(prev.start);
   const curEnd = clampToToday(cur.end, today);
-  const v0 = averageOrExitAum(points, cur.start, curEnd, mode);
-  const v1 = averageOrExitAum(points, prev.start, prev.end, mode);
-  const v2 = averageOrExitAum(points, prevPrev.start, prevPrev.end, mode);
+  const v0 = averageOrExitAum(points, cur.start, curEnd, mode, flowAdjustment);
+  const v1 = averageOrExitAum(points, prev.start, prev.end, mode, flowAdjustment);
+  const v2 = averageOrExitAum(points, prevPrev.start, prevPrev.end, mode, flowAdjustment);
   return [
     { label: `FY ${cur.fy}`, valCr: v0, yoyPct: pctChange(v0, v1), range: [cur.start, curEnd] },
     { label: `FY ${prev.fy}`, valCr: v1, yoyPct: pctChange(v1, v2), range: [prev.start, prev.end] },
@@ -179,7 +207,12 @@ function buildFinancialYearBlock(points: AumHistoryPoint[], today: string, mode:
 // (context only), and the two most recent quarters' OWN YoY anchors (same
 // calendar quarter, one fiscal year earlier) -- both the current and prior
 // quarter get their own QoQ + YoY.
-function buildQuarterBlock(points: AumHistoryPoint[], today: string, mode: AumMode): QuarterRow[] {
+function buildQuarterBlock(
+  points: AumHistoryPoint[],
+  today: string,
+  mode: AumMode,
+  flowAdjustment?: FlowAdjustment
+): QuarterRow[] {
   const q0 = getFiscalQuarterBounds(today);
   const q1 = getPreviousFiscalQuarterBounds(q0.start);
   const q2 = getPreviousFiscalQuarterBounds(q1.start);
@@ -187,11 +220,11 @@ function buildQuarterBlock(points: AumHistoryPoint[], today: string, mode: AumMo
   const yoy1 = nFiscalQuartersBack(q1.start, 4);
   const q0End = clampToToday(q0.end, today);
 
-  const v0 = averageOrExitAum(points, q0.start, q0End, mode);
-  const v1 = averageOrExitAum(points, q1.start, q1.end, mode);
-  const v2 = averageOrExitAum(points, q2.start, q2.end, mode);
-  const vY0 = averageOrExitAum(points, yoy0.start, yoy0.end, mode);
-  const vY1 = averageOrExitAum(points, yoy1.start, yoy1.end, mode);
+  const v0 = averageOrExitAum(points, q0.start, q0End, mode, flowAdjustment);
+  const v1 = averageOrExitAum(points, q1.start, q1.end, mode, flowAdjustment);
+  const v2 = averageOrExitAum(points, q2.start, q2.end, mode, flowAdjustment);
+  const vY0 = averageOrExitAum(points, yoy0.start, yoy0.end, mode, flowAdjustment);
+  const vY1 = averageOrExitAum(points, yoy1.start, yoy1.end, mode, flowAdjustment);
 
   const label = (b: { start: string }) => {
     const { fy, q } = getFiscalYearAndQuarter(b.start);
@@ -212,15 +245,20 @@ function buildQuarterBlock(points: AumHistoryPoint[], today: string, mode: AumMo
 // Last 6 Months" row (the 6 fully-elapsed months at offsets 1-6 back from
 // today, excluding the current partial month) -- both the current and
 // prior month compare their own Mo 6M against this SAME shared row.
-function buildMonthBlock(points: AumHistoryPoint[], today: string, mode: AumMode): MonthRow[] {
+function buildMonthBlock(
+  points: AumHistoryPoint[],
+  today: string,
+  mode: AumMode,
+  flowAdjustment?: FlowAdjustment
+): MonthRow[] {
   const cur = monthBounds(today);
   const curEnd = clampToToday(cur.end, today);
   const prevB = monthBounds(subtractMonths(today, 1));
   const twoBackB = monthBounds(subtractMonths(today, 2));
 
-  const v0 = averageOrExitAum(points, cur.start, curEnd, mode);
-  const v1 = averageOrExitAum(points, prevB.start, prevB.end, mode);
-  const v2 = averageOrExitAum(points, twoBackB.start, twoBackB.end, mode);
+  const v0 = averageOrExitAum(points, cur.start, curEnd, mode, flowAdjustment);
+  const v1 = averageOrExitAum(points, prevB.start, prevB.end, mode, flowAdjustment);
+  const v2 = averageOrExitAum(points, twoBackB.start, twoBackB.end, mode, flowAdjustment);
 
   let sixMonthsComplete = true;
   const sixVals: number[] = [];
@@ -230,7 +268,7 @@ function buildMonthBlock(points: AumHistoryPoint[], today: string, mode: AumMode
     const b = monthBounds(subtractMonths(today, off));
     if (off === 6) sixStart = b.start;
     if (off === 1) sixEnd = b.end;
-    const v = averageOrExitAum(points, b.start, b.end, mode);
+    const v = averageOrExitAum(points, b.start, b.end, mode, flowAdjustment);
     if (v === null) sixMonthsComplete = false;
     else sixVals.push(v);
   }
@@ -260,12 +298,17 @@ function buildMonthBlock(points: AumHistoryPoint[], today: string, mode: AumMode
 // comparator), Last 45 Trading Days (shared Wo 10W reference for BOTH of
 // the two most recent windows), Last 20 Trading Days (no comparator, same
 // as the original reference layout).
-function buildTradingWindowBlock(points: AumHistoryPoint[], today: string, mode: AumMode): TradingWindowRow[] {
-  const r0 = getTradingDayWindow(points, today, 5, 0, mode);
-  const r1 = getTradingDayWindow(points, today, 5, 1, mode);
-  const r2 = getTradingDayWindow(points, today, 5, 2, mode);
-  const r45 = getTradingDayWindow(points, today, 45, 0, mode);
-  const r20 = getTradingDayWindow(points, today, 20, 0, mode);
+function buildTradingWindowBlock(
+  points: AumHistoryPoint[],
+  today: string,
+  mode: AumMode,
+  flowAdjustment?: FlowAdjustment
+): TradingWindowRow[] {
+  const r0 = getTradingDayWindow(points, today, 5, 0, mode, flowAdjustment);
+  const r1 = getTradingDayWindow(points, today, 5, 1, mode, flowAdjustment);
+  const r2 = getTradingDayWindow(points, today, 5, 2, mode, flowAdjustment);
+  const r45 = getTradingDayWindow(points, today, 45, 0, mode, flowAdjustment);
+  const r20 = getTradingDayWindow(points, today, 20, 0, mode, flowAdjustment);
 
   return [
     {
@@ -295,12 +338,16 @@ function buildWeekdaySection(
   today: string,
   weekdayIndex: number,
   weekdayName: string,
-  mode: AumMode
+  mode: AumMode,
+  flowAdjustment?: FlowAdjustment
 ): WeekdaySection {
   const occ10 = getWeekdayOccurrences(points, today, weekdayIndex, 10);
   const occ3 = occ10.slice(-3);
   const latest = occ10.length > 0 ? occ10[occ10.length - 1] : null;
-  const topVal = latest ? averageOrExitAum(points, latest.date, latest.date, mode) : null;
+  const topVal = latest ? averageOrExitAum(points, latest.date, latest.date, mode, flowAdjustment) : null;
+  // avg3Cr/avg10Cr are trailing same-weekday comparators spanning several
+  // past weeks, not "the current period" -- deliberately left as pure MTM,
+  // same precedent as every other block's own prior-period context rows.
   const avg3 = occ3.length === 3 ? occ3.reduce((s, p) => s + p.liveAumCr, 0) / 3 : null;
   const avg10 = occ10.length === 10 ? occ10.reduce((s, p) => s + p.liveAumCr, 0) / 10 : null;
   return {
@@ -314,14 +361,15 @@ function buildWeekdaySection(
 export function computeSummaryViewData(
   aumHistory: AumHistoryPoint[],
   mode: AumMode,
-  today: string
+  today: string,
+  flowAdjustment?: FlowAdjustment
 ): SummaryViewData {
   const points = trimToLastContinuousRun(aumHistory);
   return {
-    financialYear: buildFinancialYearBlock(points, today, mode),
-    quarter: buildQuarterBlock(points, today, mode),
-    month: buildMonthBlock(points, today, mode),
-    tradingWindow: buildTradingWindowBlock(points, today, mode),
-    weekdays: WEEKDAY_NAMES.map((name, i) => buildWeekdaySection(points, today, i + 1, name, mode)),
+    financialYear: buildFinancialYearBlock(points, today, mode, flowAdjustment),
+    quarter: buildQuarterBlock(points, today, mode, flowAdjustment),
+    month: buildMonthBlock(points, today, mode, flowAdjustment),
+    tradingWindow: buildTradingWindowBlock(points, today, mode, flowAdjustment),
+    weekdays: WEEKDAY_NAMES.map((name, i) => buildWeekdaySection(points, today, i + 1, name, mode, flowAdjustment)),
   };
 }

@@ -82,13 +82,13 @@ export interface AmcLiveAum {
   // least one canonical snapshot in the respective window.
   avgLiveAumCr90d: number | null;
   avgLiveAumCrPrev90d: number | null;
-  // avgLiveAumCr90d's per-day-prorated sibling (see flowAdjustedLiveAumCr
-  // below and getAverageAumForRange's flowCtx) -- the "Incl. Est. Flow"
-  // toggle's version of the 90-day card's headline figure. No flow-adjusted
-  // sibling for avgLiveAumCrPrev90d: that window is the card's comparison
-  // baseline, which stays on the pure MTM series regardless of the toggle,
-  // same "badge stays anchored" precedent as flowAdjustedLiveAumCr's own
-  // delta badge.
+  // avgLiveAumCr90d's flat-add-on sibling (see flowAdjustedLiveAumCr below
+  // and getAverageAumForRange's flowCtx) -- the "Incl. Est. Flow" toggle's
+  // version of the 90-day card's headline figure. No flow-adjusted sibling
+  // for avgLiveAumCrPrev90d: that window is the card's comparison baseline,
+  // which stays on the pure MTM series regardless of the toggle, same
+  // "badge stays anchored" precedent as flowAdjustedLiveAumCr's own delta
+  // badge.
   avgLiveAumCr90dFlowAdjusted: number | null;
   // Overview table-only fields, populated client-side by amc-grid.tsx's
   // adjustedAmcs overlay (never by computeLiveAum/computeOverviewAsOf) --
@@ -99,9 +99,9 @@ export interface AmcLiveAum {
   // wherever avgLiveAumCr currently resolves to (default or overridden).
   currentQuarterAvgLiveAumCr?: number | null;
   avgAumQoQChangePct?: number | null;
-  // Per-day-prorated siblings of avgLiveAumCr/currentQuarterAvgLiveAumCr
-  // above, from OverviewAdjustments' avgAumByAmcId/currentAvgAumByAmcId --
-  // null whenever no net-flow estimate exists for this AMC yet, same
+  // Flat-add-on siblings of avgLiveAumCr/currentQuarterAvgLiveAumCr above,
+  // from OverviewAdjustments' avgAumByAmcId/currentAvgAumByAmcId -- null
+  // whenever no net-flow estimate exists for this AMC yet, same
   // fallback-to-pure convention as flowAdjustedLiveAumCr.
   avgLiveAumCrFlowAdjusted?: number | null;
   currentQuarterAvgLiveAumCrFlowAdjusted?: number | null;
@@ -130,17 +130,18 @@ export interface AmcLiveAum {
   netFlowPriorPeriod: string | null;
   netFlowPriorPeriodReportedAumCr: number | null;
   netFlowBaselineCr: number | null;
-  // liveAumCr + (netFlowCr * monthsElapsed), where monthsElapsed scales
-  // netFlowCr (this period's own calculated flow, the most recent one
-  // available) by how long it's actually been since this period's own
-  // month-end -- a display-only estimate of what Live AUM might be if
-  // this period's flow pace continued. Never written to
-  // live_aum_daily_snapshot (see compute-live-aum.ts's writeDailySnapshot)
-  // -- that table's own net-flow baseline must stay pure MTM, or next
-  // period's getNetFlowForPeriod would net a real reported AUM against an
-  // already-inflated baseline and permanently understate that period's
-  // true flow. null whenever netFlowCr itself is null (e.g. a brand-new
-  // AMC with no prior period yet) -- liveAumCr is always the fallback.
+  // liveAumCr + the full netFlowCr (this period's own calculated flow, the
+  // most recent one available), flat -- but only once today reaches the
+  // "extra lag" window (a full calendar month after this period's own
+  // month-end; see flowAdjustmentForDate in history.ts), null before that.
+  // A display-only estimate of what Live AUM looks like while waiting on
+  // the next period's file. Never written to live_aum_daily_snapshot (see
+  // compute-live-aum.ts's writeDailySnapshot) -- that table's own net-flow
+  // baseline must stay pure MTM, or next period's getNetFlowForPeriod
+  // would net a real reported AUM against an already-inflated baseline and
+  // permanently understate that period's true flow. null whenever
+  // netFlowCr itself is null (e.g. a brand-new AMC with no prior period
+  // yet) -- liveAumCr is always the fallback.
   flowAdjustedLiveAumCr: number | null;
 }
 

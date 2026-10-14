@@ -175,19 +175,14 @@ async function writeDailyIsinPrices(priceByIsin: Map<string, number>): Promise<v
   );
 }
 
-// liveAumCr + (this period's own last-known net flow, scaled by how many
-// of that period's "months" have elapsed since its month-end) -- a
+// liveAumCr + (this period's own last-known net flow), flat -- a
 // display-only estimate (see AmcLiveAum.flowAdjustedLiveAumCr in types.ts
 // for why this must never be persisted into live_aum_daily_snapshot).
-// Scaling by elapsed time rather than always assuming exactly one month
-// means a check run just a few days after the anchor only assumes a
-// fraction of a month's flow, while a vendor delay of 6+ weeks assumes
-// proportionally more. Delegates the actual day-vs-anchor math to
-// flowAdjustmentForDate so the Average AUM figures' per-day proration
-// (history.ts's getAverageAumForRange) can never drift out of sync with
-// this point-in-time estimate.
-function computeFlowAdjustedLiveAum(liveAumCr: number, netFlowCr: number, anchorMonthEndDate: string): number | null {
-  const adjustment = flowAdjustmentForDate(getIstDateString(), netFlowCr, anchorMonthEndDate);
+// Delegates the actual gap-boundary math to flowAdjustmentForDate so the
+// Average AUM figures (history.ts's getAverageAumForRange) can never
+// drift out of sync with this point-in-time estimate.
+function computeFlowAdjustedLiveAum(liveAumCr: number, netFlowCr: number, reportPeriod: string): number | null {
+  const adjustment = flowAdjustmentForDate(getIstDateString(), netFlowCr, reportPeriod);
   return adjustment === null ? null : liveAumCr + adjustment;
 }
 
@@ -785,7 +780,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       amc.netFlowPriorPeriod = netFlow.priorPeriod;
       amc.netFlowPriorPeriodReportedAumCr = netFlow.priorPeriodReportedAumCr;
       amc.netFlowBaselineCr = netFlow.baselineCr;
-      amc.flowAdjustedLiveAumCr = computeFlowAdjustedLiveAum(amc.liveAumCr, netFlow.netFlowCr, netFlow.monthEndDate);
+      amc.flowAdjustedLiveAumCr = computeFlowAdjustedLiveAum(amc.liveAumCr, netFlow.netFlowCr, reportPeriod);
     }
   }
 

@@ -5,11 +5,13 @@ import type { Worksheet, Workbook } from "exceljs";
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
+import { useLiveAum } from "@/hooks/use-live-aum";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { subtractMonths } from "@/lib/aum/date-range";
 import type { MonthlyFlowPoint } from "@/lib/aum/industry-flows";
 import { computeFlowsViewData, type FlowPeriodRow } from "@/lib/aum/flows-view";
-import { computeSummaryViewData, type AumMode, type SummaryViewData } from "@/lib/aum/summary-view";
+import { computeSummaryViewData, type AumMode, type FlowAdjustment, type SummaryViewData } from "@/lib/aum/summary-view";
 import { formatPct, formatShortDateWithYear } from "@/lib/utils/format";
 import { getIstDateString } from "@/lib/utils/date";
 
@@ -398,7 +400,15 @@ function SortableHead({
   );
 }
 
-function AllAmcsMatrix({ amcs, mode }: { amcs: AmcStockCorrelationEntry[]; mode: AumMode }) {
+function AllAmcsMatrix({
+  amcs,
+  mode,
+  flowAdjustmentBySlug,
+}: {
+  amcs: AmcStockCorrelationEntry[];
+  mode: AumMode;
+  flowAdjustmentBySlug: Map<string, FlowAdjustment> | undefined;
+}) {
   const [sortKey, setSortKey] = useState<MatrixSortKey | null>(null);
   const [sortDesc, setSortDesc] = useState(true);
 
@@ -407,9 +417,9 @@ function AllAmcsMatrix({ amcs, mode }: { amcs: AmcStockCorrelationEntry[]; mode:
     return amcs.map((a) => ({
       slug: a.slug,
       overviewName: a.overviewName,
-      data: computeSummaryViewData(a.aumHistory, mode, today),
+      data: computeSummaryViewData(a.aumHistory, mode, today, flowAdjustmentBySlug?.get(a.slug)),
     }));
-  }, [amcs, mode]);
+  }, [amcs, mode, flowAdjustmentBySlug]);
 
   function toggleSort(key: MatrixSortKey) {
     if (sortKey !== key) {
@@ -896,6 +906,27 @@ function FlowTrendChart({ points }: { points: MonthlyFlowPoint[] }) {
   );
 }
 
+// The global "Incl. Est. Flow" toggle's input for computeSummaryViewData,
+// keyed by slug (AmcStockCorrelationEntry has no amcId of its own, only
+// AmcLiveAum does) -- undefined (not an empty map) whenever the toggle is
+// off or the live-AUM snapshot hasn't loaded yet, so every caller's own
+// fallback-to-plain-MTM path is the same `flowAdjustmentBySlug?.get(slug)`
+// regardless of why it's unavailable.
+function useFlowAdjustmentBySlug(): Map<string, FlowAdjustment> | undefined {
+  const { includeFlowEstimate } = useFlowEstimateDisplay();
+  const { data: liveAumData } = useLiveAum();
+  return useMemo(() => {
+    if (!includeFlowEstimate || !liveAumData) return undefined;
+    const map = new Map<string, FlowAdjustment>();
+    for (const amc of liveAumData.amcs) {
+      if (amc.netFlowCr !== null) {
+        map.set(amc.slug, { netFlowCr: amc.netFlowCr, reportPeriod: liveAumData.reportPeriod });
+      }
+    }
+    return map;
+  }, [includeFlowEstimate, liveAumData]);
+}
+
 export function SummaryPanel({
   amcs,
   flowsPoints,
@@ -908,13 +939,14 @@ export function SummaryPanel({
   const [mode, setMode] = useState<AumMode>("average");
   const [isDownloading, setIsDownloading] = useState(false);
   const [rightView, setRightView] = useState<"flows" | "weekday">("flows");
+  const flowAdjustmentBySlug = useFlowAdjustmentBySlug();
 
   const entry = useMemo(() => amcs.find((a) => a.slug === amcSlug) ?? null, [amcs, amcSlug]);
 
   const data: SummaryViewData | null = useMemo(() => {
     if (!entry) return null;
-    return computeSummaryViewData(entry.aumHistory, mode, getIstDateString());
-  }, [entry, mode]);
+    return computeSummaryViewData(entry.aumHistory, mode, getIstDateString(), flowAdjustmentBySlug?.get(entry.slug));
+  }, [entry, mode, flowAdjustmentBySlug]);
 
   // One sheet per AMC (all 8, not just the one currently selected), in the
   // currently-selected AUM basis only -- matches the Stock Correlation
@@ -1010,7 +1042,7 @@ export function SummaryPanel({
       </div>
 
       {view === "all" ? (
-        <AllAmcsMatrix amcs={amcs} mode={mode} />
+        <AllAmcsMatrix amcs={amcs} mode={mode} flowAdjustmentBySlug={flowAdjustmentBySlug} />
       ) : !entry || !data ? (
         <p className="text-sm text-muted-foreground">No AUM history available for this AMC.</p>
       ) : (
