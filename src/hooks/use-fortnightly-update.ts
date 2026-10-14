@@ -14,13 +14,18 @@ export function useFortnightlyEligibleAmcs() {
   return useSWR<{ amcs: EligibleAmc[] }>("/api/fortnightly-update/amcs", fetcher, { revalidateOnFocus: false });
 }
 
-export function useFortnightlySheet(amcId: number | null, asOfDate: string | null) {
+export function useFortnightlySheet(amcId: number | null, asOfDate: string | null, includeFlowEstimate: boolean) {
   const params = new URLSearchParams();
   if (amcId !== null) params.set("amcId", String(amcId));
   if (asOfDate) params.set("asOfDate", asOfDate);
+  if (includeFlowEstimate) params.set("includeFlowEstimate", "true");
   return useSWR<FortnightlySheet>(
     amcId !== null ? `/api/fortnightly-update?${params.toString()}` : null,
     fetcher,
-    { revalidateOnFocus: false }
+    // keepPreviousData: toggling includeFlowEstimate changes this key, and
+    // without it `data` would briefly go undefined -- tripping the panel's
+    // "no data yet" skeleton guard, which unmounts (and resets) sibling
+    // components like the download panel's own selection state.
+    { revalidateOnFocus: false, keepPreviousData: true }
   );
 }

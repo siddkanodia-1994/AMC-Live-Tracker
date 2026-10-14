@@ -37,10 +37,19 @@ type SortKey =
 // This necessarily dampens the resulting QoQ% vs the equity-only one
 // (adding the same constant to numerator and denominator pulls the ratio
 // toward 1), which is expected, not a bug.
-function combinedAvgFigures(amc: AmcLiveAum, etfTotalsByAmc: Record<string, number>) {
+// Same "flow-adjusted figure when the toggle is on, falling back to pure
+// MTM when none exists yet" resolution the equity-only display cells
+// already use -- applied here too so the combined QoQ% moves together
+// with the toggle exactly like the equity-only avgAumQoQChangePct does
+// (same bug class/fix as that field; see amc-grid.tsx's adjustedAmcs).
+function combinedAvgFigures(amc: AmcLiveAum, etfTotalsByAmc: Record<string, number>, includeFlowEstimate: boolean) {
   const etfTotal = etfTotalsByAmc[amc.overviewName] ?? 0;
-  const avgLiveAumCrCombined = amc.currentQuarterAvgLiveAumCr != null ? amc.currentQuarterAvgLiveAumCr + etfTotal : null;
-  const avgAumCrCombined = amc.avgLiveAumCr != null ? amc.avgLiveAumCr + etfTotal : null;
+  const effectiveCurrentQuarterAvgLiveAumCr = includeFlowEstimate
+    ? (amc.currentQuarterAvgLiveAumCrFlowAdjusted ?? amc.currentQuarterAvgLiveAumCr)
+    : amc.currentQuarterAvgLiveAumCr;
+  const effectiveAvgLiveAumCr = includeFlowEstimate ? (amc.avgLiveAumCrFlowAdjusted ?? amc.avgLiveAumCr) : amc.avgLiveAumCr;
+  const avgLiveAumCrCombined = effectiveCurrentQuarterAvgLiveAumCr != null ? effectiveCurrentQuarterAvgLiveAumCr + etfTotal : null;
+  const avgAumCrCombined = effectiveAvgLiveAumCr != null ? effectiveAvgLiveAumCr + etfTotal : null;
   const avgAumQoQChangePctCombined =
     avgLiveAumCrCombined != null && avgAumCrCombined != null && avgAumCrCombined !== 0
       ? avgLiveAumCrCombined / avgAumCrCombined - 1
@@ -53,10 +62,11 @@ const COMBINED_SORT_KEYS: SortKey[] = ["avgLiveAumCrCombined", "avgAumCrCombined
 function sortValue(
   amc: AmcLiveAum,
   key: SortKey,
-  etfTotalsByAmc: Record<string, number>
+  etfTotalsByAmc: Record<string, number>,
+  includeFlowEstimate: boolean
 ): number | string | null | undefined {
   if (COMBINED_SORT_KEYS.includes(key)) {
-    const combined = combinedAvgFigures(amc, etfTotalsByAmc);
+    const combined = combinedAvgFigures(amc, etfTotalsByAmc, includeFlowEstimate);
     if (key === "avgLiveAumCrCombined") return combined.avgLiveAumCrCombined;
     if (key === "avgAumCrCombined") return combined.avgAumCrCombined;
     return combined.avgAumQoQChangePctCombined;
@@ -175,7 +185,7 @@ interface Totals {
   totalNetFlowPct: number | null;
 }
 
-function computeTotals(list: AmcLiveAum[], etfTotalsByAmc: Record<string, number>): Totals {
+function computeTotals(list: AmcLiveAum[], etfTotalsByAmc: Record<string, number>, includeFlowEstimate: boolean): Totals {
   const totalLiveAumCr = list.reduce((sum, a) => sum + a.liveAumCr, 0);
   const totalLiveAumCrFlowAdjusted = list.reduce((sum, a) => sum + (a.flowAdjustedLiveAumCr ?? a.liveAumCr), 0);
   const totalAvgAumCr = list.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
@@ -188,17 +198,34 @@ function computeTotals(list: AmcLiveAum[], etfTotalsByAmc: Record<string, number
     (sum, a) => sum + (a.currentQuarterAvgLiveAumCrFlowAdjusted ?? a.currentQuarterAvgLiveAumCr ?? a.reportedAumCr),
     0
   );
-  const totalAvgAumQoQChangePct = totalAvgAumCr !== 0 ? totalCurrentQuarterAvgAumCr / totalAvgAumCr - 1 : null;
+  // Same "use the flow-adjusted total when the toggle is on" resolution the
+  // footer's own display cells already use (see totalCurrentQuarterAvgAumCr/
+  // totalAvgAumCr/totalLiveAumCr's own ternaries below in TotalsRow) --
+  // applied here too so the footer's own QoQ%/vs-Reported% move together
+  // with whichever totals are actually on screen (the bug: these two %
+  // never moved when the toggle was flipped, same root cause as the
+  // per-row figures in amc-grid.tsx's adjustedAmcs).
+  const effectiveTotalAvgAumCr = includeFlowEstimate ? totalAvgAumCrFlowAdjusted : totalAvgAumCr;
+  const effectiveTotalCurrentQuarterAvgAumCr = includeFlowEstimate
+    ? totalCurrentQuarterAvgAumCrFlowAdjusted
+    : totalCurrentQuarterAvgAumCr;
+  const effectiveTotalLiveAumCr = includeFlowEstimate ? totalLiveAumCrFlowAdjusted : totalLiveAumCr;
+  const totalAvgAumQoQChangePct =
+    effectiveTotalAvgAumCr !== 0 ? effectiveTotalCurrentQuarterAvgAumCr / effectiveTotalAvgAumCr - 1 : null;
   // Sum the combined (equity + Gold/Silver) per-AMC figures first, THEN
   // divide -- never sum each AMC's own already-computed combined QoQ%,
-  // which would double-weight AMCs with a small denominator.
+  // which would double-weight AMCs with a small denominator. Built on the
+  // SAME effective (flow-adjusted-if-toggled-on) totals as the equity-only
+  // columns above, so the displayed "+Gold/Silver" Cr figures and their own
+  // QoQ% move with the toggle exactly like the equity-only ones do (same
+  // bug/fix as combinedAvgFigures' per-row counterpart).
   const totalEtfTotal = list.reduce((sum, a) => sum + (etfTotalsByAmc[a.overviewName] ?? 0), 0);
-  const totalAvgAumCrCombined = totalAvgAumCr + totalEtfTotal;
-  const totalCurrentQuarterAvgAumCrCombined = totalCurrentQuarterAvgAumCr + totalEtfTotal;
+  const totalAvgAumCrCombined = effectiveTotalAvgAumCr + totalEtfTotal;
+  const totalCurrentQuarterAvgAumCrCombined = effectiveTotalCurrentQuarterAvgAumCr + totalEtfTotal;
   const totalAvgAumQoQChangePctCombined =
     totalAvgAumCrCombined !== 0 ? totalCurrentQuarterAvgAumCrCombined / totalAvgAumCrCombined - 1 : null;
   const totalReportedAumCr = list.reduce((sum, a) => sum + a.reportedAumCr, 0);
-  const totalLiveVsReportedPct = totalReportedAumCr !== 0 ? totalLiveAumCr / totalReportedAumCr - 1 : null;
+  const totalLiveVsReportedPct = totalReportedAumCr !== 0 ? effectiveTotalLiveAumCr / totalReportedAumCr - 1 : null;
 
   // Only over AMCs with a known previous-day value, so one AMC missing
   // history doesn't skew the total's 1-day change.
@@ -394,15 +421,15 @@ export function AmcTable({
   const sorted = useMemo(() => {
     const list = [...limited];
     list.sort((a, b) => {
-      const av = sortValue(a, sortKey, etfTotalsByAmc);
-      const bv = sortValue(b, sortKey, etfTotalsByAmc);
+      const av = sortValue(a, sortKey, etfTotalsByAmc, includeFlowEstimate);
+      const bv = sortValue(b, sortKey, etfTotalsByAmc, includeFlowEstimate);
       if (av === null || av === undefined) return 1;
       if (bv === null || bv === undefined) return -1;
       const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
       return sortDesc ? -cmp : cmp;
     });
     return list;
-  }, [limited, sortKey, sortDesc, etfTotalsByAmc]);
+  }, [limited, sortKey, sortDesc, etfTotalsByAmc, includeFlowEstimate]);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
@@ -451,7 +478,7 @@ export function AmcTable({
     sheetName: "Overview",
     rows: [
       ...sorted.map((amc) => {
-        const combined = combinedAvgFigures(amc, etfTotalsByAmc);
+        const combined = combinedAvgFigures(amc, etfTotalsByAmc, includeFlowEstimate);
         return {
           AMC: amc.overviewName,
           [`Avg Live AUM (${currentAvgWindowExportLabel}) (Cr)`]: historical
@@ -520,8 +547,8 @@ export function AmcTable({
     ],
   }));
 
-  const subsetTotals = computeTotals(limited, etfTotalsByAmc);
-  const industryTotals = computeTotals(allAmcs, etfTotalsByAmc);
+  const subsetTotals = computeTotals(limited, etfTotalsByAmc, includeFlowEstimate);
+  const industryTotals = computeTotals(allAmcs, etfTotalsByAmc, includeFlowEstimate);
 
   const isRestricted = isSearchActive || topN !== "all";
   const subsetLabel = isSearchActive
@@ -691,7 +718,7 @@ export function AmcTable({
           </TableHeader>
           <TableBody>
             {sorted.map((amc) => {
-              const combined = combinedAvgFigures(amc, etfTotalsByAmc);
+              const combined = combinedAvgFigures(amc, etfTotalsByAmc, includeFlowEstimate);
               return (
               <TableRow key={amc.amcId}>
                 <TableCell className="font-serif font-medium">

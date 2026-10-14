@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, lte } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcFortnightlyUpdate, amcListedStock, amcs, isinDailyPrice } from "../db/schema";
+import { amcFortnightlyUpdate, amcListedStock, amcs, appSettings, isinDailyPrice } from "../db/schema";
 import { getStockCorrelationDefaults } from "../amc-stock/correlation-defaults";
 import {
   trimToLastContinuousRun,
@@ -12,8 +12,8 @@ import {
   type DatedValue,
 } from "./series-math";
 import { computeRangeCutoffDate, filterByCutoff, subtractMonths } from "./date-range";
-import { computeSummaryViewData, type QuarterRow } from "./summary-view";
-import { getAmcAumHistory, getAmcListedStockPriceHistoryForIsins, type AmcStockPricePoint } from "./history";
+import { computeSummaryViewData, type FlowAdjustment, type QuarterRow } from "./summary-view";
+import { getAmcAumHistory, getAmcListedStockPriceHistoryForIsins, getEffectiveNetFlowForPeriod, type AmcStockPricePoint } from "./history";
 import { getAllMonthlyFlows } from "./industry-flows";
 import {
   getFiscalQuarterBounds,
@@ -560,7 +560,20 @@ export interface FortnightlySheet {
   valuation: ValuationBlock;
 }
 
-export async function getFortnightlySheet(amcId: number, requestedAsOfDate?: string): Promise<FortnightlySheet | null> {
+// Local copy of the same read compute-live-aum.ts/overview-adjustments.ts/
+// total-aum-growth.ts each already keep their own copy of -- null (not
+// thrown) when no file has ever been imported, since this tab should just
+// skip the flow estimate rather than break entirely.
+async function getCurrentReportPeriod(): Promise<string | null> {
+  const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "current_report_period"));
+  return row?.value ?? null;
+}
+
+export async function getFortnightlySheet(
+  amcId: number,
+  requestedAsOfDate?: string,
+  includeFlowEstimate?: boolean
+): Promise<FortnightlySheet | null> {
   const [amc] = await db.select().from(amcs).where(eq(amcs.id, amcId));
   if (!amc) return null;
 
@@ -599,8 +612,27 @@ export async function getFortnightlySheet(amcId: number, requestedAsOfDate?: str
     month: manual.sipIndustryLatestMonth,
   });
 
+  // Reuses the exact same mechanism already wired into the Overview table
+  // and the Summary tab (flowAdjustmentForDate, gated on each row's own end
+  // date) -- no special-casing for an older/frozen snapshot's own asOfDate:
+  // today's current report period/net flow is the only figure that's ever
+  // existed (there's no historical "what was current on that date" to look
+  // up instead), and the per-row date gate already correctly limits this to
+  // whichever row's own window reaches the still-open gap, exactly like it
+  // already does for Summary. Always undefined (no fetch at all) unless the
+  // caller actually asked for it.
+  let flowAdjustment: FlowAdjustment | undefined;
+  if (includeFlowEstimate) {
+    const currentReportPeriod = await getCurrentReportPeriod();
+    if (currentReportPeriod) {
+      const netFlows = await getEffectiveNetFlowForPeriod(currentReportPeriod);
+      const netFlow = netFlows.get(amcId);
+      if (netFlow) flowAdjustment = { netFlowCr: netFlow.netFlowCr, reportPeriod: currentReportPeriod };
+    }
+  }
+
   const aumAsOf = aumHistory.filter((p) => p.date <= asOfDate);
-  const qaaum = computeSummaryViewData(aumAsOf, "average", asOfDate).quarter;
+  const qaaum = computeSummaryViewData(aumAsOf, "average", asOfDate, flowAdjustment).quarter;
 
   const stockPriceSeries = listedStock ? (priceByIsin.get(listedStock.isin) ?? []) : [];
   const ratio = listedStock

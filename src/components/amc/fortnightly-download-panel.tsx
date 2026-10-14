@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
 import { useFortnightlyEligibleAmcs } from "@/hooks/use-fortnightly-update";
 import { buildFortnightlyExportSections, buildFortnightlySheetExcel } from "@/lib/aum/fortnightly-export";
 import type { FortnightlySheet } from "@/lib/aum/fortnightly-update";
@@ -37,8 +38,11 @@ const NEG_TEXT_RGB: [number, number, number] = [156, 0, 6];
 const addSelectClass =
   "min-w-0 max-w-[240px] rounded-md border border-dashed bg-background px-2 py-1 text-sm text-muted-foreground hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
-async function fetchLatestSheet(amcId: number): Promise<FortnightlySheet> {
-  const res = await fetch(`/api/fortnightly-update?amcId=${amcId}`);
+// WYSIWYG -- matches whatever the header's "Incl. Est. Flow" toggle shows
+// on screen at download time, same convention as the Overview table's own
+// export (see amc-table.tsx's useRegisterExport).
+async function fetchLatestSheet(amcId: number, includeFlowEstimate: boolean): Promise<FortnightlySheet> {
+  const res = await fetch(`/api/fortnightly-update?amcId=${amcId}${includeFlowEstimate ? "&includeFlowEstimate=true" : ""}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? `Failed to load AMC ${amcId}`);
@@ -59,6 +63,7 @@ async function fetchLatestSheet(amcId: number): Promise<FortnightlySheet> {
  */
 export function FortnightlyDownloadPanel() {
   const { data: amcsData } = useFortnightlyEligibleAmcs();
+  const { includeFlowEstimate } = useFlowEstimateDisplay();
   const [selected, setSelected] = useState<number[]>([]);
   const [downloading, setDownloading] = useState<"excel" | "pdf" | null>(null);
 
@@ -83,7 +88,7 @@ export function FortnightlyDownloadPanel() {
       const { Workbook } = await import("exceljs");
       const workbook = new Workbook();
       for (const amcId of selected) {
-        const sheet = await fetchLatestSheet(amcId);
+        const sheet = await fetchLatestSheet(amcId, includeFlowEstimate);
         buildFortnightlySheetExcel(workbook, sheet);
       }
       const dateStamp = new Date().toISOString().slice(0, 10);
@@ -106,7 +111,7 @@ export function FortnightlyDownloadPanel() {
       const pageWidth = doc.internal.pageSize.getWidth();
       for (let i = 0; i < selected.length; i++) {
         if (i > 0) doc.addPage();
-        const sheet = await fetchLatestSheet(selected[i]);
+        const sheet = await fetchLatestSheet(selected[i], includeFlowEstimate);
         const sections = buildFortnightlyExportSections(sheet);
         let cursorY = 14;
         doc.setFontSize(14);

@@ -289,12 +289,27 @@ export function AmcGrid({
       const currentAvgOverride = adj.currentAvgAumByAmcId[amc.amcId];
       const currentQuarterAvgLiveAumCr = currentAvgOverride ? currentAvgOverride.avgLiveAumCr : null;
       const currentQuarterAvgLiveAumCrFlowAdjusted = currentAvgOverride ? currentAvgOverride.avgFlowAdjustedLiveAumCr : null;
-      const deltaCr = amc.liveAumCr - reportedAumCr;
+
+      // Same "flow-adjusted figure when the toggle is on, falling back to
+      // pure MTM when none exists yet" resolution the DISPLAY cells already
+      // use (amc-table.tsx's Live AUM/Avg AUM/Avg Live AUM cells) -- applied
+      // here too so "Exit AUM QoQ Change"/"Avg AUM QoQ Change" compare
+      // against whichever figure is actually on screen, instead of always
+      // silently comparing the pure-MTM figure underneath it regardless of
+      // the toggle (the bug: these two % columns never moved when the
+      // toggle was flipped).
+      const effectiveLiveAumCr = includeFlowEstimate && amc.flowAdjustedLiveAumCr !== null ? amc.flowAdjustedLiveAumCr : amc.liveAumCr;
+      const effectiveAvgLiveAumCr = includeFlowEstimate ? (avgLiveAumCrFlowAdjusted ?? avgLiveAumCr) : avgLiveAumCr;
+      const effectiveCurrentQuarterAvgLiveAumCr = includeFlowEstimate
+        ? (currentQuarterAvgLiveAumCrFlowAdjusted ?? currentQuarterAvgLiveAumCr)
+        : currentQuarterAvgLiveAumCr;
+
+      const deltaCr = effectiveLiveAumCr - reportedAumCr;
       const deltaPct = reportedAumCr !== 0 ? deltaCr / reportedAumCr : 0;
       const avgVsReportedPct = avgLiveAumCr !== null && reportedAumCr !== 0 ? avgLiveAumCr / reportedAumCr - 1 : null;
       const avgAumQoQChangePct =
-        currentQuarterAvgLiveAumCr !== null && avgLiveAumCr !== null && avgLiveAumCr !== 0
-          ? currentQuarterAvgLiveAumCr / avgLiveAumCr - 1
+        effectiveCurrentQuarterAvgLiveAumCr !== null && effectiveAvgLiveAumCr !== null && effectiveAvgLiveAumCr !== 0
+          ? effectiveCurrentQuarterAvgLiveAumCr / effectiveAvgLiveAumCr - 1
           : null;
       return {
         ...amc,
@@ -310,7 +325,7 @@ export function AmcGrid({
         avgAumQoQChangePct,
       };
     });
-  }, [data, adjustments.data, reportedAumMode]);
+  }, [data, adjustments.data, reportedAumMode, includeFlowEstimate]);
 
   // Nifty 50 / Nifty 500 benchmark rows -- same blend-live-with-adjustments
   // shape as adjustedAmcs above, just against indexLiveLevels/index*ByKey

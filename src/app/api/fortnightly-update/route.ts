@@ -14,8 +14,9 @@ export const GET = withErrorHandling(async (request: Request) => {
     return NextResponse.json({ error: "amcId is required" }, { status: 400 });
   }
   const asOfDate = url.searchParams.get("asOfDate") ?? undefined;
+  const includeFlowEstimate = url.searchParams.get("includeFlowEstimate") === "true";
 
-  const sheet = await getFortnightlySheet(amcId, asOfDate);
+  const sheet = await getFortnightlySheet(amcId, asOfDate, includeFlowEstimate);
   if (!sheet) {
     return NextResponse.json({ error: "Unknown amcId" }, { status: 404 });
   }

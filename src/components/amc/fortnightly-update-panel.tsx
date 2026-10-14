@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EditNumberCell } from "./edit-number-cell";
 import { FortnightlyDownloadPanel } from "./fortnightly-download-panel";
+import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
 import { useFortnightlyEligibleAmcs, useFortnightlySheet } from "@/hooks/use-fortnightly-update";
 import { formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
 import type { FortnightlyFieldName, FortnightlySheet, ScenarioValues } from "@/lib/aum/fortnightly-update";
@@ -126,7 +127,8 @@ export function FortnightlyUpdatePanel() {
     }
   }, [amcId, amcsData]);
 
-  const { data: sheet, error, isLoading, mutate } = useFortnightlySheet(amcId, asOfDate);
+  const { includeFlowEstimate } = useFlowEstimateDisplay();
+  const { data: sheet, error, isLoading, mutate } = useFortnightlySheet(amcId, asOfDate, includeFlowEstimate);
 
   // Reset the date selector back to "latest" whenever the AMC changes, so
   // switching AMCs never silently carries over a date that may not exist
