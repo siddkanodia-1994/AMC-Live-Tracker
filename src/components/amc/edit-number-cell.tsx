@@ -28,6 +28,7 @@ export function EditNumberCell({
   title,
   decimals = 1,
   inputClassName,
+  suffix,
 }: {
   value: number;
   isOverridden: boolean;
@@ -42,6 +43,10 @@ export function EditNumberCell({
   // its own visual theme (background/font colour) without affecting every
   // other EditNumberCell in the app.
   inputClassName?: string;
+  // A static unit label shown right after the input (e.g. "%") -- for a
+  // field whose own column header carries no unit of its own, unlike a
+  // "Val (Cr)" column where the unit is already implied by the header.
+  suffix?: string;
 }) {
   const [draft, setDraft] = useState(() => formatDisplay(value, decimals));
   const [prevValue, setPrevValue] = useState(value);
@@ -149,6 +154,7 @@ export function EditNumberCell({
             isOverridden && "border-amber-500/60"
           )}
         />
+        {suffix && <span className="text-sm text-muted-foreground">{suffix}</span>}
         {isOverridden && !saving && (
           <button
             type="button"

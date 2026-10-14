@@ -292,7 +292,12 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   for (const [label, val, pctVal] of sipAmcRows) {
     writeLabel(ws, row, 1, label);
     writeNum(ws, row, 2, val, PLAIN_FORMAT, true);
-    writeNum(ws, row, 3, pctVal === null ? null : pctVal * 100, "0.0", true);
+    // Raw fraction + Excel's native "%" numFmt (not *100 -- Excel's own
+    // percentage format multiplies by 100 for display), matching the tab's
+    // own new "%" suffix on this cell and the PDF export's pct() call
+    // below; blue input fill (not green/red) since this isn't a gain/loss
+    // metric, just a manually-entered ratio.
+    writeNum(ws, row, 3, pctVal, "0.0%", true);
     row++;
   }
   row++;

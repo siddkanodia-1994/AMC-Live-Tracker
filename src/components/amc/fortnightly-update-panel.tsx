@@ -264,11 +264,13 @@ function ManualCell({
   onSave,
   title,
   decimals,
+  suffix,
 }: {
   value: number | null;
   onSave: (v: number | null) => Promise<void>;
   title?: string;
   decimals?: number;
+  suffix?: string;
 }) {
   return (
     <EditNumberCell
@@ -278,6 +280,7 @@ function ManualCell({
       title={title}
       decimals={decimals}
       inputClassName={INPUT_CELL_CLASS}
+      suffix={suffix}
     />
   );
 }
@@ -645,6 +648,7 @@ function SipAmcGrowthTable({
                 value={row.pct !== null ? row.pct * 100 : null}
                 onSave={(v) => onSave(row.pctField, v === null ? null : v / 100)}
                 title="SIP as a % of this period's Equity AUM"
+                suffix="%"
               />
             </TableRow>
           ))}
