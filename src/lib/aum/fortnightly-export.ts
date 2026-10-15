@@ -34,6 +34,21 @@ const scenarioRow = (label: string, values: ScenarioValues, fmt: (v: number | nu
   fmt(values.bull),
 ];
 
+// Mirrors fortnightly-update-panel.tsx's SipAmcGrowthTable/
+// SipIndustryGrowthTable qoqByRow+yoyByRow (and momByRow+yoyByRow)
+// derivation: of the 5 period rows (latest, prevA, prevB, yoyA, yoyB),
+// only latest-vs-prevA and prevA-vs-prevB have a "one period back" row
+// to divide against; the YoY pair mirrors the same two rows, three
+// positions further down. Kept here (not imported from that component)
+// so this file's export math stays pure/testable without a React import.
+function periodRatios(vals: (number | null)[]): { stepByRow: (number | null)[]; yoyByRow: (number | null)[] } {
+  const ratio = (a: number | null, b: number | null) => (a !== null && b !== null && b !== 0 ? a / b - 1 : null);
+  return {
+    stepByRow: [ratio(vals[0], vals[1]), ratio(vals[1], vals[2]), null, null, null],
+    yoyByRow: [ratio(vals[0], vals[3]), ratio(vals[1], vals[4]), null, null, null],
+  };
+}
+
 export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportSection[] {
   const m = sheet.manual;
   const v = sheet.valuation;
@@ -91,9 +106,19 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     [`Last Year Same Quarter (${sheet.sipAmcLabels.yoyQ})`, m.sipAmcYoyQValCr, m.sipAmcYoyQPct],
     [`Last Year Same Quarter (${sheet.sipAmcLabels.yoyQ2})`, m.sipAmcYoyQ2ValCr, m.sipAmcYoyQ2Pct],
   ];
+  const sipAmcRatios = periodRatios(sipAmcRows.map(([, val]) => val));
   const sipAmc: ExportSection = {
     title: "SIP AMC Growth",
-    rows: [["Period", "Val (Cr)", "SIP/Equity AUM"], ...sipAmcRows.map(([label, val, p]) => [label, cr(val), p === null ? "—" : pct(p)])],
+    rows: [
+      ["Period", "Val (Cr)", "QoQ", "YoY", "SIP/Equity AUM"],
+      ...sipAmcRows.map(([label, val, p], i) => [
+        label,
+        cr(val),
+        pct(sipAmcRatios.stepByRow[i]),
+        pct(sipAmcRatios.yoyByRow[i]),
+        p === null ? "—" : pct(p),
+      ]),
+    ],
   };
 
   const industryAuto = sheet.sipIndustryAuto;
@@ -105,9 +130,13 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     [withPeriod("Last Year Month", industryAuto?.labels.yoyQ), m.sipIndustryYoyMValCr ?? industryAuto?.values.yoyM ?? null],
     [withPeriod("Last Year Month", industryAuto?.labels.yoyQ2), m.sipIndustryYoyM2ValCr ?? industryAuto?.values.yoyM2 ?? null],
   ];
+  const sipIndustryRatios = periodRatios(sipIndustryRows.map(([, val]) => val));
   const sipIndustry: ExportSection = {
     title: "SIP Industry Growth",
-    rows: [["Period", "Val (Cr)"], ...sipIndustryRows.map(([label, val]) => [label, cr(val)])],
+    rows: [
+      ["Period", "Val (Cr)", "MoM", "YoY"],
+      ...sipIndustryRows.map(([label, val], i) => [label, cr(val), pct(sipIndustryRatios.stepByRow[i]), pct(sipIndustryRatios.yoyByRow[i])]),
+    ],
   };
 
   const ratio: ExportSection = {
@@ -278,9 +307,9 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   }
   row++;
 
-  writeBanner(ws, row, "SIP AMC Growth", 3);
+  writeBanner(ws, row, "SIP AMC Growth", 5);
   row++;
-  writeHeaderRow(ws, row, ["Period", "Val (Cr)", "SIP/Equity AUM"]);
+  writeHeaderRow(ws, row, ["Period", "Val (Cr)", "QoQ", "YoY", "SIP/Equity AUM"]);
   row++;
   const sipAmcRows: [string, number | null, number | null][] = [
     [`Latest Available Quarter (${sheet.sipAmcLabels.qtd})`, m.sipAmcQtdValCr, m.sipAmcQtdPct],
@@ -289,22 +318,25 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
     [`Last Year Same Quarter (${sheet.sipAmcLabels.yoyQ})`, m.sipAmcYoyQValCr, m.sipAmcYoyQPct],
     [`Last Year Same Quarter (${sheet.sipAmcLabels.yoyQ2})`, m.sipAmcYoyQ2ValCr, m.sipAmcYoyQ2Pct],
   ];
-  for (const [label, val, pctVal] of sipAmcRows) {
+  const sipAmcRatios = periodRatios(sipAmcRows.map(([, val]) => val));
+  sipAmcRows.forEach(([label, val, pctVal], i) => {
     writeLabel(ws, row, 1, label);
     writeNum(ws, row, 2, val, PLAIN_FORMAT, true);
+    writePct(ws, row, 3, sipAmcRatios.stepByRow[i]);
+    writePct(ws, row, 4, sipAmcRatios.yoyByRow[i]);
     // Raw fraction + Excel's native "%" numFmt (not *100 -- Excel's own
     // percentage format multiplies by 100 for display), matching the tab's
     // own new "%" suffix on this cell and the PDF export's pct() call
     // below; blue input fill (not green/red) since this isn't a gain/loss
     // metric, just a manually-entered ratio.
-    writeNum(ws, row, 3, pctVal, "0.0%", true);
+    writeNum(ws, row, 5, pctVal, "0.0%", true);
     row++;
-  }
+  });
   row++;
 
-  writeBanner(ws, row, "SIP Industry Growth", 2);
+  writeBanner(ws, row, "SIP Industry Growth", 4);
   row++;
-  writeHeaderRow(ws, row, ["Period", "Val (Cr)"]);
+  writeHeaderRow(ws, row, ["Period", "Val (Cr)", "MoM", "YoY"]);
   row++;
   const industryAuto = sheet.sipIndustryAuto;
   const withPeriod = (base: string, period: string | undefined) => (period ? `${base} (${period})` : base);
@@ -315,11 +347,14 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
     [withPeriod("Last Year Month", industryAuto?.labels.yoyQ), m.sipIndustryYoyMValCr ?? industryAuto?.values.yoyM ?? null],
     [withPeriod("Last Year Month", industryAuto?.labels.yoyQ2), m.sipIndustryYoyM2ValCr ?? industryAuto?.values.yoyM2 ?? null],
   ];
-  for (const [label, val] of sipIndustryRows) {
+  const sipIndustryRatios = periodRatios(sipIndustryRows.map(([, val]) => val));
+  sipIndustryRows.forEach(([label, val], i) => {
     writeLabel(ws, row, 1, label);
     writeNum(ws, row, 2, val, PLAIN_FORMAT, true);
+    writePct(ws, row, 3, sipIndustryRatios.stepByRow[i]);
+    writePct(ws, row, 4, sipIndustryRatios.yoyByRow[i]);
     row++;
-  }
+  });
   row++;
 
   writeBanner(ws, row, "Ratio (Price / Avg AUM)", 2);
