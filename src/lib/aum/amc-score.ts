@@ -1,6 +1,6 @@
 import { subtractMonths } from "./date-range";
 import { addDaysToDateString } from "../utils/date";
-import { closestDateAtOrBefore, getFiscalYearBounds } from "./report-period";
+import { getFiscalYearBounds } from "./report-period";
 
 // Maps this app's own amcs.overviewName to the AMC's id in a SEPARATE,
 // not-yet-connected Supabase project ("tusk-amc-dashboard loader" -- see
@@ -80,6 +80,19 @@ function rangeLabel(startDate: string, endDate: string): string {
   return `${monthAbbrev(startDate)}–${monthAbbrev(endDate)} ${endDate.slice(0, 4)}`;
 }
 
+// "30 Sept 26" -- matches the Anchor Date picker's own format
+// (fortnightly-update-panel.tsx's formatAnchorDateOption) and the
+// "tusk-amc-dashboard" benchmarking Scores page's own date style, for
+// every single-date bracket in this card's row labels.
+function formatDateLabel(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "2-digit",
+    timeZone: "UTC",
+  });
+}
+
 function isMonthEnd(dateStr: string): boolean {
   const [y, m, d] = dateStr.split("-").map(Number);
   return d === new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -110,21 +123,18 @@ function avgInRange(history: AmcScoreSnapshot[], start: string, end: string): nu
   return sub.reduce((sum, h) => sum + (h.score as number), 0) / sub.length;
 }
 
-// Closest real snapshot at/before `target` -- so an older anchor date
-// (pre-May-2026, when amc_scores only had month-end rows, no 15th) still
-// resolves a sensible "15 days ago"/"1 month ago" figure instead of null.
-// Returns the snapshot it actually resolved to (not `target` itself) so
-// the row label can show the real date the score came from whenever that
-// differs from the naive target -- otherwise a label like "1 Year Ago
-// (2025-09-15)" would misleadingly imply data exists exactly on that day
-// when it was really pulled from a snapshot weeks earlier.
-function scoreAt(history: AmcScoreSnapshot[], target: string): { date: string | null; score: number | null } {
-  const closest = closestDateAtOrBefore(
-    history.map((h) => h.snapshotDate),
-    target
-  );
-  if (closest === null) return { date: null, score: null };
-  return { date: closest, score: history.find((h) => h.snapshotDate === closest)?.score ?? null };
+// The same rolling 6-month window as the card's own "6-Month Avg" row
+// (see computeAmcScoreCard), just ending at an arbitrary date instead of
+// the anchor -- so "15 Days Ago"/"1 Month Ago"/"1 Year Ago" are each "the
+// same 6-Month-Avg metric, evaluated at that date", matching the
+// reference dashboard's own chart (every point on its "Score Over Time
+// (6M Avg)" line is this same rolling average, never a raw single-day
+// score) rather than a point-in-time lookup. Confirmed with the user
+// after the raw-lookup version produced a number that didn't match the
+// reference chart's own tooltip at that date.
+function sixMonthAvgEndingAt(history: AmcScoreSnapshot[], endDate: string): number | null {
+  const start = addDaysToDateString(subtractMonths(endDate, 6), 1);
+  return avgInRange(history, start, endDate);
 }
 
 function pctChange(current: number | null, base: number | null): number | null {
@@ -151,15 +161,14 @@ export function computeAmcScoreCard(history: AmcScoreSnapshot[], anchorDate: str
   // of this code "fixed" that into a whole-months window on the
   // assumption the extra day was a bug; it wasn't, per the reference
   // dashboard's own convention.
-  const sixMoWindowStart = addDaysToDateString(subtractMonths(anchorDate, 6), 1);
-  const sixMoAvg = avgInRange(history, sixMoWindowStart, anchorDate);
+  const sixMoAvg = sixMonthAvgEndingAt(history, anchorDate);
 
   const fifteenDaysAgo = addDaysToDateString(anchorDate, -15);
   const oneMonthAgo = subtractMonthsSnapped(anchorDate, 1);
   const oneYearAgo = subtractMonthsSnapped(anchorDate, 12);
-  const score15d = scoreAt(history, fifteenDaysAgo);
-  const score1mo = scoreAt(history, oneMonthAgo);
-  const score1yr = scoreAt(history, oneYearAgo);
+  const score15d = sixMonthAvgEndingAt(history, fifteenDaysAgo);
+  const score1mo = sixMonthAvgEndingAt(history, oneMonthAgo);
+  const score1yr = sixMonthAvgEndingAt(history, oneYearAgo);
 
   const ytdStart = getFiscalYearBounds(anchorDate).start;
   const ytdAvg = avgInRange(history, ytdStart, anchorDate);
@@ -169,10 +178,10 @@ export function computeAmcScoreCard(history: AmcScoreSnapshot[], anchorDate: str
   const priorYtdAvg = avgInRange(history, priorYtdStart, priorAnchor);
 
   const rows: AmcScoreRow[] = [
-    { label: `6-Month Avg (as of ${anchorDate})`, score: sixMoAvg, changePct: null },
-    { label: `15 Days Ago${score15d.date ? ` (${score15d.date})` : ""}`, score: score15d.score, changePct: pctChange(sixMoAvg, score15d.score) },
-    { label: `1 Month Ago${score1mo.date ? ` (${score1mo.date})` : ""}`, score: score1mo.score, changePct: pctChange(sixMoAvg, score1mo.score) },
-    { label: `1 Year Ago${score1yr.date ? ` (${score1yr.date})` : ""}`, score: score1yr.score, changePct: pctChange(sixMoAvg, score1yr.score) },
+    { label: `6-Month Avg (as of ${formatDateLabel(anchorDate)})`, score: sixMoAvg, changePct: null },
+    { label: `15 Days Ago (${formatDateLabel(fifteenDaysAgo)})`, score: score15d, changePct: pctChange(sixMoAvg, score15d) },
+    { label: `1 Month Ago (${formatDateLabel(oneMonthAgo)})`, score: score1mo, changePct: pctChange(sixMoAvg, score1mo) },
+    { label: `1 Year Ago (${formatDateLabel(oneYearAgo)})`, score: score1yr, changePct: pctChange(sixMoAvg, score1yr) },
     { label: `YTD ${fyLabel(anchorDate)} (${rangeLabel(ytdStart, anchorDate)})`, score: ytdAvg, changePct: null },
     {
       label: `YTD ${fyLabel(priorAnchor)} Same Period (${rangeLabel(priorYtdStart, priorAnchor)})`,
