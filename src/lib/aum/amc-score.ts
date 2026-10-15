@@ -28,21 +28,22 @@ export interface AmcScoreSnapshot {
   score: number | null;
 }
 
-// One fetch of this AMC's full history (overall/parent_category=null rows
-// only -- the per-category breakdowns aren't used by this card) --
-// ~100-130 rows across 4+ years, small enough that every window/average
-// below is just computed in-process rather than pushed into the query.
-// Raw fetch, not the supabase-js SDK: PostgREST's own query-string
-// filtering covers everything this needs, and the SDK's auth/realtime/
-// storage surface would otherwise go entirely unused. Server-side only --
-// never call this from a client component (the key is a service-role
-// secret).
+// One fetch of this AMC's full Equity-category history -- the category
+// this card shows, matching this app's own equity-AUM focus (confirmed
+// against the "tusk-amc-dashboard" benchmarking Scores page, which has
+// "Equity" selected, not "Overall"/parent_category=null) -- ~100-130 rows
+// across 4+ years, small enough that every window/average below is just
+// computed in-process rather than pushed into the query. Raw fetch, not
+// the supabase-js SDK: PostgREST's own query-string filtering covers
+// everything this needs, and the SDK's auth/realtime/storage surface
+// would otherwise go entirely unused. Server-side only -- never call this
+// from a client component (the key is a service-role secret).
 export async function fetchAmcScoreHistory(supabaseAmcId: string): Promise<AmcScoreSnapshot[]> {
   const url = process.env.AMC_SCORE_SUPABASE_URL;
   const key = process.env.AMC_SCORE_SUPABASE_KEY;
   if (!url || !key) return [];
 
-  const endpoint = `${url}/rest/v1/amc_scores?amc_id=eq.${supabaseAmcId}&parent_category=is.null&select=snapshot_date,amc_weighted_score&order=snapshot_date.asc`;
+  const endpoint = `${url}/rest/v1/amc_scores?amc_id=eq.${supabaseAmcId}&parent_category=eq.equity&select=snapshot_date,amc_weighted_score&order=snapshot_date.asc`;
   const res = await fetch(endpoint, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
   if (!res.ok) {
     console.error("AMC Score fetch failed:", res.status, await res.text().catch(() => ""));
@@ -77,10 +78,6 @@ function fyLabel(dateStr: string): string {
 
 function rangeLabel(startDate: string, endDate: string): string {
   return `${monthAbbrev(startDate)}–${monthAbbrev(endDate)} ${endDate.slice(0, 4)}`;
-}
-
-function firstDayOfMonth(dateStr: string): string {
-  return `${dateStr.slice(0, 7)}-01`;
 }
 
 function isMonthEnd(dateStr: string): boolean {
@@ -144,14 +141,17 @@ function pctChange(current: number | null, base: number | null): number | null {
 export function computeAmcScoreCard(history: AmcScoreSnapshot[], anchorDate: string): AmcScoreCard | null {
   if (history.length === 0) return null;
 
-  // Whole calendar months, not an exact "minus 6 months" day offset: for
-  // anchor 30 Sep, that's [1 Apr, 30 Sep] (6 full months), not [31 Mar, 30
-  // Sep] -- day-of-month subtraction alone would have snapped to 30 Mar
-  // (day preserved) and then off-by-one into including 31 Mar's own
-  // snapshot. This also means the window matches the FYTD window exactly
-  // when the anchor sits 6 months into its fiscal year (e.g. 30 Sep),
-  // which is intentional, not a bug (see the preview's own note on this).
-  const sixMoWindowStart = firstDayOfMonth(subtractMonths(anchorDate, 5));
+  // Matches the "tusk-amc-dashboard" benchmarking Scores page's own "6M
+  // Avg" exactly (verified against real HDFC/Equity data: this window
+  // averages to 2.6656 -> displays as 2.67, exactly its screenshot value
+  // for 30 Sep 2026) -- a plain "minus 6 months, plus a day" day offset,
+  // not a whole-calendar-months window. For a 30 Sep anchor that's [31
+  // Mar, 30 Sep] (subtractMonths preserves the day-of-month: Sep 30 - 6mo
+  // = Mar 30, +1 day = Mar 31), not [1 Apr, 30 Sep] -- an earlier version
+  // of this code "fixed" that into a whole-months window on the
+  // assumption the extra day was a bug; it wasn't, per the reference
+  // dashboard's own convention.
+  const sixMoWindowStart = addDaysToDateString(subtractMonths(anchorDate, 6), 1);
   const sixMoAvg = avgInRange(history, sixMoWindowStart, anchorDate);
 
   const fifteenDaysAgo = addDaysToDateString(anchorDate, -15);

@@ -63,6 +63,19 @@ function formatCrRounded(valueCr: number): string {
   return `₹${Math.round(valueCr).toLocaleString("en-IN")} cr`;
 }
 
+// "30 Sept 26" -- matches the "tusk-amc-dashboard" benchmarking Scores
+// page's own Anchor Date picker exactly (confirmed against a screenshot),
+// for the AMC Score card's picker below. en-IN's "short" month already
+// renders September as "Sept" (not "Sep"), same as that reference.
+function formatAnchorDateOption(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "2-digit",
+    timeZone: "UTC",
+  });
+}
+
 // A thin label/value row for sections that aren't naturally a multi-column
 // table (header stats, PAT/CAGR) -- plain two-cell rows, same visual
 // language as the valuation/QAAUM tables below.
@@ -901,7 +914,7 @@ function AmcScoreCard({
                   >
                     {availableDates.map((d) => (
                       <option key={d} value={d}>
-                        {d}
+                        {formatAnchorDateOption(d)}
                       </option>
                     ))}
                   </select>
