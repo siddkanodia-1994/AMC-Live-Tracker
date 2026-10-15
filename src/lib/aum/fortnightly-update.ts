@@ -15,6 +15,7 @@ import { computeRangeCutoffDate, filterByCutoff, subtractMonths } from "./date-r
 import { computeSummaryViewData, type FlowAdjustment, type QuarterRow } from "./summary-view";
 import { getAmcAumHistory, getAmcListedStockPriceHistoryForIsins, getEffectiveNetFlowForPeriod, type AmcStockPricePoint } from "./history";
 import { getAllMonthlyFlows } from "./industry-flows";
+import { getAmcScoreForOverviewName, type AmcScoreCard } from "./amc-score";
 import {
   getFiscalQuarterBounds,
   getPreviousFiscalQuarterBounds,
@@ -55,6 +56,14 @@ export interface FortnightlyManualFields {
   sipIndustryYoyM2ValCr: number | null;
   sipIndustryLatestYear: number | null;
   sipIndustryLatestMonth: number | null;
+  sipIndustryQtrQtdValCr: number | null;
+  sipIndustryQtrPrevQValCr: number | null;
+  sipIndustryQtrPrevQ2ValCr: number | null;
+  sipIndustryQtrYoyQValCr: number | null;
+  sipIndustryQtrYoyQ2ValCr: number | null;
+  sipIndustryQtrLatestFy: number | null;
+  sipIndustryQtrLatestQuarter: number | null;
+  amcScoreAnchorDate: string | null;
 }
 
 export const MANUAL_FIELD_NAMES = [
@@ -86,6 +95,14 @@ export const MANUAL_FIELD_NAMES = [
   "sipIndustryYoyM2ValCr",
   "sipIndustryLatestYear",
   "sipIndustryLatestMonth",
+  "sipIndustryQtrQtdValCr",
+  "sipIndustryQtrPrevQValCr",
+  "sipIndustryQtrPrevQ2ValCr",
+  "sipIndustryQtrYoyQValCr",
+  "sipIndustryQtrYoyQ2ValCr",
+  "sipIndustryQtrLatestFy",
+  "sipIndustryQtrLatestQuarter",
+  "amcScoreAnchorDate",
 ] as const satisfies readonly (keyof FortnightlyManualFields)[];
 
 export type FortnightlyFieldName = (typeof MANUAL_FIELD_NAMES)[number];
@@ -128,6 +145,14 @@ function rowToManualFields(row: typeof amcFortnightlyUpdate.$inferSelect): Fortn
     sipIndustryYoyM2ValCr: toNum(row.sipIndustryYoyM2ValCr),
     sipIndustryLatestYear: toNum(row.sipIndustryLatestYear),
     sipIndustryLatestMonth: toNum(row.sipIndustryLatestMonth),
+    sipIndustryQtrQtdValCr: toNum(row.sipIndustryQtrQtdValCr),
+    sipIndustryQtrPrevQValCr: toNum(row.sipIndustryQtrPrevQValCr),
+    sipIndustryQtrPrevQ2ValCr: toNum(row.sipIndustryQtrPrevQ2ValCr),
+    sipIndustryQtrYoyQValCr: toNum(row.sipIndustryQtrYoyQValCr),
+    sipIndustryQtrYoyQ2ValCr: toNum(row.sipIndustryQtrYoyQ2ValCr),
+    sipIndustryQtrLatestFy: toNum(row.sipIndustryQtrLatestFy),
+    sipIndustryQtrLatestQuarter: toNum(row.sipIndustryQtrLatestQuarter),
+    amcScoreAnchorDate: row.amcScoreAnchorDate,
   };
 }
 
@@ -184,6 +209,11 @@ export async function createFortnightlySnapshot(amcId: number, asOfDate: string)
   // fortnight. Each new snapshot starts back at the auto-detected default.
   carryForward.sipIndustryLatestYear = null;
   carryForward.sipIndustryLatestMonth = null;
+  // Same no-carry-forward reasoning for the quarterly SIP Industry card's
+  // own anchor, and for the AMC Score card's anchor date.
+  carryForward.sipIndustryQtrLatestFy = null;
+  carryForward.sipIndustryQtrLatestQuarter = null;
+  carryForward.amcScoreAnchorDate = null;
   await db
     .insert(amcFortnightlyUpdate)
     .values({ amcId, asOfDate, ...toDbValues(carryForward) })
@@ -200,7 +230,7 @@ export async function saveFortnightlyField(
   amcId: number,
   asOfDate: string,
   field: FortnightlyFieldName,
-  value: number | null
+  value: number | string | null
 ): Promise<void> {
   const dbValue = value === null ? null : String(value);
   await db
@@ -466,6 +496,73 @@ export async function getSipIndustryAutoValues(
   };
 }
 
+export interface SipIndustryQuarterlyValues {
+  qtd: number | null;
+  prevQ: number | null;
+  prevQ2: number | null;
+  yoyQ: number | null;
+  yoyQ2: number | null;
+}
+
+export interface SipIndustryQuarterlyAuto {
+  labels: SipPeriodLabels;
+  values: SipIndustryQuarterlyValues;
+  defaultAnchorFy: number;
+  defaultAnchorQuarter: number;
+}
+
+// Quarterly counterpart of getSipIndustryAutoValues -- same
+// industry_monthly_flow source and the same "one rolling placeholder
+// month" convention (AMFI publishes with a lag; the latest real month's
+// own figure stands in for the next, not-yet-published month), but sums
+// 3 months per fiscal quarter instead of looking up a single month, since
+// sipContributionsCr is a flow (not an AUM level) -- the same aggregation
+// flows-view.ts's own buildQuarterBlock/sumInRange already use for the
+// Summary tab's Industry Flows quarter view. A separate, local
+// implementation (not a call into flows-view.ts) per this file's own
+// convention of keeping each feature's aggregation local rather than
+// reaching into another feature's already-verified logic.
+export async function getSipIndustryQuarterlyAutoValues(
+  anchorOverride?: { fy: number | null; quarter: number | null }
+): Promise<SipIndustryQuarterlyAuto | null> {
+  const flows = await getAllMonthlyFlows();
+  if (flows.length === 0) return null;
+  const latestReal = flows[flows.length - 1];
+  const estimatedMonth = monthEndOf(subtractMonths(latestReal.monthEndDate, -1));
+
+  const sumQuarter = (start: string, end: string): number | null => {
+    const real = flows.filter((f) => f.monthEndDate >= start && f.monthEndDate <= end);
+    const includesPlaceholder = estimatedMonth >= start && estimatedMonth <= end;
+    if (real.length === 0 && !includesPlaceholder) return null;
+    const realSum = real.reduce((s, f) => s + f.sipContributionsCr, 0);
+    return includesPlaceholder ? realSum + latestReal.sipContributionsCr : realSum;
+  };
+
+  const defaultAnchor = getFiscalYearAndQuarter(estimatedMonth);
+  const anchorFy = anchorOverride?.fy ?? defaultAnchor.fy;
+  const anchorQuarter = anchorOverride?.quarter ?? defaultAnchor.q;
+
+  const q0 = getFiscalQuarterBounds(fiscalQuarterAnchorDate(anchorFy, anchorQuarter));
+  const q1 = getPreviousFiscalQuarterBounds(q0.start);
+  const q2 = getPreviousFiscalQuarterBounds(q1.start);
+  const yoy0 = getFiscalQuarterBounds(fiscalQuarterAnchorDate(anchorFy - 1, anchorQuarter));
+  const yoy1Fyq = getFiscalYearAndQuarter(q1.start);
+  const yoy1 = getFiscalQuarterBounds(fiscalQuarterAnchorDate(yoy1Fyq.fy - 1, yoy1Fyq.q));
+
+  return {
+    labels: getSipAmcPeriodLabels(anchorFy, anchorQuarter),
+    values: {
+      qtd: sumQuarter(q0.start, q0.end),
+      prevQ: sumQuarter(q1.start, q1.end),
+      prevQ2: sumQuarter(q2.start, q2.end),
+      yoyQ: sumQuarter(yoy0.start, yoy0.end),
+      yoyQ2: sumQuarter(yoy1.start, yoy1.end),
+    },
+    defaultAnchorFy: defaultAnchor.fy,
+    defaultAnchorQuarter: defaultAnchor.q,
+  };
+}
+
 // ---------------------------------------------------------------------
 // Valuation formulas -- pure arithmetic over manual fields only
 // ---------------------------------------------------------------------
@@ -556,6 +653,9 @@ export interface FortnightlySheet {
   sipAmcLatestFy: number;
   sipAmcLatestQuarter: number;
   sipIndustryAuto: SipIndustryAuto | null;
+  sipIndustryQuarterlyAuto: SipIndustryQuarterlyAuto | null;
+  amcScore: AmcScoreCard | null;
+  amcScoreAvailableDates: string[];
   manual: FortnightlyManualFields;
   valuation: ValuationBlock;
 }
@@ -604,13 +704,21 @@ export async function getFortnightlySheet(
 
   const manual = savedRow ? rowToManualFields(savedRow) : EMPTY_MANUAL;
 
-  // Depends on `manual` (the override, if any), so it can't join the
-  // Promise.all above -- the analyst's picked month, when set, takes
-  // precedence over the system's own auto-detected "latest available".
-  const sipIndustryAuto = await getSipIndustryAutoValues({
-    year: manual.sipIndustryLatestYear,
-    month: manual.sipIndustryLatestMonth,
-  });
+  // Each depends on `manual` (the override, if any), so none can join the
+  // Promise.all above -- but they're independent of EACH OTHER, so they
+  // still run in parallel rather than one after another.
+  const [sipIndustryAuto, sipIndustryQuarterlyAuto, amcScoreResult] = await Promise.all([
+    getSipIndustryAutoValues({
+      year: manual.sipIndustryLatestYear,
+      month: manual.sipIndustryLatestMonth,
+    }),
+    getSipIndustryQuarterlyAutoValues({
+      fy: manual.sipIndustryQtrLatestFy,
+      quarter: manual.sipIndustryQtrLatestQuarter,
+    }),
+    getAmcScoreForOverviewName(amc.overviewName, manual.amcScoreAnchorDate),
+  ]);
+  const { card: amcScore, availableDates: amcScoreAvailableDates } = amcScoreResult;
 
   // Reuses the exact same mechanism already wired into the Overview table
   // and the Summary tab (flowAdjustmentForDate, gated on each row's own end
@@ -659,6 +767,9 @@ export async function getFortnightlySheet(
     sipAmcLatestFy,
     sipAmcLatestQuarter,
     sipIndustryAuto,
+    sipIndustryQuarterlyAuto,
+    amcScore,
+    amcScoreAvailableDates,
     manual,
     valuation,
   };

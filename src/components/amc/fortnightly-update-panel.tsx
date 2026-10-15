@@ -138,7 +138,7 @@ export function FortnightlyUpdatePanel() {
     setAsOfDate(null);
   }
 
-  async function saveField(field: FortnightlyFieldName, value: number | null) {
+  async function saveField(field: FortnightlyFieldName, value: number | string | null) {
     if (!sheet) return;
     const res = await fetch("/api/fortnightly-update", {
       method: "POST",
@@ -392,7 +392,7 @@ function FortnightlySheetView({
   onSave,
 }: {
   sheet: FortnightlySheet;
-  onSave: (field: FortnightlyFieldName, value: number | null) => Promise<void>;
+  onSave: (field: FortnightlyFieldName, value: number | string | null) => Promise<void>;
 }) {
   const m = sheet.manual;
   const v = sheet.valuation;
@@ -526,13 +526,16 @@ function FortnightlySheetView({
         </div>
       </div>
 
-      {/* Row 3: SIP AMC Growth / SIP Industry Growth -- fully manual */}
+      {/* Row 3: SIP AMC Growth / SIP Industry Growth (Quarterly) -- fully
+          manual / auto-pulled respectively */}
       <div className="grid gap-4 lg:grid-cols-2">
         <SipAmcGrowthTable sheet={sheet} onSave={onSave} />
-        <SipIndustryGrowthTable sheet={sheet} onSave={onSave} />
+        <SipIndustryQuarterlyGrowthTable sheet={sheet} onSave={onSave} />
       </div>
 
-      {/* Row 4: Ratio section -- pulled, read-only (trailing, no pair) */}
+      {/* Row 4: Ratio section (pulled, read-only) / SIP Industry Growth
+          (Monthly) -- the monthly card moved here to make room for the new
+          quarterly one above, in Row 3's old slot. */}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="overflow-hidden rounded-lg border bg-card">
           <Table className={TABLE_TEXT_CLASS}>
@@ -564,6 +567,13 @@ function FortnightlySheetView({
             Uses the Stock Correlation tab&apos;s own shared Date Range / Moving Avg settings.
           </p>
         </div>
+        <SipIndustryGrowthTable sheet={sheet} onSave={onSave} />
+      </div>
+
+      {/* Row 5: AMC Score -- pulled from a separate Supabase project,
+          read-only (trailing, no pair) */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <AmcScoreCard sheet={sheet} onSave={onSave} />
       </div>
     </div>
   );
@@ -574,7 +584,7 @@ function SipAmcGrowthTable({
   onSave,
 }: {
   sheet: FortnightlySheet;
-  onSave: (field: FortnightlyFieldName, value: number | null) => Promise<void>;
+  onSave: (field: FortnightlyFieldName, value: number | string | null) => Promise<void>;
 }) {
   const m = sheet.manual;
   const labels = sheet.sipAmcLabels;
@@ -660,12 +670,114 @@ function SipAmcGrowthTable({
   );
 }
 
+// Quarterly counterpart of SipIndustryGrowthTable -- same auto-pulled +
+// overridable-anchor pattern (ManualOrAutoCell, FY/Quarter picker instead
+// of Month/Year), reading sheet.sipIndustryQuarterlyAuto instead of
+// sheet.sipIndustryAuto. "QoQ" instead of "MoM" is the only header change;
+// the ratio math is otherwise identical (effective = manual ?? auto per
+// row, then the same consecutive-row-ratio derivation).
+function SipIndustryQuarterlyGrowthTable({
+  sheet,
+  onSave,
+}: {
+  sheet: FortnightlySheet;
+  onSave: (field: FortnightlyFieldName, value: number | string | null) => Promise<void>;
+}) {
+  const m = sheet.manual;
+  const auto = sheet.sipIndustryQuarterlyAuto;
+  const effectiveFy = m.sipIndustryQtrLatestFy ?? auto?.defaultAnchorFy ?? null;
+  const effectiveQuarter = m.sipIndustryQtrLatestQuarter ?? auto?.defaultAnchorQuarter ?? null;
+  const labels = auto?.labels;
+  const rows: { label: string; field: FortnightlyFieldName; manualVal: number | null; autoVal: number | null }[] = [
+    { label: `Latest Available Quarter${labels ? ` (${labels.qtd})` : ""}`, field: "sipIndustryQtrQtdValCr", manualVal: m.sipIndustryQtrQtdValCr, autoVal: auto?.values.qtd ?? null },
+    { label: `Previous Quarter${labels ? ` (${labels.prevQ})` : ""}`, field: "sipIndustryQtrPrevQValCr", manualVal: m.sipIndustryQtrPrevQValCr, autoVal: auto?.values.prevQ ?? null },
+    { label: `Previous Quarter${labels ? ` (${labels.prevQ2})` : ""}`, field: "sipIndustryQtrPrevQ2ValCr", manualVal: m.sipIndustryQtrPrevQ2ValCr, autoVal: auto?.values.prevQ2 ?? null },
+    { label: `Last Year Same Quarter${labels ? ` (${labels.yoyQ})` : ""}`, field: "sipIndustryQtrYoyQValCr", manualVal: m.sipIndustryQtrYoyQValCr, autoVal: auto?.values.yoyQ ?? null },
+    { label: `Last Year Same Quarter${labels ? ` (${labels.yoyQ2})` : ""}`, field: "sipIndustryQtrYoyQ2ValCr", manualVal: m.sipIndustryQtrYoyQ2ValCr, autoVal: auto?.values.yoyQ2 ?? null },
+  ];
+  const effectiveVals = rows.map((row) => row.manualVal ?? row.autoVal);
+  const qoq = effectiveVals[1] !== null && effectiveVals[0] !== null && effectiveVals[1] !== 0 ? effectiveVals[0] / effectiveVals[1] - 1 : null;
+  const qoqPrev = effectiveVals[2] !== null && effectiveVals[1] !== null && effectiveVals[2] !== 0 ? effectiveVals[1] / effectiveVals[2] - 1 : null;
+  const yoy = effectiveVals[3] !== null && effectiveVals[0] !== null && effectiveVals[3] !== 0 ? effectiveVals[0] / effectiveVals[3] - 1 : null;
+  const yoyPrev = effectiveVals[4] !== null && effectiveVals[1] !== null && effectiveVals[4] !== 0 ? effectiveVals[1] / effectiveVals[4] - 1 : null;
+  const qoqByRow = [qoq, qoqPrev, null, null, null];
+  const yoyByRow = [yoy, yoyPrev, null, null, null];
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <Table className={TABLE_TEXT_CLASS}>
+        <TableBody>
+          <SectionBanner title="SIP Industry Growth (Quarterly)" colSpan={4} />
+          {effectiveFy !== null && effectiveQuarter !== null && (
+            <TableRow>
+              <TableCell className="font-semibold">Latest Available Quarter</TableCell>
+              <TableCell />
+              <TableCell>
+                <div className="flex justify-end">
+                  <select
+                    value={effectiveQuarter}
+                    onChange={(e) => onSave("sipIndustryQtrLatestQuarter", Number(e.target.value))}
+                    title="Which fiscal quarter the industry-wide SIP figures below are reported for -- defaults to the system's own auto-detected latest quarter; an override here applies only to this one snapshot"
+                    className={`${inlineSelectClass} w-16`}
+                  >
+                    {[1, 2, 3, 4].map((q) => (
+                      <option key={q} value={q}>
+                        Q{q}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex justify-end">
+                  <select
+                    value={effectiveFy}
+                    onChange={(e) => onSave("sipIndustryQtrLatestFy", Number(e.target.value))}
+                    title="Fiscal year for the quarter above"
+                    className={`${inlineSelectClass} w-20`}
+                  >
+                    {fyOptionsAround(effectiveFy).map((fy) => (
+                      <option key={fy} value={fy}>
+                        FY{String(fy).slice(-2)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </TableCell>
+            </TableRow>
+          )}
+          <TableRow>
+            <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Val (Cr)</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">QoQ</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">YoY</TableCell>
+          </TableRow>
+          {rows.map((row, i) => (
+            <TableRow key={row.label}>
+              <TableCell>{row.label}</TableCell>
+              <ManualOrAutoCell
+                manualValue={row.manualVal}
+                autoValue={row.autoVal}
+                onSave={(v) => onSave(row.field, v)}
+                title="Auto-pulled from the Summary tab's industry-wide SIP data, summed over the fiscal quarter; type a value to override"
+                decimals={0}
+              />
+              <PctCell value={qoqByRow[i]} />
+              <PctCell value={yoyByRow[i]} />
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 function SipIndustryGrowthTable({
   sheet,
   onSave,
 }: {
   sheet: FortnightlySheet;
-  onSave: (field: FortnightlyFieldName, value: number | null) => Promise<void>;
+  onSave: (field: FortnightlyFieldName, value: number | string | null) => Promise<void>;
 }) {
   const m = sheet.manual;
   const auto = sheet.sipIndustryAuto;
@@ -691,7 +803,7 @@ function SipIndustryGrowthTable({
     <div className="overflow-hidden rounded-lg border bg-card">
       <Table className={TABLE_TEXT_CLASS}>
         <TableBody>
-          <SectionBanner title="SIP Industry Growth" colSpan={4} />
+          <SectionBanner title="SIP Industry Growth (Monthly)" colSpan={4} />
           {effectiveMonth !== null && effectiveYear !== null && (
             <TableRow>
               <TableCell className="font-semibold">Latest Available Month</TableCell>
@@ -750,6 +862,75 @@ function SipIndustryGrowthTable({
               <PctCell value={yoyByRow[i]} />
             </TableRow>
           ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+// Pulled from a separate, not-yet-connected-elsewhere Supabase project (see
+// src/lib/aum/amc-score.ts) -- entirely auto-computed, no manual value
+// overrides (unlike the SIP cards), so Score is a plain read-only cell, not
+// an EditNumberCell. The only writable field is the anchor date itself.
+function AmcScoreCard({
+  sheet,
+  onSave,
+}: {
+  sheet: FortnightlySheet;
+  onSave: (field: FortnightlyFieldName, value: number | string | null) => Promise<void>;
+}) {
+  const card = sheet.amcScore;
+  const availableDates = sheet.amcScoreAvailableDates;
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <Table className={TABLE_TEXT_CLASS}>
+        <TableBody>
+          <SectionBanner title="AMC Score" colSpan={3} />
+          {card && availableDates.length > 0 && (
+            <TableRow>
+              <TableCell className="font-semibold">Anchor Date</TableCell>
+              <TableCell />
+              <TableCell>
+                <div className="flex justify-end">
+                  <select
+                    value={card.anchorDate}
+                    onChange={(e) => onSave("amcScoreAnchorDate", e.target.value)}
+                    title="Which amc_scores snapshot date this card anchors to -- defaults to the latest available snapshot; an override here applies only to this one snapshot"
+                    className={`${inlineSelectClass} w-32`}
+                  >
+                    {availableDates.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </TableCell>
+            </TableRow>
+          )}
+          {card ? (
+            <>
+              <TableRow>
+                <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
+                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Score</TableCell>
+                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Change</TableCell>
+              </TableRow>
+              {card.rows.map((row) => (
+                <TableRow key={row.label}>
+                  <TableCell>{row.label}</TableCell>
+                  <TableCell className="text-right tabular-nums font-semibold">{row.score === null ? "—" : row.score.toFixed(2)}</TableCell>
+                  <PctCell value={row.changePct} />
+                </TableRow>
+              ))}
+            </>
+          ) : (
+            <TableRow>
+              <TableCell colSpan={3} className="py-4 text-center text-[#262626] dark:text-[#d4d4d4]">
+                No AMC Score data available for this fund.
+              </TableCell>
+            </TableRow>
+          )}
         </TableBody>
       </Table>
     </div>

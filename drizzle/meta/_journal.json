@@ -197,6 +197,13 @@
       "when": 1791952446656,
       "tag": "0027_quiet_paper_doll",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792049197746,
+      "tag": "0028_sparkling_revanche",
+      "breakpoints": true
     }
   ]
 }

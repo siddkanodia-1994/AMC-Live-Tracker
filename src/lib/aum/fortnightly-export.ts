@@ -26,6 +26,7 @@ const pct = (v: number | null | undefined) => (v === null || v === undefined ? "
 // ₹ symbol, since neither has this font limitation.
 const cr = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `Rs.${Math.round(v).toLocaleString("en-IN")} cr`);
 const crAmount = (v: number | null) => (v === null ? "—" : Math.round(v).toLocaleString("en-IN"));
+const score = (v: number | null | undefined) => (v === null || v === undefined ? "—" : v.toFixed(2));
 const price = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `Rs.${formatPriceInr(v).slice(1)}`);
 const scenarioRow = (label: string, values: ScenarioValues, fmt: (v: number | null) => string): string[] => [
   label,
@@ -121,8 +122,26 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     ],
   };
 
-  const industryAuto = sheet.sipIndustryAuto;
   const withPeriod = (base: string, period: string | undefined) => (period ? `${base} (${period})` : base);
+
+  const industryQtrAuto = sheet.sipIndustryQuarterlyAuto;
+  const sipIndustryQtrRows: [string, number | null][] = [
+    [withPeriod("Latest Available Quarter", industryQtrAuto?.labels.qtd), m.sipIndustryQtrQtdValCr ?? industryQtrAuto?.values.qtd ?? null],
+    [withPeriod("Previous Quarter", industryQtrAuto?.labels.prevQ), m.sipIndustryQtrPrevQValCr ?? industryQtrAuto?.values.prevQ ?? null],
+    [withPeriod("Previous Quarter", industryQtrAuto?.labels.prevQ2), m.sipIndustryQtrPrevQ2ValCr ?? industryQtrAuto?.values.prevQ2 ?? null],
+    [withPeriod("Last Year Same Quarter", industryQtrAuto?.labels.yoyQ), m.sipIndustryQtrYoyQValCr ?? industryQtrAuto?.values.yoyQ ?? null],
+    [withPeriod("Last Year Same Quarter", industryQtrAuto?.labels.yoyQ2), m.sipIndustryQtrYoyQ2ValCr ?? industryQtrAuto?.values.yoyQ2 ?? null],
+  ];
+  const sipIndustryQtrRatios = periodRatios(sipIndustryQtrRows.map(([, val]) => val));
+  const sipIndustryQuarterly: ExportSection = {
+    title: "SIP Industry Growth (Quarterly)",
+    rows: [
+      ["Period", "Val (Cr)", "QoQ", "YoY"],
+      ...sipIndustryQtrRows.map(([label, val], i) => [label, cr(val), pct(sipIndustryQtrRatios.stepByRow[i]), pct(sipIndustryQtrRatios.yoyByRow[i])]),
+    ],
+  };
+
+  const industryAuto = sheet.sipIndustryAuto;
   const sipIndustryRows: [string, number | null][] = [
     [withPeriod("Latest Available Month", industryAuto?.labels.qtd), m.sipIndustryMtdValCr ?? industryAuto?.values.mtd ?? null],
     [withPeriod("Previous Month", industryAuto?.labels.prevQ), m.sipIndustryPrevMValCr ?? industryAuto?.values.prevM ?? null],
@@ -131,8 +150,8 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     [withPeriod("Last Year Month", industryAuto?.labels.yoyQ2), m.sipIndustryYoyM2ValCr ?? industryAuto?.values.yoyM2 ?? null],
   ];
   const sipIndustryRatios = periodRatios(sipIndustryRows.map(([, val]) => val));
-  const sipIndustry: ExportSection = {
-    title: "SIP Industry Growth",
+  const sipIndustryMonthly: ExportSection = {
+    title: "SIP Industry Growth (Monthly)",
     rows: [
       ["Period", "Val (Cr)", "MoM", "YoY"],
       ...sipIndustryRows.map(([label, val], i) => [label, cr(val), pct(sipIndustryRatios.stepByRow[i]), pct(sipIndustryRatios.yoyByRow[i])]),
@@ -151,7 +170,15 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     ],
   };
 
-  return [header, pat, valuation, qaaum, sipAmc, sipIndustry, ratio];
+  const amcScore: ExportSection = {
+    title: "AMC Score",
+    rows: [
+      ["Period", "Score", "Change"],
+      ...(sheet.amcScore?.rows.map((r) => [r.label, score(r.score), pct(r.changePct)]) ?? [["No AMC Score data available for this fund.", "—", "—"]]),
+    ],
+  };
+
+  return [header, pat, valuation, qaaum, sipAmc, sipIndustryQuarterly, sipIndustryMonthly, ratio, amcScore];
 }
 
 // ---------------------------------------------------------------------
@@ -169,6 +196,7 @@ const CR_FORMAT = '"₹"#,##0" cr"'; // whole crores, no decimals -- matches the
 const PLAIN_FORMAT = "#,##0";
 const PRICE_FORMAT = '"₹"#,##0.00';
 const PCT_FORMAT = "+0.00%;-0.00%";
+const SCORE_FORMAT = "0.00";
 
 const POS_FILL = "FFC6EFCE";
 const POS_FONT = "FF006100";
@@ -334,12 +362,35 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   });
   row++;
 
-  writeBanner(ws, row, "SIP Industry Growth", 4);
+  const withPeriod = (base: string, period: string | undefined) => (period ? `${base} (${period})` : base);
+
+  writeBanner(ws, row, "SIP Industry Growth (Quarterly)", 4);
+  row++;
+  writeHeaderRow(ws, row, ["Period", "Val (Cr)", "QoQ", "YoY"]);
+  row++;
+  const industryQtrAuto = sheet.sipIndustryQuarterlyAuto;
+  const sipIndustryQtrRows: [string, number | null][] = [
+    [withPeriod("Latest Available Quarter", industryQtrAuto?.labels.qtd), m.sipIndustryQtrQtdValCr ?? industryQtrAuto?.values.qtd ?? null],
+    [withPeriod("Previous Quarter", industryQtrAuto?.labels.prevQ), m.sipIndustryQtrPrevQValCr ?? industryQtrAuto?.values.prevQ ?? null],
+    [withPeriod("Previous Quarter", industryQtrAuto?.labels.prevQ2), m.sipIndustryQtrPrevQ2ValCr ?? industryQtrAuto?.values.prevQ2 ?? null],
+    [withPeriod("Last Year Same Quarter", industryQtrAuto?.labels.yoyQ), m.sipIndustryQtrYoyQValCr ?? industryQtrAuto?.values.yoyQ ?? null],
+    [withPeriod("Last Year Same Quarter", industryQtrAuto?.labels.yoyQ2), m.sipIndustryQtrYoyQ2ValCr ?? industryQtrAuto?.values.yoyQ2 ?? null],
+  ];
+  const sipIndustryQtrRatios = periodRatios(sipIndustryQtrRows.map(([, val]) => val));
+  sipIndustryQtrRows.forEach(([label, val], i) => {
+    writeLabel(ws, row, 1, label);
+    writeNum(ws, row, 2, val, PLAIN_FORMAT, true);
+    writePct(ws, row, 3, sipIndustryQtrRatios.stepByRow[i]);
+    writePct(ws, row, 4, sipIndustryQtrRatios.yoyByRow[i]);
+    row++;
+  });
+  row++;
+
+  writeBanner(ws, row, "SIP Industry Growth (Monthly)", 4);
   row++;
   writeHeaderRow(ws, row, ["Period", "Val (Cr)", "MoM", "YoY"]);
   row++;
   const industryAuto = sheet.sipIndustryAuto;
-  const withPeriod = (base: string, period: string | undefined) => (period ? `${base} (${period})` : base);
   const sipIndustryRows: [string, number | null][] = [
     [withPeriod("Latest Available Month", industryAuto?.labels.qtd), m.sipIndustryMtdValCr ?? industryAuto?.values.mtd ?? null],
     [withPeriod("Previous Month", industryAuto?.labels.prevQ), m.sipIndustryPrevMValCr ?? industryAuto?.values.prevM ?? null],
@@ -376,4 +427,20 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   row++;
   writeLabel(ws, row, 1, "R-Square");
   writePct(ws, row, 2, sheet.ratio?.rSquared ?? null);
+  row += 2;
+
+  writeBanner(ws, row, "AMC Score", 3);
+  row++;
+  writeHeaderRow(ws, row, ["Period", "Score", "Change"]);
+  row++;
+  if (sheet.amcScore) {
+    for (const r of sheet.amcScore.rows) {
+      writeLabel(ws, row, 1, r.label);
+      writeNum(ws, row, 2, r.score, SCORE_FORMAT);
+      writePct(ws, row, 3, r.changePct);
+      row++;
+    }
+  } else {
+    writeLabel(ws, row, 1, "No AMC Score data available for this fund.");
+  }
 }

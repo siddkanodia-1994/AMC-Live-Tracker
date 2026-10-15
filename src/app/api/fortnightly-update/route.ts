@@ -23,9 +23,16 @@ export const GET = withErrorHandling(async (request: Request) => {
   return NextResponse.json(sheet);
 });
 
-// POST { amcId, asOfDate, field, value: number | null } -- saves one manual
-// cell, same per-field upsert shape as the net-flow override route. No
-// auth gate, per the user's explicit choice for this feature.
+// Every manual field is a plain number except amcScoreAnchorDate (a
+// YYYY-MM-DD date string, picked from a dropdown of real amc_scores
+// snapshot dates -- see src/lib/aum/amc-score.ts) -- the only date-typed
+// field in this table today.
+const DATE_FIELD_NAMES: readonly string[] = ["amcScoreAnchorDate"];
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// POST { amcId, asOfDate, field, value: number | string | null } -- saves
+// one manual cell, same per-field upsert shape as the net-flow override
+// route. No auth gate, per the user's explicit choice for this feature.
 export const POST = withErrorHandling(async (request: Request) => {
   const body = await request.json();
   const amcId = typeof body?.amcId === "number" ? body.amcId : null;
@@ -40,9 +47,14 @@ export const POST = withErrorHandling(async (request: Request) => {
   }
 
   const rawValue = body?.value;
-  let value: number | null;
+  let value: number | string | null;
   if (rawValue === null) {
     value = null;
+  } else if (DATE_FIELD_NAMES.includes(field)) {
+    if (typeof rawValue !== "string" || !DATE_PATTERN.test(rawValue)) {
+      return NextResponse.json({ error: `${field} must be a YYYY-MM-DD date string or null` }, { status: 400 });
+    }
+    value = rawValue;
   } else if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
     value = rawValue;
   } else {
