@@ -779,12 +779,6 @@ export const amcFortnightlyUpdate = pgTable(
     sipIndustryPrevM2ValCr: numeric("sip_industry_prev_m2_val_cr", { precision: 18, scale: 4 }),
     sipIndustryYoyMValCr: numeric("sip_industry_yoy_m_val_cr", { precision: 18, scale: 4 }),
     sipIndustryYoyM2ValCr: numeric("sip_industry_yoy_m2_val_cr", { precision: 18, scale: 4 }),
-    // Optional one-off override of which month the 5 rows above are
-    // anchored to -- unlike sipAmcLatestFy/Quarter, this does NOT carry
-    // forward to the next snapshot (see createFortnightlySnapshot); null
-    // falls back to the system's own auto-detected latest month.
-    sipIndustryLatestYear: numeric("sip_industry_latest_year", { precision: 6, scale: 0 }),
-    sipIndustryLatestMonth: numeric("sip_industry_latest_month", { precision: 2, scale: 0 }),
     // SIP Industry Growth (Quarterly) -- same 5-period shape as the
     // monthly card above, summed over fiscal quarters instead of looked
     // up per month (sipContributionsCr is a flow, so a quarter's figure
@@ -795,12 +789,6 @@ export const amcFortnightlyUpdate = pgTable(
     sipIndustryQtrPrevQ2ValCr: numeric("sip_industry_qtr_prev_q2_val_cr", { precision: 18, scale: 4 }),
     sipIndustryQtrYoyQValCr: numeric("sip_industry_qtr_yoy_q_val_cr", { precision: 18, scale: 4 }),
     sipIndustryQtrYoyQ2ValCr: numeric("sip_industry_qtr_yoy_q2_val_cr", { precision: 18, scale: 4 }),
-    // Optional one-off override of which fiscal quarter the 5 rows above
-    // are anchored to -- same no-carry-forward rule as
-    // sipIndustryLatestYear/Month (see createFortnightlySnapshot); null
-    // falls back to the system's own auto-detected latest quarter.
-    sipIndustryQtrLatestFy: numeric("sip_industry_qtr_latest_fy", { precision: 6, scale: 0 }),
-    sipIndustryQtrLatestQuarter: numeric("sip_industry_qtr_latest_quarter", { precision: 1, scale: 0 }),
     // One-off override of which amc_scores snapshot date the "AMC Score"
     // card anchors to (see src/lib/aum/amc-score.ts) -- same
     // no-carry-forward rule as the SIP Industry anchor overrides above;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { mutate } from "swr";
 import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -54,6 +55,40 @@ const MONTH_ABBREV = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "S
 
 function numOrZero(v: number | null): number {
   return v ?? 0;
+}
+
+// First month of a fiscal quarter (Q1 Apr-Jun .. Q4 Jan-Mar) as "YYYY-MM" --
+// used to translate a Quarter/FY pick on the SIP Industry (Quarterly) card
+// into the single global "YYYY-MM" anchor both SIP Industry cards share
+// (see saveSipIndustryAnchorMonth below).
+function fiscalQuarterToMonth(fy: number, quarter: number): string {
+  if (quarter === 1) return `${fy - 1}-04`;
+  if (quarter === 2) return `${fy - 1}-07`;
+  if (quarter === 3) return `${fy - 1}-10`;
+  return `${fy}-01`; // Q4, Jan-Mar
+}
+
+// Saves the SIP Industry cards' single GLOBAL "latest available month"
+// anchor (industry-wide data, identical for every AMC -- not a per-AMC
+// field like this tab's other manual values, see
+// src/lib/aum/fortnightly-update.ts's getSipIndustryAnchorOverride).
+// Invalidates every cached Fortnightly sheet (not just the one currently
+// being viewed), since changing this affects all 8 AMCs' SIP Industry
+// cards at once.
+function saveSipIndustryAnchorMonth(month: string) {
+  fetch("/api/sip-industry-override", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ month }),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to save");
+      }
+      await mutate((key) => typeof key === "string" && key.startsWith("/api/fortnightly-update?"), undefined, { revalidate: true });
+    })
+    .catch((err) => toast.error(err instanceof Error ? err.message : "Failed to save SIP Industry anchor"));
 }
 
 // Whole crores, no decimals -- scoped to just this tab (per user request),
@@ -683,12 +718,14 @@ function SipAmcGrowthTable({
   );
 }
 
-// Quarterly counterpart of SipIndustryGrowthTable -- same auto-pulled +
-// overridable-anchor pattern (ManualOrAutoCell, FY/Quarter picker instead
+// Quarterly counterpart of SipIndustryGrowthTable -- same auto-pulled
+// pattern (ManualOrAutoCell for the Val cells, FY/Quarter picker instead
 // of Month/Year), reading sheet.sipIndustryQuarterlyAuto instead of
-// sheet.sipIndustryAuto. "QoQ" instead of "MoM" is the only header change;
-// the ratio math is otherwise identical (effective = manual ?? auto per
-// row, then the same consecutive-row-ratio derivation).
+// sheet.sipIndustryAuto. "QoQ" instead of "MoM" is the only header change.
+// Unlike the Val cells (still per-AMC), the anchor picker now saves a
+// single GLOBAL setting shared by both SIP Industry cards and every AMC
+// (see saveSipIndustryAnchorMonth) -- there's no more manual-vs-auto split
+// for the anchor itself, just one current value.
 function SipIndustryQuarterlyGrowthTable({
   sheet,
   onSave,
@@ -698,8 +735,6 @@ function SipIndustryQuarterlyGrowthTable({
 }) {
   const m = sheet.manual;
   const auto = sheet.sipIndustryQuarterlyAuto;
-  const effectiveFy = m.sipIndustryQtrLatestFy ?? auto?.defaultAnchorFy ?? null;
-  const effectiveQuarter = m.sipIndustryQtrLatestQuarter ?? auto?.defaultAnchorQuarter ?? null;
   const labels = auto?.labels;
   const rows: { label: string; field: FortnightlyFieldName; manualVal: number | null; autoVal: number | null }[] = [
     { label: `Latest Available Quarter${labels ? ` (${labels.qtd})` : ""}`, field: "sipIndustryQtrQtdValCr", manualVal: m.sipIndustryQtrQtdValCr, autoVal: auto?.values.qtd ?? null },
@@ -721,16 +756,16 @@ function SipIndustryQuarterlyGrowthTable({
       <Table className={TABLE_TEXT_CLASS}>
         <TableBody>
           <SectionBanner title="SIP Industry Growth (Quarterly)" colSpan={4} />
-          {effectiveFy !== null && effectiveQuarter !== null && (
+          {auto && (
             <TableRow>
               <TableCell className="font-semibold">Latest Available Quarter</TableCell>
               <TableCell />
               <TableCell>
                 <div className="flex justify-end">
                   <select
-                    value={effectiveQuarter}
-                    onChange={(e) => onSave("sipIndustryQtrLatestQuarter", Number(e.target.value))}
-                    title="Which fiscal quarter the industry-wide SIP figures below are reported for -- defaults to the system's own auto-detected latest quarter; an override here applies only to this one snapshot"
+                    value={auto.anchorQuarter}
+                    onChange={(e) => saveSipIndustryAnchorMonth(fiscalQuarterToMonth(auto.anchorFy, Number(e.target.value)))}
+                    title="Which fiscal quarter the industry-wide SIP figures below are reported for -- a single global setting shared by every AMC and by the Monthly card; defaults to the last real AMFI month"
                     className={`${inlineSelectClass} w-16`}
                   >
                     {[1, 2, 3, 4].map((q) => (
@@ -744,12 +779,12 @@ function SipIndustryQuarterlyGrowthTable({
               <TableCell>
                 <div className="flex justify-end">
                   <select
-                    value={effectiveFy}
-                    onChange={(e) => onSave("sipIndustryQtrLatestFy", Number(e.target.value))}
-                    title="Fiscal year for the quarter above"
+                    value={auto.anchorFy}
+                    onChange={(e) => saveSipIndustryAnchorMonth(fiscalQuarterToMonth(Number(e.target.value), auto.anchorQuarter))}
+                    title="Fiscal year for the quarter above -- same global setting"
                     className={`${inlineSelectClass} w-20`}
                   >
-                    {fyOptionsAround(effectiveFy).map((fy) => (
+                    {fyOptionsAround(auto.anchorFy).map((fy) => (
                       <option key={fy} value={fy}>
                         FY{String(fy).slice(-2)}
                       </option>
@@ -794,8 +829,6 @@ function SipIndustryGrowthTable({
 }) {
   const m = sheet.manual;
   const auto = sheet.sipIndustryAuto;
-  const effectiveMonth = m.sipIndustryLatestMonth ?? auto?.defaultAnchorMonth ?? null;
-  const effectiveYear = m.sipIndustryLatestYear ?? auto?.defaultAnchorYear ?? null;
   const withPeriod = (base: string, period: string | undefined) => (period ? `${base} (${period})` : base);
   const rows: { label: string; field: FortnightlyFieldName; manualVal: number | null; autoVal: number | null }[] = [
     { label: withPeriod("Latest Available Month", auto?.labels.qtd), field: "sipIndustryMtdValCr", manualVal: m.sipIndustryMtdValCr, autoVal: auto?.values.mtd ?? null },
@@ -817,16 +850,16 @@ function SipIndustryGrowthTable({
       <Table className={TABLE_TEXT_CLASS}>
         <TableBody>
           <SectionBanner title="SIP Industry Growth (Monthly)" colSpan={4} />
-          {effectiveMonth !== null && effectiveYear !== null && (
+          {auto && (
             <TableRow>
               <TableCell className="font-semibold">Latest Available Month</TableCell>
               <TableCell />
               <TableCell>
                 <div className="flex justify-end">
                   <select
-                    value={effectiveMonth}
-                    onChange={(e) => onSave("sipIndustryLatestMonth", Number(e.target.value))}
-                    title="Which month the industry-wide SIP figures below are reported for -- defaults to the system's own auto-detected latest month; an override here applies only to this one snapshot"
+                    value={auto.anchorMonth}
+                    onChange={(e) => saveSipIndustryAnchorMonth(`${auto.anchorYear}-${e.target.value.padStart(2, "0")}`)}
+                    title="Which month the industry-wide SIP figures below are reported for -- a single global setting shared by every AMC and by the Quarterly card; defaults to the last real AMFI month"
                     className={`${inlineSelectClass} w-20`}
                   >
                     {MONTH_ABBREV.map((name, i) => (
@@ -840,12 +873,12 @@ function SipIndustryGrowthTable({
               <TableCell>
                 <div className="flex justify-end">
                   <select
-                    value={effectiveYear}
-                    onChange={(e) => onSave("sipIndustryLatestYear", Number(e.target.value))}
-                    title="Year for the month above"
+                    value={auto.anchorYear}
+                    onChange={(e) => saveSipIndustryAnchorMonth(`${e.target.value}-${String(auto.anchorMonth).padStart(2, "0")}`)}
+                    title="Year for the month above -- same global setting"
                     className={`${inlineSelectClass} w-20`}
                   >
-                    {yearOptionsAround(effectiveYear).map((y) => (
+                    {yearOptionsAround(auto.anchorYear).map((y) => (
                       <option key={y} value={y}>
                         {y}
                       </option>
