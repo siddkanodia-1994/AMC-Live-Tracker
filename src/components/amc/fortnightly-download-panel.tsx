@@ -125,13 +125,56 @@ function drawOverviewBanner(doc: any, sheet: FortnightlySheet, pageWidth: number
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.text("Summary", 14, cursorY);
-  cursorY += 4;
-  doc.setFont("helvetica", "normal");
+  cursorY += 5;
+
+  // Two-column (bold Label | Detail) rows inside a bordered box using this
+  // app's own manual-input blue (#d7ecff fill / #a9d2f2 border) -- the
+  // user's chosen formatting, confirmed via preview. Each stored line is
+  // "• Label: detail"; a line that doesn't match that shape (an analyst's
+  // own free-form note) renders with an empty label, detail only -- no
+  // crash, since this field is free text.
+  const rawSummary = sheet.manual.summary;
+  const lines = rawSummary && rawSummary.length > 0 ? rawSummary.split("\n") : ["No summary written yet."];
+  const boxX = 14;
+  const boxWidth = pageWidth - 28;
+  const labelColWidth = 34;
+  const detailColX = boxX + 6 + labelColWidth + 4;
+  const detailColWidth = boxX + boxWidth - 6 - detailColX;
+
   doc.setFontSize(8);
-  const summaryText = sanitizeForPdf(sheet.manual.summary ?? "No summary written yet.");
-  const summaryLines = doc.splitTextToSize(summaryText, pageWidth - 28);
-  doc.text(summaryLines, 14, cursorY);
-  cursorY += summaryLines.length * 3.6 + 8;
+  const rowsData = lines.map((line) => {
+    const match = /^•\s*([^:]+):(.*)$/.exec(line);
+    const label = match ? sanitizeForPdf(match[1].trim()) : "";
+    const detail = sanitizeForPdf((match ? match[2] : line).trim());
+    doc.setFont("helvetica", "normal");
+    const detailLines: string[] = doc.splitTextToSize(detail, detailColWidth);
+    const rowHeight = Math.max(detailLines.length * 3.6, 6) + 3;
+    return { label, detailLines, rowHeight };
+  });
+  const boxHeight = rowsData.reduce((sum, r) => sum + r.rowHeight, 0) + 6;
+
+  doc.setFillColor(215, 236, 255); // #d7ecff
+  doc.setDrawColor(169, 210, 242); // #a9d2f2
+  doc.roundedRect(boxX, cursorY, boxWidth, boxHeight, 1.5, 1.5, "FD");
+
+  let rowY = cursorY + 7;
+  doc.setTextColor(11, 35, 56); // #0b2338
+  rowsData.forEach((r, i) => {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.text(r.label, boxX + 6, rowY);
+    doc.setFont("helvetica", "normal");
+    doc.text(r.detailLines, detailColX, rowY);
+    if (i < rowsData.length - 1) {
+      const sepY = rowY + r.rowHeight - 1.5;
+      doc.setLineWidth(0.2);
+      doc.line(boxX + 3, sepY, boxX + boxWidth - 3, sepY);
+    }
+    rowY += r.rowHeight;
+  });
+
+  doc.setTextColor(0, 0, 0);
+  cursorY += boxHeight + 8;
   return cursorY;
 }
 
@@ -234,18 +277,17 @@ export function FortnightlyDownloadPanel() {
             // "kind" of its own, so detect it from the already-formatted
             // "+12.34%"/"-1.23%" string instead of threading extra metadata
             // through buildFortnightlyExportSections just for this. The
-            // section's own cellColors (e.g. SIP/Equity AUM, a LEVEL that's
-            // always positive and needs a comparison-based rule instead of
-            // sign-based) take priority when present, since the sign-based
-            // regex would otherwise mark that column always-green.
+            // section's own cellColors (e.g. SIP/Equity AUM's gradient,
+            // which needs an arbitrary interpolated RGB pair, not just a
+            // sign) take priority when present, since the sign-based regex
+            // would otherwise mark that column always-green.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             didParseCell: (data: any) => {
               if (data.section !== "body") return;
               const override = section.cellColors?.[data.row.index]?.[data.column.index];
               if (override) {
-                const positive = override === "pos";
-                data.cell.styles.fillColor = positive ? POS_RGB : NEG_RGB;
-                data.cell.styles.textColor = positive ? POS_TEXT_RGB : NEG_TEXT_RGB;
+                data.cell.styles.fillColor = override.fill;
+                data.cell.styles.textColor = override.text;
                 data.cell.styles.fontStyle = "bold";
                 return;
               }

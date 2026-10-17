@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { mutate } from "swr";
 import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
@@ -199,16 +199,43 @@ function PctCell({ value, className }: { value: number | null; className?: strin
 }
 
 // SIP/Equity AUM is a LEVEL (always positive), not a growth rate, so
-// PctCell's sign-based green/red can't apply to it -- instead each row is
-// colored by comparing it to the QTD (current) row's own value: green if
-// that period's ratio was higher than now, red if lower, left at the
-// default blue manual-input fill if equal (including the QTD row
-// compared to itself). Reuses PctCell's own hex values for consistency.
-function sipEquityAumColorClass(pct: number | null, qtdPct: number | null): string | undefined {
-  if (pct === null || qtdPct === null || pct === qtdPct) return undefined;
-  return pct > qtdPct
-    ? "bg-[#C6EFCE] text-[#006100] dark:bg-[#0d3b2b] dark:text-[#6ee7b7]"
-    : "bg-[#FFC7CE] text-[#9C0006] dark:bg-[#4c1113] dark:text-[#fca5a5]";
+// PctCell's sign-based green/red can't apply to it -- instead every row
+// across the whole 5-period set is colored on a continuous gradient: the
+// LOWEST value gets full red, the HIGHEST gets full green, everything
+// else gets the proportional in-between shade (confirmed with the user: a
+// 2-stop DIRECT red-to-green blend, not a 3-stop red-yellow-green scale).
+// Reuses this app's own existing green/red tint pair (PctCell's hex
+// values) as the two endpoints for visual consistency with every other
+// green/red indicator already in the app. Returns undefined (falls back
+// to the default blue manual-input style) when fewer than 2 distinct
+// values exist to form a range from.
+const SIP_GRADIENT_RED: [number, number, number] = [255, 199, 206]; // #FFC7CE
+const SIP_GRADIENT_RED_TEXT: [number, number, number] = [156, 0, 6]; // #9C0006
+const SIP_GRADIENT_GREEN: [number, number, number] = [198, 239, 206]; // #C6EFCE
+const SIP_GRADIENT_GREEN_TEXT: [number, number, number] = [0, 97, 0]; // #006100
+
+function lerpChannel(from: number, to: number, t: number): number {
+  return Math.round(from + (to - from) * t);
+}
+
+function sipEquityAumGradientStyle(pct: number | null, allPcts: (number | null)[]): CSSProperties | undefined {
+  if (pct === null) return undefined;
+  const values = allPcts.filter((v): v is number => v !== null);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (values.length < 2 || min === max) return undefined;
+  const t = (pct - min) / (max - min);
+  const bg = [
+    lerpChannel(SIP_GRADIENT_RED[0], SIP_GRADIENT_GREEN[0], t),
+    lerpChannel(SIP_GRADIENT_RED[1], SIP_GRADIENT_GREEN[1], t),
+    lerpChannel(SIP_GRADIENT_RED[2], SIP_GRADIENT_GREEN[2], t),
+  ];
+  const fg = [
+    lerpChannel(SIP_GRADIENT_RED_TEXT[0], SIP_GRADIENT_GREEN_TEXT[0], t),
+    lerpChannel(SIP_GRADIENT_RED_TEXT[1], SIP_GRADIENT_GREEN_TEXT[1], t),
+    lerpChannel(SIP_GRADIENT_RED_TEXT[2], SIP_GRADIENT_GREEN_TEXT[2], t),
+  ];
+  return { backgroundColor: `rgb(${bg.join(",")})`, color: `rgb(${fg.join(",")})` };
 }
 
 function PriceCell({ value }: { value: number | null }) {
@@ -383,6 +410,7 @@ function ManualCell({
   decimals,
   suffix,
   inputClassName,
+  inputStyle,
 }: {
   value: number | null;
   onSave: (v: number | null) => Promise<void>;
@@ -394,6 +422,10 @@ function ManualCell({
   // affecting every other ManualCell in the app; defaults to the usual
   // blue manual-input fill.
   inputClassName?: string;
+  // Continuously-computed color (e.g. the SIP/Equity AUM gradient) that
+  // can't be expressed as a static Tailwind class -- see EditNumberCell's
+  // own inputStyle doc-comment.
+  inputStyle?: CSSProperties;
 }) {
   return (
     <EditNumberCell
@@ -403,6 +435,7 @@ function ManualCell({
       title={title}
       decimals={decimals}
       inputClassName={inputClassName ?? INPUT_CELL_CLASS}
+      inputStyle={inputStyle}
       suffix={suffix}
     />
   );
@@ -1036,9 +1069,12 @@ function SipAmcGrowthTable({
               <ManualCell
                 value={row.pct !== null ? row.pct * 100 : null}
                 onSave={(v) => onSave(row.pctField, v === null ? null : v / 100)}
-                title="SIP as a % of this period's Equity AUM -- colored vs. the Latest Available Quarter's own ratio"
+                title="SIP as a % of this period's Equity AUM -- gradient-colored: lowest of the 5 periods is red, highest is green"
                 suffix="%"
-                inputClassName={sipEquityAumColorClass(row.pct, rows[0].pct)}
+                inputStyle={sipEquityAumGradientStyle(
+                  row.pct,
+                  rows.map((r) => r.pct)
+                )}
               />
             </TableRow>
           ))}

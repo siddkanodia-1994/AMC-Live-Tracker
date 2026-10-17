@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { TableCell } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +28,7 @@ export function EditNumberCell({
   title,
   decimals = 1,
   inputClassName,
+  inputStyle,
   suffix,
 }: {
   value: number;
@@ -43,6 +44,12 @@ export function EditNumberCell({
   // its own visual theme (background/font colour) without affecting every
   // other EditNumberCell in the app.
   inputClassName?: string;
+  // Inline style merged onto the <input>, for a continuously-computed
+  // color (e.g. a gradient) that can't be expressed as a static Tailwind
+  // class -- Tailwind's JIT compiler only picks up class names it can see
+  // as literal strings at build time, so a runtime-interpolated color
+  // needs an actual style attribute instead.
+  inputStyle?: CSSProperties;
   // A static unit label shown right after the input (e.g. "%") -- for a
   // field whose own column header carries no unit of its own, unlike a
   // "Val (Cr)" column where the unit is already implied by the header.
@@ -124,6 +131,7 @@ export function EditNumberCell({
           value={draft}
           disabled={saving}
           title={title}
+          style={inputStyle}
           onFocus={() => {
             setFocused(true);
             setDraft(String(value));

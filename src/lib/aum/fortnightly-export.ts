@@ -13,10 +13,12 @@ export interface ExportSection {
   // column index (index 0 = the first row AFTER the header, matching
   // jspdf-autotable's own body row/column indices) -- used only where a
   // column's color can't be inferred from its own formatted text (e.g.
-  // SIP/Equity AUM, a LEVEL that's always positive, needing a comparison-
-  // based rule instead of the default sign-based "+"/"-" detector). Sparse:
-  // a row/col with no entry here falls through to that default detector.
-  cellColors?: Record<number, Record<number, "pos" | "neg">>;
+  // SIP/Equity AUM, a LEVEL that needs a continuous gradient instead of
+  // the default sign-based "+"/"-" detector). An explicit RGB pair (not
+  // just "pos"/"neg") so a continuously-interpolated gradient color can be
+  // carried through, not just a binary choice. Sparse: a row/col with no
+  // entry here falls through to the default sign-based detector.
+  cellColors?: Record<number, Record<number, { fill: [number, number, number]; text: [number, number, number] }>>;
 }
 
 // Exported so fortnightly-download-panel.tsx's custom-drawn Overview
@@ -143,16 +145,36 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   ];
   const sipAmcRatios = periodRatios(sipAmcRows.map(([, val]) => val));
   // SIP/Equity AUM is a LEVEL, not a growth rate -- color column index 4
-  // by comparing it to the Latest Available Quarter's (row 0) own ratio,
-  // same rule as the live tab's sipEquityAumColorClass, instead of the
-  // sign-based default (which would mark this always-positive column
-  // always-green).
-  const sipAmcQtdPct = sipAmcRows[0][2];
-  const sipAmcCellColors: Record<number, Record<number, "pos" | "neg">> = {};
-  sipAmcRows.forEach(([, , p], i) => {
-    if (p === null || sipAmcQtdPct === null || p === sipAmcQtdPct) return;
-    sipAmcCellColors[i] = { 4: p > sipAmcQtdPct ? "pos" : "neg" };
-  });
+  // on a continuous gradient across all 5 periods (lowest = full red,
+  // highest = full green, 2-stop direct blend), same rule/endpoints as the
+  // live tab's own sipEquityAumGradientStyle, instead of the sign-based
+  // default (which would mark this always-positive column always-green).
+  const sipAmcCellColors: Record<number, Record<number, { fill: [number, number, number]; text: [number, number, number] }>> = {};
+  {
+    const values = sipAmcRows.map(([, , p]) => p).filter((v): v is number => v !== null);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    if (values.length >= 2 && min !== max) {
+      sipAmcRows.forEach(([, , p], i) => {
+        if (p === null) return;
+        const t = (p - min) / (max - min);
+        sipAmcCellColors[i] = {
+          4: {
+            fill: [
+              lerpChannel(GRADIENT_RED_RGB[0], GRADIENT_GREEN_RGB[0], t),
+              lerpChannel(GRADIENT_RED_RGB[1], GRADIENT_GREEN_RGB[1], t),
+              lerpChannel(GRADIENT_RED_RGB[2], GRADIENT_GREEN_RGB[2], t),
+            ],
+            text: [
+              lerpChannel(GRADIENT_RED_TEXT_RGB[0], GRADIENT_GREEN_TEXT_RGB[0], t),
+              lerpChannel(GRADIENT_RED_TEXT_RGB[1], GRADIENT_GREEN_TEXT_RGB[1], t),
+              lerpChannel(GRADIENT_RED_TEXT_RGB[2], GRADIENT_GREEN_TEXT_RGB[2], t),
+            ],
+          },
+        };
+      });
+    }
+  }
   const sipAmc: ExportSection = {
     title: "SIP AMC Growth",
     rows: [
@@ -311,13 +333,32 @@ function writeNum(ws: Worksheet, row: number, col: number, value: number | null,
   if (input) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_FILL } };
 }
 
-// SIP/Equity AUM is a LEVEL (always positive), not a growth rate, so
-// writePct's sign-based green/red can't apply -- same comparison-to-QTD
-// rule as the live tab's own sipEquityAumColorClass (fortnightly-update-
-// panel.tsx): green if this period's ratio is higher than the Latest
-// Available Quarter's own ratio, red if lower, the usual blue input fill
-// if equal (including the QTD row itself).
-function writeConditionalPctInput(ws: Worksheet, row: number, col: number, value: number | null, qtdValue: number | null): void {
+function lerpChannel(from: number, to: number, t: number): number {
+  return Math.round(from + (to - from) * t);
+}
+
+function toHex2(n: number): string {
+  return n.toString(16).padStart(2, "0").toUpperCase();
+}
+
+function interpolateArgb(from: [number, number, number], to: [number, number, number], t: number): string {
+  return `FF${toHex2(lerpChannel(from[0], to[0], t))}${toHex2(lerpChannel(from[1], to[1], t))}${toHex2(lerpChannel(from[2], to[2], t))}`;
+}
+
+const GRADIENT_RED_RGB: [number, number, number] = [255, 199, 206]; // matches NEG_FILL
+const GRADIENT_RED_TEXT_RGB: [number, number, number] = [156, 0, 6]; // matches NEG_FONT
+const GRADIENT_GREEN_RGB: [number, number, number] = [198, 239, 206]; // matches POS_FILL
+const GRADIENT_GREEN_TEXT_RGB: [number, number, number] = [0, 97, 0]; // matches POS_FONT
+
+// SIP/Equity AUM is a LEVEL (always positive), not a growth rate -- colored
+// on a continuous gradient across the whole 5-period set: the LOWEST value
+// gets full red, the HIGHEST gets full green, everything else gets the
+// proportional in-between shade (2-stop direct blend, confirmed with the
+// user -- not a 3-stop red-yellow-green scale). Same rule/hex endpoints as
+// the live tab's own sipEquityAumGradientStyle (fortnightly-update-
+// panel.tsx). Falls back to the plain blue input fill when fewer than 2
+// distinct values exist to form a range from.
+function writeConditionalPctInput(ws: Worksheet, row: number, col: number, value: number | null, allValues: (number | null)[]): void {
   const cell = ws.getCell(row, col);
   if (value === null) {
     cell.value = "—";
@@ -327,13 +368,16 @@ function writeConditionalPctInput(ws: Worksheet, row: number, col: number, value
   cell.value = value;
   cell.numFmt = "0.0%";
   cell.alignment = { horizontal: "right" };
-  if (qtdValue === null || value === qtdValue) {
+  const values = allValues.filter((v): v is number => v !== null);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (values.length < 2 || min === max) {
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_FILL } };
     return;
   }
-  const positive = value > qtdValue;
-  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: positive ? POS_FILL : NEG_FILL } };
-  cell.font = { bold: true, color: { argb: positive ? POS_FONT : NEG_FONT } };
+  const t = (value - min) / (max - min);
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: interpolateArgb(GRADIENT_RED_RGB, GRADIENT_GREEN_RGB, t) } };
+  cell.font = { bold: true, color: { argb: interpolateArgb(GRADIENT_RED_TEXT_RGB, GRADIENT_GREEN_TEXT_RGB, t) } };
 }
 
 function writePct(ws: Worksheet, row: number, col: number, value: number | null | undefined): void {
@@ -408,15 +452,48 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   writeLabel(ws, row, 2, effectiveVerdict ? effectiveVerdict.toUpperCase() : "—");
   row++;
   writeLabel(ws, row, 1, "Summary");
+  row++;
   {
-    const summaryText = m.summary ?? "—";
-    ws.mergeCells(row, 2, row, 5);
-    const summaryCell = ws.getCell(row, 2);
-    summaryCell.value = summaryText;
-    summaryCell.alignment = { wrapText: true, vertical: "top" };
-    ws.getRow(row).height = Math.max(20, summaryText.split("\n").length * 15);
+    // Two-column (bold Label | Detail) rows inside a blue-shaded box (this
+    // app's own manual-input blue, INPUT_FILL / a matching border tone) --
+    // the user's chosen formatting, confirmed via preview. Each stored
+    // line is "• Label: detail"; a line that doesn't match that shape (an
+    // analyst's own free-form note) renders with an empty label, detail
+    // only -- no crash, since this field is free text.
+    const lines = m.summary && m.summary.length > 0 ? m.summary.split("\n") : ["No summary written yet."];
+    const BOX_BORDER_ARGB = "FFA9D2F2";
+    const TEXT_ARGB = "FF0B2338";
+    lines.forEach((line, i) => {
+      const match = /^•\s*([^:]+):(.*)$/.exec(line);
+      const label = match ? match[1].trim() : "";
+      const detail = (match ? match[2] : line).trim();
+      const border = {
+        top: i === 0 ? ({ style: "thin", color: { argb: BOX_BORDER_ARGB } } as const) : undefined,
+        bottom: { style: "thin", color: { argb: BOX_BORDER_ARGB } } as const,
+        left: { style: "thin", color: { argb: BOX_BORDER_ARGB } } as const,
+        right: { style: "thin", color: { argb: BOX_BORDER_ARGB } } as const,
+      };
+
+      const labelCell = ws.getCell(row, 1);
+      labelCell.value = label;
+      labelCell.font = { bold: true, color: { argb: TEXT_ARGB } };
+      labelCell.alignment = { vertical: "top", wrapText: true };
+      labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_FILL } };
+      labelCell.border = border;
+
+      ws.mergeCells(row, 2, row, 5);
+      const detailCell = ws.getCell(row, 2);
+      detailCell.value = detail;
+      detailCell.font = { color: { argb: TEXT_ARGB } };
+      detailCell.alignment = { vertical: "top", wrapText: true };
+      detailCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_FILL } };
+      detailCell.border = border;
+
+      ws.getRow(row).height = Math.max(16, Math.ceil(detail.length / 70) * 14);
+      row++;
+    });
   }
-  row += 2;
+  row += 1;
 
   writeBanner(ws, row, "Stock", 5);
   row++;
@@ -497,9 +574,15 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
     // Raw fraction + Excel's native "%" numFmt (not *100 -- Excel's own
     // percentage format multiplies by 100 for display), matching the tab's
     // own new "%" suffix on this cell and the PDF export's pct() call
-    // below; colored vs. the Latest Available Quarter's own ratio (see
+    // below; gradient-colored across all 5 periods (see
     // writeConditionalPctInput), not a flat blue input fill.
-    writeConditionalPctInput(ws, row, 5, pctVal, sipAmcRows[0][2]);
+    writeConditionalPctInput(
+      ws,
+      row,
+      5,
+      pctVal,
+      sipAmcRows.map(([, , p]) => p)
+    );
     row++;
   });
   row++;
