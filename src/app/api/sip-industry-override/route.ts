@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withErrorHandling } from "@/lib/api/with-error-handling";
-import { getSipIndustryAnchorOverride, setSipIndustryAnchorOverride } from "@/lib/aum/fortnightly-update";
+import { getSipIndustryAnchorOverride, setSipIndustryAnchorOverride, getLastRealMonthInQuarter } from "@/lib/aum/fortnightly-update";
+import { getAllMonthlyFlows } from "@/lib/aum/industry-flows";
 
 // A single GLOBAL override (not per-AMC) of which month counts as "latest
 // available" for the Fortnightly tab's SIP Industry Growth cards (Monthly
@@ -17,9 +18,27 @@ export const GET = withErrorHandling(async () => {
   return NextResponse.json({ month });
 });
 
-// POST { month: "YYYY-MM" | null }
+// POST { month: "YYYY-MM" | null } -- set directly (used by the Monthly
+// card's own Month/Year pickers), OR
+// POST { quarterFy: number, quarter: number } -- used by the Quarterly
+// card's own Quarter/FY pickers, which resolves to the LAST REAL AMFI
+// month inside that quarter server-side (see getLastRealMonthInQuarter);
+// a quarter with no real data at all yet (e.g. one that hasn't started
+// reporting) returns a 400 instead of silently guessing a month.
 export const POST = withErrorHandling(async (request: Request) => {
   const body = await request.json().catch(() => ({}));
+
+  if (typeof body?.quarterFy === "number" && typeof body?.quarter === "number") {
+    const flows = await getAllMonthlyFlows();
+    const month = getLastRealMonthInQuarter(flows, body.quarterFy, body.quarter);
+    if (month === null) {
+      const label = `Q${body.quarter}FY${String(body.quarterFy).slice(-2)}`;
+      return NextResponse.json({ error: `No real AMFI data exists for ${label} yet` }, { status: 400 });
+    }
+    await setSipIndustryAnchorOverride(month.slice(0, 7));
+    return NextResponse.json({ ok: true, month: month.slice(0, 7) });
+  }
+
   const month = body?.month;
   if (month !== null && (typeof month !== "string" || !MONTH_PATTERN.test(month))) {
     return NextResponse.json({ error: "month must be a YYYY-MM string or null" }, { status: 400 });

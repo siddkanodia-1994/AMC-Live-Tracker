@@ -14,7 +14,7 @@ import {
 import { computeRangeCutoffDate, filterByCutoff, subtractMonths } from "./date-range";
 import { computeSummaryViewData, type FlowAdjustment, type QuarterRow } from "./summary-view";
 import { getAmcAumHistory, getAmcListedStockPriceHistoryForIsins, getEffectiveNetFlowForPeriod, type AmcStockPricePoint } from "./history";
-import { getAllMonthlyFlows } from "./industry-flows";
+import { getAllMonthlyFlows, type MonthlyFlowPoint } from "./industry-flows";
 import { getAmcScoreForOverviewName, type AmcScoreCard } from "./amc-score";
 import {
   getFiscalQuarterBounds,
@@ -408,6 +408,9 @@ export interface SipIndustryAuto {
   // month by default, or the global override below when one is set.
   anchorYear: number;
   anchorMonth: number;
+  // The next not-yet-reported month, estimated as a copy of the TRUE
+  // latest real month -- null when the global estimate toggle is off.
+  estimate: SipIndustryEstimate | null;
 }
 
 const SIP_INDUSTRY_ANCHOR_KEY = "sip_industry_anchor_month";
@@ -438,6 +441,58 @@ export async function setSipIndustryAnchorOverride(month: string | null): Promis
     .onConflictDoUpdate({ target: appSettings.key, set: { value: month, updatedAt: new Date() } });
 }
 
+// The quarter picker's own anchor (used by the Quarterly card) maps to the
+// LAST REAL AMFI month that actually falls inside the picked quarter, not
+// that quarter's first calendar month -- e.g. picking Q2FY27 (Jul-Sep
+// 2026, all 3 months already real) resolves to September, the real data
+// that's actually there. Returns null when no month in that quarter has
+// real data yet (e.g. Q3FY27 right now) -- the caller (the API route)
+// treats that as "nothing to anchor to" rather than silently guessing.
+// `flows` must be ascending by monthEndDate (getAllMonthlyFlows's own
+// order), so the last matching entry is the most recent one.
+export function getLastRealMonthInQuarter(flows: MonthlyFlowPoint[], fy: number, quarter: number): string | null {
+  const bounds = getFiscalQuarterBounds(fiscalQuarterAnchorDate(fy, quarter));
+  const inRange = flows.filter((f) => f.monthEndDate >= bounds.start && f.monthEndDate <= bounds.end);
+  return inRange.length === 0 ? null : inRange[inRange.length - 1].monthEndDate;
+}
+
+const SIP_INDUSTRY_SHOW_ESTIMATE_KEY = "sip_industry_show_estimate";
+
+// Global, persisted (same mechanism as the anchor override above) toggle
+// for the "(Estimated)" next-period row both SIP Industry cards can show
+// -- see SipIndustryEstimate below.
+export async function getSipIndustryShowEstimate(): Promise<boolean> {
+  const [row] = await db.select().from(appSettings).where(eq(appSettings.key, SIP_INDUSTRY_SHOW_ESTIMATE_KEY));
+  return row?.value === "true";
+}
+
+export async function setSipIndustryShowEstimate(enabled: boolean): Promise<void> {
+  if (!enabled) {
+    await db.delete(appSettings).where(eq(appSettings.key, SIP_INDUSTRY_SHOW_ESTIMATE_KEY));
+    return;
+  }
+  await db
+    .insert(appSettings)
+    .values({ key: SIP_INDUSTRY_SHOW_ESTIMATE_KEY, value: "true" })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value: "true", updatedAt: new Date() } });
+}
+
+// One extra, clearly-marked row each SIP Industry card can show (when
+// getSipIndustryShowEstimate() is on) projecting the next not-yet-reported
+// period by assuming it repeats the latest REAL month's own figure --
+// confirmed with the user via a worked 3-stage example (0, then 1, then 2
+// of a quarter's 3 months already real) that one rule covers all of them:
+// sum of that period's already-real months + (missing months x the
+// latest real month's own figure). Always anchored to the TRUE latest
+// real month (flows[flows.length-1]), independent of any anchor override
+// -- these are two separate concerns (one shows what's really latest, the
+// other previews what's probably coming next).
+export interface SipIndustryEstimate {
+  label: string;
+  valueCr: number;
+  yoyPct: number | null;
+}
+
 // Auto-pulled default for "SIP Industry Growth" -- the same industry-wide
 // monthly SIP figure the Summary tab's own "Industry Flows" panel already
 // tracks (industry_monthly_flow / getAllMonthlyFlows), so this never needs
@@ -465,6 +520,17 @@ export async function getSipIndustryAutoValues(): Promise<SipIndustryAuto | null
 
   const sipByMonthEnd = new Map(flows.map((f) => [f.monthEndDate, f.sipContributionsCr]));
 
+  let estimate: SipIndustryEstimate | null = null;
+  if (await getSipIndustryShowEstimate()) {
+    const nextMonth = monthEndOf(subtractMonths(latestReal.monthEndDate, -1));
+    const yoyBase = sipByMonthEnd.get(monthEndOf(subtractMonths(nextMonth, 12))) ?? null;
+    estimate = {
+      label: `${monthEndToLabel(nextMonth)} (Est.)`,
+      valueCr: latestReal.sipContributionsCr,
+      yoyPct: yoyBase !== null && yoyBase !== 0 ? latestReal.sipContributionsCr / yoyBase - 1 : null,
+    };
+  }
+
   const monthEnds = {
     mtd: anchorMonth,
     prevM: monthEndOf(subtractMonths(anchorMonth, 1)),
@@ -490,6 +556,7 @@ export async function getSipIndustryAutoValues(): Promise<SipIndustryAuto | null
     },
     anchorYear,
     anchorMonth: anchorMonthNum,
+    estimate,
   };
 }
 
@@ -506,6 +573,9 @@ export interface SipIndustryQuarterlyAuto {
   values: SipIndustryQuarterlyValues;
   anchorFy: number;
   anchorQuarter: number;
+  // The next not-yet-fully-reported quarter, estimated per
+  // SipIndustryEstimate's own rule -- null when the toggle is off.
+  estimate: SipIndustryEstimate | null;
 }
 
 // Quarterly counterpart of getSipIndustryAutoValues -- same
@@ -542,6 +612,24 @@ export async function getSipIndustryQuarterlyAutoValues(): Promise<SipIndustryQu
   const yoy1Fyq = getFiscalYearAndQuarter(q1.start);
   const yoy1 = getFiscalQuarterBounds(fiscalQuarterAnchorDate(yoy1Fyq.fy - 1, yoy1Fyq.q));
 
+  let estimate: SipIndustryEstimate | null = null;
+  if (await getSipIndustryShowEstimate()) {
+    const nextMonth = monthEndOf(subtractMonths(latestReal.monthEndDate, -1));
+    const { fy: estFy, q: estQuarter } = getFiscalYearAndQuarter(nextMonth);
+    const estBounds = getFiscalQuarterBounds(fiscalQuarterAnchorDate(estFy, estQuarter));
+    const realInQuarter = flows.filter((f) => f.monthEndDate >= estBounds.start && f.monthEndDate <= estBounds.end);
+    const realSum = realInQuarter.reduce((s, f) => s + f.sipContributionsCr, 0);
+    const missingMonths = 3 - realInQuarter.length;
+    const estimatedTotal = realSum + missingMonths * latestReal.sipContributionsCr;
+    const estYoyBounds = getFiscalQuarterBounds(fiscalQuarterAnchorDate(estFy - 1, estQuarter));
+    const yoyTotal = sumQuarter(estYoyBounds.start, estYoyBounds.end);
+    estimate = {
+      label: `${getSipAmcPeriodLabels(estFy, estQuarter).qtd} (Est.)`,
+      valueCr: estimatedTotal,
+      yoyPct: yoyTotal !== null && yoyTotal !== 0 ? estimatedTotal / yoyTotal - 1 : null,
+    };
+  }
+
   return {
     labels: getSipAmcPeriodLabels(anchorFy, anchorQuarter),
     values: {
@@ -553,6 +641,7 @@ export async function getSipIndustryQuarterlyAutoValues(): Promise<SipIndustryQu
     },
     anchorFy,
     anchorQuarter,
+    estimate,
   };
 }
 

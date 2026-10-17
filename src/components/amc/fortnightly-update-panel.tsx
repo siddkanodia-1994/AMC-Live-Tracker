@@ -57,24 +57,18 @@ function numOrZero(v: number | null): number {
   return v ?? 0;
 }
 
-// First month of a fiscal quarter (Q1 Apr-Jun .. Q4 Jan-Mar) as "YYYY-MM" --
-// used to translate a Quarter/FY pick on the SIP Industry (Quarterly) card
-// into the single global "YYYY-MM" anchor both SIP Industry cards share
-// (see saveSipIndustryAnchorMonth below).
-function fiscalQuarterToMonth(fy: number, quarter: number): string {
-  if (quarter === 1) return `${fy - 1}-04`;
-  if (quarter === 2) return `${fy - 1}-07`;
-  if (quarter === 3) return `${fy - 1}-10`;
-  return `${fy}-01`; // Q4, Jan-Mar
+// Every cached Fortnightly sheet (not just the one currently being
+// viewed) needs to pick up a change to either SIP Industry global setting
+// below, since both affect all 8 AMCs' cards at once.
+function revalidateAllFortnightlySheets() {
+  return mutate((key) => typeof key === "string" && key.startsWith("/api/fortnightly-update?"), undefined, { revalidate: true });
 }
 
 // Saves the SIP Industry cards' single GLOBAL "latest available month"
-// anchor (industry-wide data, identical for every AMC -- not a per-AMC
-// field like this tab's other manual values, see
+// anchor directly (used by the Monthly card's own Month/Year pickers --
+// industry-wide data, identical for every AMC, not a per-AMC field like
+// this tab's other manual values; see
 // src/lib/aum/fortnightly-update.ts's getSipIndustryAnchorOverride).
-// Invalidates every cached Fortnightly sheet (not just the one currently
-// being viewed), since changing this affects all 8 AMCs' SIP Industry
-// cards at once.
 function saveSipIndustryAnchorMonth(month: string) {
   fetch("/api/sip-industry-override", {
     method: "POST",
@@ -86,9 +80,48 @@ function saveSipIndustryAnchorMonth(month: string) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Failed to save");
       }
-      await mutate((key) => typeof key === "string" && key.startsWith("/api/fortnightly-update?"), undefined, { revalidate: true });
+      await revalidateAllFortnightlySheets();
     })
     .catch((err) => toast.error(err instanceof Error ? err.message : "Failed to save SIP Industry anchor"));
+}
+
+// Saves the same global anchor from the Quarterly card's own Quarter/FY
+// pickers -- resolved server-side to the last REAL AMFI month inside that
+// quarter (see getLastRealMonthInQuarter), not a naive first-of-quarter
+// guess, since a quarter with no real data yet (e.g. one that hasn't
+// started reporting) has nothing to anchor to.
+function saveSipIndustryQuarterAnchor(quarterFy: number, quarter: number) {
+  fetch("/api/sip-industry-override", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ quarterFy, quarter }),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to save");
+      }
+      await revalidateAllFortnightlySheets();
+    })
+    .catch((err) => toast.error(err instanceof Error ? err.message : "Failed to save SIP Industry anchor"));
+}
+
+// Saves the SIP Industry cards' single GLOBAL "show estimated next period"
+// toggle (see src/lib/aum/fortnightly-update.ts's getSipIndustryShowEstimate).
+function saveSipIndustryShowEstimate(enabled: boolean) {
+  fetch("/api/sip-industry-estimate-toggle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to save");
+      }
+      await revalidateAllFortnightlySheets();
+    })
+    .catch((err) => toast.error(err instanceof Error ? err.message : "Failed to save estimate toggle"));
 }
 
 // Whole crores, no decimals -- scoped to just this tab (per user request),
@@ -764,8 +797,8 @@ function SipIndustryQuarterlyGrowthTable({
                 <div className="flex justify-end">
                   <select
                     value={auto.anchorQuarter}
-                    onChange={(e) => saveSipIndustryAnchorMonth(fiscalQuarterToMonth(auto.anchorFy, Number(e.target.value)))}
-                    title="Which fiscal quarter the industry-wide SIP figures below are reported for -- a single global setting shared by every AMC and by the Monthly card; defaults to the last real AMFI month"
+                    onChange={(e) => saveSipIndustryQuarterAnchor(auto.anchorFy, Number(e.target.value))}
+                    title="Which fiscal quarter the industry-wide SIP figures below are reported for -- resolves to the last REAL AMFI month inside that quarter, a single global setting shared by every AMC and by the Monthly card; defaults to the last real AMFI month"
                     className={`${inlineSelectClass} w-16`}
                   >
                     {[1, 2, 3, 4].map((q) => (
@@ -780,7 +813,7 @@ function SipIndustryQuarterlyGrowthTable({
                 <div className="flex justify-end">
                   <select
                     value={auto.anchorFy}
-                    onChange={(e) => saveSipIndustryAnchorMonth(fiscalQuarterToMonth(Number(e.target.value), auto.anchorQuarter))}
+                    onChange={(e) => saveSipIndustryQuarterAnchor(Number(e.target.value), auto.anchorQuarter)}
                     title="Fiscal year for the quarter above -- same global setting"
                     className={`${inlineSelectClass} w-20`}
                   >
@@ -794,6 +827,18 @@ function SipIndustryQuarterlyGrowthTable({
               </TableCell>
             </TableRow>
           )}
+          <TableRow>
+            <TableCell className="flex items-center gap-1.5 text-[12px] font-normal normal-case text-[#262626] dark:text-[#d4d4d4]">
+              <input
+                type="checkbox"
+                checked={Boolean(auto?.estimate)}
+                onChange={(e) => saveSipIndustryShowEstimate(e.target.checked)}
+                className="size-3.5"
+              />
+              Show estimated next quarter
+            </TableCell>
+            <TableCell colSpan={3} />
+          </TableRow>
           <TableRow>
             <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
             <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Val (Cr)</TableCell>
@@ -814,6 +859,18 @@ function SipIndustryQuarterlyGrowthTable({
               <PctCell value={yoyByRow[i]} />
             </TableRow>
           ))}
+          {auto?.estimate && (
+            <TableRow>
+              <TableCell className="italic text-muted-foreground">{auto.estimate.label}</TableCell>
+              <TableCell className="text-right tabular-nums italic text-muted-foreground">{formatCrRounded(auto.estimate.valueCr)}</TableCell>
+              <PctCell
+                value={
+                  effectiveVals[0] !== null && effectiveVals[0] !== 0 ? auto.estimate.valueCr / effectiveVals[0] - 1 : null
+                }
+              />
+              <PctCell value={auto.estimate.yoyPct} />
+            </TableRow>
+          )}
         </TableBody>
       </Table>
     </div>
@@ -889,6 +946,18 @@ function SipIndustryGrowthTable({
             </TableRow>
           )}
           <TableRow>
+            <TableCell className="flex items-center gap-1.5 text-[12px] font-normal normal-case text-[#262626] dark:text-[#d4d4d4]">
+              <input
+                type="checkbox"
+                checked={Boolean(auto?.estimate)}
+                onChange={(e) => saveSipIndustryShowEstimate(e.target.checked)}
+                className="size-3.5"
+              />
+              Show estimated next month
+            </TableCell>
+            <TableCell colSpan={3} />
+          </TableRow>
+          <TableRow>
             <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
             <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Val (Cr)</TableCell>
             <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">MoM</TableCell>
@@ -908,6 +977,18 @@ function SipIndustryGrowthTable({
               <PctCell value={yoyByRow[i]} />
             </TableRow>
           ))}
+          {auto?.estimate && (
+            <TableRow>
+              <TableCell className="italic text-muted-foreground">{auto.estimate.label}</TableCell>
+              <TableCell className="text-right tabular-nums italic text-muted-foreground">{formatCrRounded(auto.estimate.valueCr)}</TableCell>
+              <PctCell
+                value={
+                  effectiveVals[0] !== null && effectiveVals[0] !== 0 ? auto.estimate.valueCr / effectiveVals[0] - 1 : null
+                }
+              />
+              <PctCell value={auto.estimate.yoyPct} />
+            </TableRow>
+          )}
         </TableBody>
       </Table>
     </div>

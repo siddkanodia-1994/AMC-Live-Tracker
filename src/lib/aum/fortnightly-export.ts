@@ -133,11 +133,23 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     [withPeriod("Last Year Same Quarter", industryQtrAuto?.labels.yoyQ2), m.sipIndustryQtrYoyQ2ValCr ?? industryQtrAuto?.values.yoyQ2 ?? null],
   ];
   const sipIndustryQtrRatios = periodRatios(sipIndustryQtrRows.map(([, val]) => val));
+  const qtrLatestVal = sipIndustryQtrRows[0][1];
+  const qtrEstimate = industryQtrAuto?.estimate;
   const sipIndustryQuarterly: ExportSection = {
     title: "SIP Industry Growth (Quarterly)",
     rows: [
       ["Period", "Val (Cr)", "QoQ", "YoY"],
       ...sipIndustryQtrRows.map(([label, val], i) => [label, cr(val), pct(sipIndustryQtrRatios.stepByRow[i]), pct(sipIndustryQtrRatios.yoyByRow[i])]),
+      ...(qtrEstimate
+        ? [
+            [
+              qtrEstimate.label,
+              cr(qtrEstimate.valueCr),
+              pct(qtrLatestVal !== null && qtrLatestVal !== 0 ? qtrEstimate.valueCr / qtrLatestVal - 1 : null),
+              pct(qtrEstimate.yoyPct),
+            ],
+          ]
+        : []),
     ],
   };
 
@@ -150,11 +162,23 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     [withPeriod("Last Year Month", industryAuto?.labels.yoyQ2), m.sipIndustryYoyM2ValCr ?? industryAuto?.values.yoyM2 ?? null],
   ];
   const sipIndustryRatios = periodRatios(sipIndustryRows.map(([, val]) => val));
+  const monthlyLatestVal = sipIndustryRows[0][1];
+  const monthlyEstimate = industryAuto?.estimate;
   const sipIndustryMonthly: ExportSection = {
     title: "SIP Industry Growth (Monthly)",
     rows: [
       ["Period", "Val (Cr)", "MoM", "YoY"],
       ...sipIndustryRows.map(([label, val], i) => [label, cr(val), pct(sipIndustryRatios.stepByRow[i]), pct(sipIndustryRatios.yoyByRow[i])]),
+      ...(monthlyEstimate
+        ? [
+            [
+              monthlyEstimate.label,
+              cr(monthlyEstimate.valueCr),
+              pct(monthlyLatestVal !== null && monthlyLatestVal !== 0 ? monthlyEstimate.valueCr / monthlyLatestVal - 1 : null),
+              pct(monthlyEstimate.yoyPct),
+            ],
+          ]
+        : []),
     ],
   };
 
@@ -253,6 +277,23 @@ function writePct(ws: Worksheet, row: number, col: number, value: number | null 
   const positive = value >= 0;
   cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: positive ? POS_FILL : NEG_FILL } };
   cell.font = { bold: true, color: { argb: positive ? POS_FONT : NEG_FONT } };
+}
+
+// The SIP Industry cards' "(Estimated)" next-period row -- italic, no
+// input fill (it's never manually editable, unlike every other Val cell
+// in these two sections), matching the live tab's own
+// "italic text-muted-foreground" treatment for this row.
+function writeEstimateRow(ws: Worksheet, row: number, label: string, valueCr: number, stepPct: number | null, yoyPct: number | null): void {
+  const labelCell = ws.getCell(row, 1);
+  labelCell.value = label;
+  labelCell.font = { italic: true };
+  const valueCell = ws.getCell(row, 2);
+  valueCell.value = valueCr;
+  valueCell.numFmt = PLAIN_FORMAT;
+  valueCell.alignment = { horizontal: "right" };
+  valueCell.font = { italic: true };
+  writePct(ws, row, 3, stepPct);
+  writePct(ws, row, 4, yoyPct);
 }
 
 function writeScenarioRow(
@@ -384,6 +425,12 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
     writePct(ws, row, 4, sipIndustryQtrRatios.yoyByRow[i]);
     row++;
   });
+  if (industryQtrAuto?.estimate) {
+    const qtrLatestVal = sipIndustryQtrRows[0][1];
+    const est = industryQtrAuto.estimate;
+    writeEstimateRow(ws, row, est.label, est.valueCr, qtrLatestVal !== null && qtrLatestVal !== 0 ? est.valueCr / qtrLatestVal - 1 : null, est.yoyPct);
+    row++;
+  }
   row++;
 
   writeBanner(ws, row, "SIP Industry Growth (Monthly)", 4);
@@ -406,6 +453,12 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
     writePct(ws, row, 4, sipIndustryRatios.yoyByRow[i]);
     row++;
   });
+  if (industryAuto?.estimate) {
+    const monthlyLatestVal = sipIndustryRows[0][1];
+    const est = industryAuto.estimate;
+    writeEstimateRow(ws, row, est.label, est.valueCr, monthlyLatestVal !== null && monthlyLatestVal !== 0 ? est.valueCr / monthlyLatestVal - 1 : null, est.yoyPct);
+    row++;
+  }
   row++;
 
   writeBanner(ws, row, "Ratio (Price / Avg AUM)", 2);
