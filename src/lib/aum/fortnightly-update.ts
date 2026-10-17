@@ -209,6 +209,20 @@ export async function createFortnightlySnapshot(amcId: number, asOfDate: string)
     .onConflictDoNothing({ target: [amcFortnightlyUpdate.amcId, amcFortnightlyUpdate.asOfDate] });
 }
 
+/**
+ * Cron step: auto-creates today's fortnightly snapshot row for every
+ * eligible AMC, carrying forward manual fields the same way the "+ New
+ * fortnightly update" button does. Idempotent (onConflictDoNothing), safe
+ * to call every day even if some/all AMCs already have today's row.
+ */
+export async function createDailyFortnightlySnapshots(asOfDate: string): Promise<number> {
+  const amcList = await getFortnightlyEligibleAmcs();
+  for (const amc of amcList) {
+    await createFortnightlySnapshot(amc.amcId, asOfDate);
+  }
+  return amcList.length;
+}
+
 function toDbValues(fields: FortnightlyManualFields): Record<string, string | null> {
   return Object.fromEntries(
     MANUAL_FIELD_NAMES.map((k) => [k, fields[k] === null ? null : String(fields[k])])

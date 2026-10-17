@@ -8,6 +8,7 @@ import { detectShareAdjustments } from "@/lib/aum/split-detection";
 import { runEtfIngestion } from "@/lib/etf/ingest";
 import { runMcxIngestion } from "@/lib/mcx/ingest";
 import { runAmcStockIngestion } from "@/lib/amc-stock/ingest";
+import { createDailyFortnightlySnapshots } from "@/lib/aum/fortnightly-update";
 import { getIstDateString } from "@/lib/utils/date";
 
 // Bumped from 30 -> 180: the outage-reclaim step below can fetch DHAN
@@ -75,6 +76,20 @@ export async function GET(request: Request) {
       await detectShareAdjustments(getIstDateString());
     } catch (err) {
       console.error("Failed to detect share adjustments:", err);
+    }
+
+    // Best-effort, same isolation as above: auto-create today's Fortnightly
+    // AMC Update snapshot row for every eligible AMC (carrying forward
+    // manual fields, same as the "+ New fortnightly update" button) --
+    // deliberately placed in this success path, not the NoDataImportedError
+    // catch branch below, so a new "as of" date is only stamped in on days
+    // real new market data actually landed. Idempotent, so re-running it
+    // never duplicates or clobbers an already-edited row for today.
+    try {
+      const count = await createDailyFortnightlySnapshots(getIstDateString());
+      console.log(`Auto-created fortnightly snapshots for ${count} AMCs`);
+    } catch (err) {
+      console.error("Failed to auto-create fortnightly snapshots:", err);
     }
 
     // Nifty 50/500 levels: no separate step needed here -- computeLiveAum
