@@ -78,16 +78,20 @@ export async function GET(request: Request) {
       console.error("Failed to detect share adjustments:", err);
     }
 
-    // Best-effort, same isolation as above: auto-create today's Fortnightly
-    // AMC Update snapshot row for every eligible AMC (carrying forward
-    // manual fields, same as the "+ New fortnightly update" button) --
-    // deliberately placed in this success path, not the NoDataImportedError
-    // catch branch below, so a new "as of" date is only stamped in on days
-    // real new market data actually landed. Idempotent, so re-running it
-    // never duplicates or clobbers an already-edited row for today.
+    // Best-effort, same isolation as above: auto-create the Fortnightly AMC
+    // Update snapshot row for every eligible AMC (carrying forward manual
+    // fields, same as the "+ New fortnightly update" button), dated
+    // snapshot.priceAsOfDate -- NOT getIstDateString() -- so this always
+    // tracks the last date real listed-price data actually exists for.
+    // computeLiveAum already resolves this correctly (today on a real
+    // trading day with data, otherwise the last real trading day via
+    // lastTradingDayIstString()), so a weekday holiday (e.g. the cron
+    // firing on a market-closed Tuesday) re-resolves to the already-
+    // existing last-trading-day row instead of stamping a bogus new date
+    // -- a no-op thanks to onConflictDoNothing, not a phantom snapshot.
     try {
-      const count = await createDailyFortnightlySnapshots(getIstDateString());
-      console.log(`Auto-created fortnightly snapshots for ${count} AMCs`);
+      const count = await createDailyFortnightlySnapshots(snapshot.priceAsOfDate);
+      console.log(`Auto-created fortnightly snapshots for ${count} AMCs (as of ${snapshot.priceAsOfDate})`);
     } catch (err) {
       console.error("Failed to auto-create fortnightly snapshots:", err);
     }
