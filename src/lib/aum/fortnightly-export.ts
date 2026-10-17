@@ -19,7 +19,10 @@ export interface ExportSection {
   cellColors?: Record<number, Record<number, "pos" | "neg">>;
 }
 
-const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : formatPct(v, { alwaysSign: true }));
+// Exported so fortnightly-download-panel.tsx's custom-drawn Overview
+// banner (jsPDF primitives, not autoTable) can format the same way
+// without duplicating this logic.
+export const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : formatPct(v, { alwaysSign: true }));
 // Whole crores, no decimals -- matches the tab's own formatCrRounded, not
 // the shared formatCr() (2 decimals) used elsewhere in the app, so the
 // export stays numerically consistent with what the UI itself now shows.
@@ -35,7 +38,24 @@ const pct = (v: number | null | undefined) => (v === null || v === undefined ? "
 const cr = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `Rs.${Math.round(v).toLocaleString("en-IN")} cr`);
 const crAmount = (v: number | null) => (v === null ? "—" : Math.round(v).toLocaleString("en-IN"));
 const score = (v: number | null | undefined) => (v === null || v === undefined ? "—" : v.toFixed(2));
-const price = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `Rs.${formatPriceInr(v).slice(1)}`);
+export const price = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `Rs.${formatPriceInr(v).slice(1)}`);
+
+// jsPDF's built-in Helvetica font is missing glyphs for several Unicode
+// characters the Overview card's free-text Summary can contain (the
+// "Regenerate from data" draft itself uses all three) -- an unmappable
+// character doesn't just show a stray mark, it corrupts autoTable/jsPDF's
+// own character-width accounting for that line, which is what actually
+// produced the bizarre letter-spacing seen across the WHOLE line, not
+// just around the bad character (confirmed by fixing these 3 and the
+// spacing resolving). "•" and "²" are both fine -- real WinAnsi-
+// compatible glyphs -- so left untouched. PDF-only: the live UI and the
+// Excel export both render all of these correctly already.
+export function sanitizeForPdf(text: string): string {
+  return text
+    .replace(/₹/g, "Rs.")
+    .replace(/→/g, "->")
+    .replace(/σ/g, "SD");
+}
 const scenarioRow = (label: string, values: ScenarioValues, fmt: (v: number | null) => string): string[] => [
   label,
   fmt(values.bear),
@@ -62,24 +82,11 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   const m = sheet.manual;
   const v = sheet.valuation;
 
-  const effectiveVerdict = m.verdictOverride ?? sheet.autoVerdict;
-  const overview: ExportSection = {
-    title: "Overview",
-    rows: [
-      ["Metric", "Value"],
-      ["CMP", price(sheet.cmpInr)],
-      ["Target Price (Base)", price(v.fy28TargetPriceInr.base)],
-      ["Upside (Base)", pct(v.fy28UpsidePct.base)],
-      ["Target Period", "FY28E"],
-      ["Verdict", effectiveVerdict ? effectiveVerdict.toUpperCase() : "—"],
-      // Free text -- an analyst's own note, or the "Regenerate from data"
-      // draft, can contain a literal ₹ (the draft's own template does).
-      // jsPDF's Helvetica font has no ₹ glyph (see price()/cr() above) --
-      // swap it for "Rs." here too, PDF-only; the live UI and the Excel
-      // export both keep the real m.summary value untouched.
-      ["Summary", (m.summary ?? "—").replace(/₹/g, "Rs.")],
-    ],
-  };
+  // Note: the PDF path no longer renders a generic "Overview" table here
+  // -- it's custom-drawn in fortnightly-download-panel.tsx (a navy banner
+  // matching the live dashboard's own Overview card), reading `sheet`
+  // directly rather than this section shape. Excel's own Overview block
+  // (buildFortnightlySheetExcel, below) is separate and unaffected.
 
   const header: ExportSection = {
     title: `${sheet.overviewName} — as of ${formatShortDate(sheet.asOfDate)}`,
@@ -242,7 +249,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     ],
   };
 
-  return [header, overview, pat, valuation, qaaum, sipAmc, sipIndustryQuarterly, sipIndustryMonthly, ratio, amcScore];
+  return [header, pat, valuation, qaaum, sipAmc, sipIndustryQuarterly, sipIndustryMonthly, ratio, amcScore];
 }
 
 // ---------------------------------------------------------------------
