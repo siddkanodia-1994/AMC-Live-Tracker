@@ -549,8 +549,30 @@ function generateOverviewDraft(sheet: FortnightlySheet): string {
     );
   }
 
-  const score = sheet.amcScore?.rows[0]?.score ?? null;
-  bullets.push(`• AMC Score: ${score === null ? "—" : score.toFixed(2)}/100`);
+  // AmcScoreCard.rows is always [currentScore, 15DaysAgo, 1MonthAgo,
+  // 1YearAgo, YtdThisFY, YtdSamePeriodLastFY] (see computeAmcScoreCard in
+  // amc-score.ts) -- row 1 and row 3 are the same 6-Month-Avg metric as
+  // row 0, just evaluated 15 days / 1 year earlier, each already carrying
+  // its own changePct vs row 0. NOT a 0-100 scale, so no "/100" suffix.
+  const scoreRows = sheet.amcScore?.rows ?? [];
+  const currentScore = scoreRows[0]?.score ?? null;
+  const formatScoreComparison = (label: string, row: { score: number | null; changePct: number | null } | undefined) => {
+    if (!row || row.score === null) return null;
+    const chg = row.changePct === null ? "" : ` (${formatPct(row.changePct, { alwaysSign: true })})`;
+    return `${row.score.toFixed(2)} ${label}${chg}`;
+  };
+  const scoreComparisons = [formatScoreComparison("15 days ago", scoreRows[1]), formatScoreComparison("a year ago", scoreRows[3])].filter(
+    (s): s is string => s !== null
+  );
+  let scoreBullet = `• AMC Score: ${currentScore === null ? "—" : currentScore.toFixed(2)}`;
+  if (scoreComparisons.length > 0) scoreBullet += ` vs ${scoreComparisons.join(" and ")}`;
+  const chg15 = scoreRows[1]?.changePct ?? null;
+  const chg1yr = scoreRows[3]?.changePct ?? null;
+  if (chg15 !== null && chg1yr !== null) {
+    if (chg15 > 0 && chg1yr > 0) scoreBullet += " — improving";
+    else if (chg15 < 0 && chg1yr < 0) scoreBullet += " — deteriorating";
+  }
+  bullets.push(scoreBullet);
 
   const targetPriceBase = sheet.valuation.fy28TargetPriceInr.base;
   const upsideBase = sheet.valuation.fy28UpsidePct.base;
