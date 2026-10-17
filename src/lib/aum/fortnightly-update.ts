@@ -60,7 +60,12 @@ export interface FortnightlyManualFields {
   sipIndustryQtrYoyQValCr: number | null;
   sipIndustryQtrYoyQ2ValCr: number | null;
   amcScoreAnchorDate: string | null;
+  summary: string | null;
+  verdictOverride: VerdictTier | null;
 }
+
+export const VERDICT_TIERS = ["buy", "accumulate", "hold", "reduce", "sell"] as const;
+export type VerdictTier = (typeof VERDICT_TIERS)[number];
 
 export const MANUAL_FIELD_NAMES = [
   "noOfSharesCr",
@@ -95,6 +100,8 @@ export const MANUAL_FIELD_NAMES = [
   "sipIndustryQtrYoyQValCr",
   "sipIndustryQtrYoyQ2ValCr",
   "amcScoreAnchorDate",
+  "summary",
+  "verdictOverride",
 ] as const satisfies readonly (keyof FortnightlyManualFields)[];
 
 export type FortnightlyFieldName = (typeof MANUAL_FIELD_NAMES)[number];
@@ -141,7 +148,13 @@ function rowToManualFields(row: typeof amcFortnightlyUpdate.$inferSelect): Fortn
     sipIndustryQtrYoyQValCr: toNum(row.sipIndustryQtrYoyQValCr),
     sipIndustryQtrYoyQ2ValCr: toNum(row.sipIndustryQtrYoyQ2ValCr),
     amcScoreAnchorDate: row.amcScoreAnchorDate,
+    summary: row.summary,
+    verdictOverride: isVerdictTier(row.verdictOverride) ? row.verdictOverride : null,
   };
+}
+
+function isVerdictTier(v: string | null): v is VerdictTier {
+  return v !== null && (VERDICT_TIERS as readonly string[]).includes(v);
 }
 
 // ---------------------------------------------------------------------
@@ -265,6 +278,12 @@ export async function getEodPriceAsOf(amcId: number, asOfDate: string): Promise<
 export interface RatioSection {
   sdLevel: number | null; // Z-score of today's own ratio vs its historical mean
   upsideToMeanPct: number | null; // "Upside %" at ratioBasis "mean"
+  // The price implied by the ratio reverting to its own historical mean
+  // (mean ratio * avg AUM) -- the same figure the Stock Correlation tab
+  // exposes as ComputedRow.fairValuePriceInr at ratioBasis "mean". Was
+  // already computed here to derive upsideToMeanPct above but discarded;
+  // now exposed directly for the Ratio card's own "Mean Target Price" row.
+  fairValueAtMeanInr: number | null;
   correlationPct: number | null;
   rSquared: number | null;
   timePeriodLabel: string; // e.g. "3 Years" -- from the shared Stock Correlation range setting
@@ -328,6 +347,7 @@ function computeRatioSection(
   return {
     sdLevel,
     upsideToMeanPct,
+    fairValueAtMeanInr: fairValueAtMean,
     correlationPct: corrStats?.r ?? null,
     rSquared: corrStats?.r2 ?? null,
     timePeriodLabel: RANGE_LABELS[settings.range] ?? settings.range,
@@ -489,6 +509,75 @@ export async function setSipIndustryShowEstimate(enabled: boolean): Promise<void
     .insert(appSettings)
     .values({ key: SIP_INDUSTRY_SHOW_ESTIMATE_KEY, value: "true" })
     .onConflictDoUpdate({ target: appSettings.key, set: { value: "true", updatedAt: new Date() } });
+}
+
+// ---------------------------------------------------------------------
+// Overview card: 5-tier verdict thresholds -- a single GLOBAL, persisted
+// setting (same app_settings mechanism as the SIP Industry settings above)
+// applying uniformly across all 8 AMCs. Analyst-editable (not hardcoded):
+// 4 boundary numbers on Base-case Target Price upside % that carve it into
+// Buy / Accumulate / Hold / Reduce / Sell bands, each strictly above the
+// next (buyMinPct > accumulateMinPct > holdMinPct > reduceMinPct).
+// ---------------------------------------------------------------------
+
+export interface VerdictThresholds {
+  buyMinPct: number; // upside > this -> Buy
+  accumulateMinPct: number; // upside > this (<= buyMinPct) -> Accumulate
+  holdMinPct: number; // upside > this (<= accumulateMinPct) -> Hold
+  reduceMinPct: number; // upside > this (<= holdMinPct) -> Reduce; else Sell
+}
+
+const DEFAULT_VERDICT_THRESHOLDS: VerdictThresholds = {
+  buyMinPct: 0.25,
+  accumulateMinPct: 0.1,
+  holdMinPct: -0.05,
+  reduceMinPct: -0.15,
+};
+
+const VERDICT_THRESHOLD_KEYS: Record<keyof VerdictThresholds, string> = {
+  buyMinPct: "verdict_threshold_buy",
+  accumulateMinPct: "verdict_threshold_accumulate",
+  holdMinPct: "verdict_threshold_hold",
+  reduceMinPct: "verdict_threshold_reduce",
+};
+
+export async function getVerdictThresholds(): Promise<VerdictThresholds> {
+  const keys = Object.values(VERDICT_THRESHOLD_KEYS);
+  const rows = await db.select().from(appSettings).where(inArray(appSettings.key, keys));
+  const byKey = new Map(rows.map((r) => [r.key, r.value]));
+  const resolve = (field: keyof VerdictThresholds) => {
+    const stored = byKey.get(VERDICT_THRESHOLD_KEYS[field]);
+    return stored !== undefined ? Number(stored) : DEFAULT_VERDICT_THRESHOLDS[field];
+  };
+  return {
+    buyMinPct: resolve("buyMinPct"),
+    accumulateMinPct: resolve("accumulateMinPct"),
+    holdMinPct: resolve("holdMinPct"),
+    reduceMinPct: resolve("reduceMinPct"),
+  };
+}
+
+export async function setVerdictThresholds(thresholds: VerdictThresholds): Promise<void> {
+  const fields = Object.keys(VERDICT_THRESHOLD_KEYS) as (keyof VerdictThresholds)[];
+  await Promise.all(
+    fields.map((field) => {
+      const value = String(thresholds[field]);
+      return db
+        .insert(appSettings)
+        .values({ key: VERDICT_THRESHOLD_KEYS[field], value })
+        .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } });
+    })
+  );
+}
+
+/** Auto-suggests a verdict from the Base-case Target Price upside % against the global thresholds -- null if upside isn't computable (e.g. no CMP or no manual valuation inputs yet). */
+export function computeAutoVerdict(baseUpsidePct: number | null, thresholds: VerdictThresholds): VerdictTier | null {
+  if (baseUpsidePct === null) return null;
+  if (baseUpsidePct > thresholds.buyMinPct) return "buy";
+  if (baseUpsidePct > thresholds.accumulateMinPct) return "accumulate";
+  if (baseUpsidePct > thresholds.holdMinPct) return "hold";
+  if (baseUpsidePct > thresholds.reduceMinPct) return "reduce";
+  return "sell";
 }
 
 // One extra, clearly-marked row each SIP Industry card can show (when
@@ -754,6 +843,8 @@ export interface FortnightlySheet {
   amcScoreAvailableDates: string[];
   manual: FortnightlyManualFields;
   valuation: ValuationBlock;
+  verdictThresholds: VerdictThresholds;
+  autoVerdict: VerdictTier | null;
 }
 
 // Local copy of the same read compute-live-aum.ts/overview-adjustments.ts/
@@ -779,30 +870,33 @@ export async function getFortnightlySheet(
 
   const [listedStock] = await db.select().from(amcListedStock).where(eq(amcListedStock.amcId, amcId));
 
-  const [savedRow, cmpInr, aumHistory, priceByIsin, correlationSettings, sipIndustryAuto, sipIndustryQuarterlyAuto] = await Promise.all([
-    db
-      .select()
-      .from(amcFortnightlyUpdate)
-      .where(and(eq(amcFortnightlyUpdate.amcId, amcId), eq(amcFortnightlyUpdate.asOfDate, asOfDate)))
-      .then((rows) => rows[0] ?? null),
-    getEodPriceAsOf(amcId, asOfDate),
-    getAmcAumHistory(amcId),
-    // Scoped to just THIS AMC's own isin -- getAmcStockCorrelationData()
-    // fetches all 8 AMCs at once (built for the Stock Correlation tab,
-    // which shows all 8 side by side); reusing it here cost ~10s per
-    // request (profiled), almost all wasted on the other 7 AMCs' history
-    // this tab never uses.
-    listedStock
-      ? getAmcListedStockPriceHistoryForIsins([listedStock.isin], new Map([[listedStock.isin, listedStock.backfillFromDate]]))
-      : Promise.resolve(new Map<string, AmcStockPricePoint[]>()),
-    getStockCorrelationDefaults(),
-    // Both now read a single GLOBAL override (not a per-AMC manual field),
-    // so -- unlike before -- neither depends on `manual` below and both can
-    // join this same Promise.all instead of waiting for it to resolve
-    // first.
-    getSipIndustryAutoValues(),
-    getSipIndustryQuarterlyAutoValues(),
-  ]);
+  const [savedRow, cmpInr, aumHistory, priceByIsin, correlationSettings, sipIndustryAuto, sipIndustryQuarterlyAuto, verdictThresholds] =
+    await Promise.all([
+      db
+        .select()
+        .from(amcFortnightlyUpdate)
+        .where(and(eq(amcFortnightlyUpdate.amcId, amcId), eq(amcFortnightlyUpdate.asOfDate, asOfDate)))
+        .then((rows) => rows[0] ?? null),
+      getEodPriceAsOf(amcId, asOfDate),
+      getAmcAumHistory(amcId),
+      // Scoped to just THIS AMC's own isin -- getAmcStockCorrelationData()
+      // fetches all 8 AMCs at once (built for the Stock Correlation tab,
+      // which shows all 8 side by side); reusing it here cost ~10s per
+      // request (profiled), almost all wasted on the other 7 AMCs' history
+      // this tab never uses.
+      listedStock
+        ? getAmcListedStockPriceHistoryForIsins([listedStock.isin], new Map([[listedStock.isin, listedStock.backfillFromDate]]))
+        : Promise.resolve(new Map<string, AmcStockPricePoint[]>()),
+      getStockCorrelationDefaults(),
+      // Both now read a single GLOBAL override (not a per-AMC manual field),
+      // so -- unlike before -- neither depends on `manual` below and both can
+      // join this same Promise.all instead of waiting for it to resolve
+      // first.
+      getSipIndustryAutoValues(),
+      getSipIndustryQuarterlyAutoValues(),
+      // Also a global setting, independent of `manual` -- joins here too.
+      getVerdictThresholds(),
+    ]);
 
   const manual = savedRow ? rowToManualFields(savedRow) : EMPTY_MANUAL;
 
@@ -841,6 +935,7 @@ export async function getFortnightlySheet(
     : null;
 
   const valuation = computeValuationBlock(manual, cmpInr);
+  const autoVerdict = computeAutoVerdict(valuation.fy28UpsidePct.base, verdictThresholds);
 
   const defaultFyQ = getFiscalYearAndQuarter(asOfDate);
   const sipAmcLatestFy = manual.sipAmcLatestFy ?? defaultFyQ.fy;
@@ -865,5 +960,7 @@ export async function getFortnightlySheet(
     amcScoreAvailableDates,
     manual,
     valuation,
+    verdictThresholds,
+    autoVerdict,
   };
 }

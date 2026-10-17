@@ -4,6 +4,7 @@ import {
   getFortnightlySheet,
   saveFortnightlyField,
   MANUAL_FIELD_NAMES,
+  VERDICT_TIERS,
   type FortnightlyFieldName,
 } from "@/lib/aum/fortnightly-update";
 
@@ -30,6 +31,11 @@ export const GET = withErrorHandling(async (request: Request) => {
 const DATE_FIELD_NAMES: readonly string[] = ["amcScoreAnchorDate"];
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+// The Overview card's two text fields -- summary is free-form (length-
+// capped so an unbounded paste can't bloat the row), verdictOverride is
+// enum-checked against the 5-tier scale.
+const SUMMARY_MAX_LENGTH = 4000;
+
 // POST { amcId, asOfDate, field, value: number | string | null } -- saves
 // one manual cell, same per-field upsert shape as the net-flow override
 // route. No auth gate, per the user's explicit choice for this feature.
@@ -50,6 +56,19 @@ export const POST = withErrorHandling(async (request: Request) => {
   let value: number | string | null;
   if (rawValue === null) {
     value = null;
+  } else if (field === "summary") {
+    if (typeof rawValue !== "string") {
+      return NextResponse.json({ error: "summary must be a string or null" }, { status: 400 });
+    }
+    if (rawValue.length > SUMMARY_MAX_LENGTH) {
+      return NextResponse.json({ error: `summary must be ${SUMMARY_MAX_LENGTH} characters or fewer` }, { status: 400 });
+    }
+    value = rawValue;
+  } else if (field === "verdictOverride") {
+    if (typeof rawValue !== "string" || !(VERDICT_TIERS as readonly string[]).includes(rawValue)) {
+      return NextResponse.json({ error: `verdictOverride must be one of ${VERDICT_TIERS.join(", ")}, or null` }, { status: 400 });
+    }
+    value = rawValue;
   } else if (DATE_FIELD_NAMES.includes(field)) {
     if (typeof rawValue !== "string" || !DATE_PATTERN.test(rawValue)) {
       return NextResponse.json({ error: `${field} must be a YYYY-MM-DD date string or null` }, { status: 400 });

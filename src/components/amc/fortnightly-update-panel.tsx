@@ -6,11 +6,12 @@ import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EditNumberCell } from "./edit-number-cell";
+import { EditTextareaCell } from "./edit-textarea-cell";
 import { FortnightlyDownloadPanel } from "./fortnightly-download-panel";
 import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
 import { useFortnightlyEligibleAmcs, useFortnightlySheet } from "@/hooks/use-fortnightly-update";
 import { formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
-import type { FortnightlyFieldName, FortnightlySheet, ScenarioValues } from "@/lib/aum/fortnightly-update";
+import { VERDICT_TIERS, type FortnightlyFieldName, type FortnightlySheet, type ScenarioValues, type VerdictThresholds, type VerdictTier } from "@/lib/aum/fortnightly-update";
 
 const selectClass =
   "min-w-0 max-w-[260px] rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
@@ -124,6 +125,26 @@ function saveSipIndustryShowEstimate(enabled: boolean) {
     .catch((err) => toast.error(err instanceof Error ? err.message : "Failed to save estimate toggle"));
 }
 
+// Saves the Overview card's single GLOBAL 5-tier verdict thresholds (see
+// src/lib/aum/fortnightly-update.ts's getVerdictThresholds) -- applies to
+// every AMC's auto-suggested verdict at once, same global-setting
+// invalidation pattern as the SIP Industry toggles above.
+function saveVerdictThresholds(thresholds: VerdictThresholds) {
+  fetch("/api/verdict-thresholds", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(thresholds),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to save");
+      }
+      await revalidateAllFortnightlySheets();
+    })
+    .catch((err) => toast.error(err instanceof Error ? err.message : "Failed to save verdict thresholds"));
+}
+
 // Whole crores, no decimals -- scoped to just this tab (per user request),
 // NOT the shared formatCr() used everywhere else in the app (same
 // precedent as summary-panel.tsx's own local formatCrRounded).
@@ -175,6 +196,19 @@ function PctCell({ value, className }: { value: number | null; className?: strin
       {formatPct(value, { alwaysSign: true })}
     </TableCell>
   );
+}
+
+// SIP/Equity AUM is a LEVEL (always positive), not a growth rate, so
+// PctCell's sign-based green/red can't apply to it -- instead each row is
+// colored by comparing it to the QTD (current) row's own value: green if
+// that period's ratio was higher than now, red if lower, left at the
+// default blue manual-input fill if equal (including the QTD row
+// compared to itself). Reuses PctCell's own hex values for consistency.
+function sipEquityAumColorClass(pct: number | null, qtdPct: number | null): string | undefined {
+  if (pct === null || qtdPct === null || pct === qtdPct) return undefined;
+  return pct > qtdPct
+    ? "bg-[#C6EFCE] text-[#006100] dark:bg-[#0d3b2b] dark:text-[#6ee7b7]"
+    : "bg-[#FFC7CE] text-[#9C0006] dark:bg-[#4c1113] dark:text-[#fca5a5]";
 }
 
 function PriceCell({ value }: { value: number | null }) {
@@ -348,12 +382,18 @@ function ManualCell({
   title,
   decimals,
   suffix,
+  inputClassName,
 }: {
   value: number | null;
   onSave: (v: number | null) => Promise<void>;
   title?: string;
   decimals?: number;
   suffix?: string;
+  // Lets a specific call site theme the input's background (e.g. the SIP
+  // AMC Growth card's conditional coloring on "SIP/Equity AUM") without
+  // affecting every other ManualCell in the app; defaults to the usual
+  // blue manual-input fill.
+  inputClassName?: string;
 }) {
   return (
     <EditNumberCell
@@ -362,7 +402,7 @@ function ManualCell({
       onSave={onSave}
       title={title}
       decimals={decimals}
-      inputClassName={INPUT_CELL_CLASS}
+      inputClassName={inputClassName ?? INPUT_CELL_CLASS}
       suffix={suffix}
     />
   );
@@ -468,6 +508,234 @@ function ScenarioEditRow({
   );
 }
 
+// Deterministic (no AI/LLM call) draft for the Overview card's writeup --
+// string-interpolates this AMC's own already-computed figures from every
+// other card into a short bulleted summary. Only ever runs when the
+// analyst explicitly clicks "Regenerate from data" -- never auto-fills or
+// silently overwrites whatever's already in the box.
+function generateOverviewDraft(sheet: FortnightlySheet): string {
+  const m = sheet.manual;
+  const bullets: string[] = [];
+
+  const qaaumLatest = sheet.qaaum[0];
+  if (qaaumLatest) {
+    bullets.push(
+      `• QAAUM: ${qaaumLatest.valCr === null ? "—" : formatCrRounded(qaaumLatest.valCr)} in ${qaaumLatest.label}, ` +
+        `${qaaumLatest.qoqPct == null ? "—" : formatPct(qaaumLatest.qoqPct, { alwaysSign: true })} QoQ, ` +
+        `${qaaumLatest.yoyPct == null ? "—" : formatPct(qaaumLatest.yoyPct, { alwaysSign: true })} YoY`
+    );
+  }
+
+  const sipQoq =
+    m.sipAmcPrevQValCr !== null && m.sipAmcQtdValCr !== null && m.sipAmcPrevQValCr !== 0 ? m.sipAmcQtdValCr / m.sipAmcPrevQValCr - 1 : null;
+  const sipYoy =
+    m.sipAmcYoyQValCr !== null && m.sipAmcQtdValCr !== null && m.sipAmcYoyQValCr !== 0 ? m.sipAmcQtdValCr / m.sipAmcYoyQValCr - 1 : null;
+  bullets.push(
+    `• SIP flows: ${m.sipAmcQtdValCr === null ? "—" : formatCrRounded(m.sipAmcQtdValCr)}, ` +
+      `${sipQoq === null ? "—" : formatPct(sipQoq, { alwaysSign: true })} QoQ, ` +
+      `${sipYoy === null ? "—" : formatPct(sipYoy, { alwaysSign: true })} YoY — SIP/Equity AUM at ` +
+      `${m.sipAmcQtdPct === null ? "—" : formatPct(m.sipAmcQtdPct)} ` +
+      `(${m.sipAmcPrevQPct === null ? "—" : formatPct(m.sipAmcPrevQPct)} prior quarter)`
+  );
+
+  if (sheet.ratio) {
+    const direction = (sheet.ratio.sdLevel ?? 0) >= 0 ? "above" : "below";
+    bullets.push(
+      `• Price/AUM ratio: ${sheet.ratio.sdLevel === null ? "—" : Math.abs(sheet.ratio.sdLevel).toFixed(2)}σ ${direction} historical mean — ` +
+        `${sheet.ratio.upsideToMeanPct === null ? "—" : formatPct(sheet.ratio.upsideToMeanPct, { alwaysSign: true })} upside to mean-reversion target ` +
+        `${sheet.ratio.fairValueAtMeanInr === null ? "—" : formatPriceInr(sheet.ratio.fairValueAtMeanInr)} ` +
+        `(${sheet.ratio.correlationPct === null ? "—" : formatPct(sheet.ratio.correlationPct)} correlation, ` +
+        `R² ${sheet.ratio.rSquared === null ? "—" : formatPct(sheet.ratio.rSquared)})`
+    );
+  }
+
+  const score = sheet.amcScore?.rows[0]?.score ?? null;
+  bullets.push(`• AMC Score: ${score === null ? "—" : score.toFixed(2)}/100`);
+
+  const targetPriceBase = sheet.valuation.fy28TargetPriceInr.base;
+  const upsideBase = sheet.valuation.fy28UpsidePct.base;
+  bullets.push(
+    `• Valuation: Base-case Target PE ${m.targetPeBase === null ? "—" : m.targetPeBase}x FY28E PAT → Target Price ` +
+      `${targetPriceBase === null ? "—" : formatPriceInr(targetPriceBase)}, ` +
+      `${upsideBase === null ? "—" : formatPct(upsideBase, { alwaysSign: true })} upside from CMP ` +
+      `${sheet.cmpInr === null ? "—" : formatPriceInr(sheet.cmpInr)}`
+  );
+
+  const effectiveVerdict = m.verdictOverride ?? sheet.autoVerdict;
+  bullets.push(`• Verdict: ${effectiveVerdict === null ? "—" : effectiveVerdict.toUpperCase()}`);
+
+  return bullets.join("\n");
+}
+
+const VERDICT_LABELS: Record<VerdictTier, string> = {
+  buy: "BUY",
+  accumulate: "ACCUMULATE",
+  hold: "HOLD",
+  reduce: "REDUCE",
+  sell: "SELL",
+};
+
+// Graded 5-tier scale -- Buy/Sell at full saturation, Accumulate/Reduce at
+// the same lighter PctCell-style tints used throughout this tab, Hold in a
+// neutral amber (distinct from both the green and red families).
+const VERDICT_PILL_CLASS: Record<VerdictTier, string> = {
+  buy: "bg-[#15803d] text-white dark:bg-[#16a34a] dark:text-[#052e16]",
+  accumulate: "bg-[#C6EFCE] text-[#006100] dark:bg-[#0d3b2b] dark:text-[#6ee7b7]",
+  hold: "bg-[#FEF3C7] text-[#92400E] dark:bg-[#3a2e05] dark:text-[#fcd34d]",
+  reduce: "bg-[#fed7aa] text-[#9a3412] dark:bg-[#4a2310] dark:text-[#fdba74]",
+  sell: "bg-[#FFC7CE] text-[#9C0006] dark:bg-[#4c1113] dark:text-[#fca5a5]",
+};
+
+// A single global threshold's inline, commit-on-blur number input --
+// deliberately NOT EditNumberCell (which renders its own <TableCell>, only
+// valid inside a <Table>) since the Overview card is a plain flex/grid
+// layout, not a table. Displays/accepts a whole percentage (e.g. 25), but
+// stores/sends the underlying fraction (0.25) like every other pct field.
+function ThresholdInput({
+  valuePct,
+  onCommit,
+}: {
+  valuePct: number;
+  onCommit: (newPct: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(valuePct));
+  const [prev, setPrev] = useState(valuePct);
+  if (valuePct !== prev) {
+    setPrev(valuePct);
+    setDraft(String(valuePct));
+  }
+  return (
+    <input
+      type="number"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const parsed = Number(draft);
+        if (Number.isFinite(parsed) && parsed !== valuePct) onCommit(parsed);
+        else setDraft(String(valuePct));
+      }}
+      className="w-14 rounded border border-dashed border-white/40 bg-white/10 px-1.5 py-0.5 text-right text-xs tabular-nums text-white focus:border-white focus:bg-white/20 focus:outline-none"
+    />
+  );
+}
+
+function OverviewCard({
+  sheet,
+  onSave,
+}: {
+  sheet: FortnightlySheet;
+  onSave: (field: FortnightlyFieldName, value: number | string | null) => Promise<void>;
+}) {
+  const [regenerating, setRegenerating] = useState(false);
+  const t = sheet.verdictThresholds;
+  const effectiveVerdict = sheet.manual.verdictOverride ?? sheet.autoVerdict;
+
+  function updateThreshold(field: keyof VerdictThresholds, newPct: number) {
+    saveVerdictThresholds({ ...t, [field]: newPct / 100 });
+  }
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    try {
+      await onSave("summary", generateOverviewDraft(sheet));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to regenerate summary");
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <div
+        className="flex flex-wrap items-end justify-between gap-4 px-5 py-4 text-white"
+        style={{ background: "linear-gradient(120deg, #0f172a, #1e3a8a)" }}
+      >
+        <div>
+          <div className="text-lg font-extrabold">{sheet.overviewName}</div>
+          <div className="mt-0.5 text-xs text-slate-300">
+            As of {formatShortDate(sheet.asOfDate)} · CMP {sheet.cmpInr === null ? "—" : formatPriceInr(sheet.cmpInr)}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-end gap-6">
+          <div className="text-right">
+            <div className="text-[10.5px] font-bold uppercase tracking-wide text-blue-300">Target Price (Base)</div>
+            <div className="text-base font-bold tabular-nums">
+              {sheet.valuation.fy28TargetPriceInr.base === null ? "—" : formatPriceInr(sheet.valuation.fy28TargetPriceInr.base)}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-[10.5px] font-bold uppercase tracking-wide text-blue-300">Upside</div>
+            <div className="text-base font-bold tabular-nums" style={{ color: (sheet.valuation.fy28UpsidePct.base ?? 0) >= 0 ? "#86efac" : "#fca5a5" }}>
+              {sheet.valuation.fy28UpsidePct.base === null ? "—" : formatPct(sheet.valuation.fy28UpsidePct.base, { alwaysSign: true })}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-[10.5px] font-bold uppercase tracking-wide text-blue-300">Target Period</div>
+            <div className="text-sm font-semibold">FY28E</div>
+          </div>
+          <div className="flex flex-col items-end gap-1">
+            <div className="text-[10.5px] font-bold uppercase tracking-wide text-blue-300">Verdict</div>
+            <span className={`rounded-full px-3 py-1 text-xs font-extrabold tracking-wide ${effectiveVerdict ? VERDICT_PILL_CLASS[effectiveVerdict] : "bg-white/20 text-white"}`}>
+              {effectiveVerdict ? VERDICT_LABELS[effectiveVerdict] : "—"}
+            </span>
+            <select
+              value={sheet.manual.verdictOverride ?? ""}
+              onChange={(e) => onSave("verdictOverride", e.target.value === "" ? null : e.target.value)}
+              className="rounded border border-dashed border-white/40 bg-white/10 px-1.5 py-0.5 text-[11px] text-white focus:border-white focus:outline-none"
+              title="Auto-suggested from the Base-case upside %; pick to override"
+            >
+              <option value="" className="text-black">
+                Auto ({sheet.autoVerdict ? VERDICT_LABELS[sheet.autoVerdict] : "—"})
+              </option>
+              {VERDICT_TIERS.map((tier) => (
+                <option key={tier} value={tier} className="text-black">
+                  Override: {VERDICT_LABELS[tier]}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-muted/30 px-5 py-2 text-[11px] text-muted-foreground">
+        <span>Thresholds on Base-case upside:</span>
+        <span>
+          Buy &gt; <ThresholdInput valuePct={Math.round(t.buyMinPct * 100)} onCommit={(v) => updateThreshold("buyMinPct", v)} />%
+        </span>
+        <span>
+          Accumulate &gt; <ThresholdInput valuePct={Math.round(t.accumulateMinPct * 100)} onCommit={(v) => updateThreshold("accumulateMinPct", v)} />%
+        </span>
+        <span>
+          Hold &gt; <ThresholdInput valuePct={Math.round(t.holdMinPct * 100)} onCommit={(v) => updateThreshold("holdMinPct", v)} />%
+        </span>
+        <span>
+          Reduce &gt; <ThresholdInput valuePct={Math.round(t.reduceMinPct * 100)} onCommit={(v) => updateThreshold("reduceMinPct", v)} />%
+        </span>
+        <span>else Sell · applies to all 8 AMCs</span>
+      </div>
+      <div className="px-5 py-4">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Analyst Summary (editable)</span>
+          <button
+            type="button"
+            onClick={handleRegenerate}
+            disabled={regenerating}
+            className="rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            title="Replaces this text with a fresh draft built from every other card's current figures"
+          >
+            {regenerating ? "Regenerating…" : "↻ Regenerate from data"}
+          </button>
+        </div>
+        <EditTextareaCell
+          value={sheet.manual.summary}
+          onSave={(v) => onSave("summary", v)}
+          placeholder='Click "Regenerate from data" for an auto-drafted starting point, or write your own.'
+        />
+      </div>
+    </div>
+  );
+}
+
 function FortnightlySheetView({
   sheet,
   onSave,
@@ -480,6 +748,9 @@ function FortnightlySheetView({
 
   return (
     <div className="space-y-4">
+      {/* Overview: leads with the verdict banner, above every other card */}
+      <OverviewCard sheet={sheet} onSave={onSave} />
+
       {/* Row 1: Stock/CMP/Shares + PAT/CAGR */}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="overflow-hidden rounded-lg border bg-card">
@@ -578,11 +849,11 @@ function FortnightlySheetView({
           </Table>
         </div>
 
-        {/* Quarterly Averages (QAAUM) -- pulled, read-only */}
+        {/* MTM Growth - QAAUM -- pulled, read-only */}
         <div className="overflow-hidden rounded-lg border bg-card">
           <Table className={TABLE_TEXT_CLASS}>
             <TableBody>
-              <SectionBanner title="Quarterly Averages — QAAUM" colSpan={4} />
+              <SectionBanner title="MTM Growth - QAAUM" colSpan={4} />
               <TableRow>
                 <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
                 <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Val (Cr)</TableCell>
@@ -629,6 +900,9 @@ function FortnightlySheetView({
               </LabelRow>
               <LabelRow label="Upside to Mean">
                 <PctCell value={sheet.ratio?.upsideToMeanPct ?? null} />
+              </LabelRow>
+              <LabelRow label="Mean Target Price">
+                <PriceCell value={sheet.ratio?.fairValueAtMeanInr ?? null} />
               </LabelRow>
               <LabelRow label="Time Period">
                 <TableCell className="text-right">{sheet.ratio?.timePeriodLabel ?? "—"}</TableCell>
@@ -740,8 +1014,9 @@ function SipAmcGrowthTable({
               <ManualCell
                 value={row.pct !== null ? row.pct * 100 : null}
                 onSave={(v) => onSave(row.pctField, v === null ? null : v / 100)}
-                title="SIP as a % of this period's Equity AUM"
+                title="SIP as a % of this period's Equity AUM -- colored vs. the Latest Available Quarter's own ratio"
                 suffix="%"
+                inputClassName={sipEquityAumColorClass(row.pct, rows[0].pct)}
               />
             </TableRow>
           ))}

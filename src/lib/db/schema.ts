@@ -794,6 +794,16 @@ export const amcFortnightlyUpdate = pgTable(
     // no-carry-forward rule as the SIP Industry anchor overrides above;
     // null falls back to the latest snapshot date available for this AMC.
     amcScoreAnchorDate: date("amc_score_anchor_date"),
+    // The Overview card's analyst-written writeup -- free text, carried
+    // forward on a new snapshot like every other manual field. Populated
+    // either by hand or via the "Regenerate from data" button's
+    // deterministic (non-AI) template; never silently auto-written.
+    summary: text("summary"),
+    // Manual override of the Overview card's Buy/Accumulate/Hold/Reduce/
+    // Sell verdict -- null means "follow the auto-suggestion" computed
+    // from this snapshot's own Base-case Target Price upside % against the
+    // global verdict_thresholds setting (see appSettings below).
+    verdictOverride: text("verdict_override"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("amc_fortnightly_update_amc_date_idx").on(t.amcId, t.asOfDate)]

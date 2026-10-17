@@ -139,10 +139,22 @@ export function FortnightlyDownloadPanel() {
             // and the Excel export's writePct -- autoTable has no per-cell
             // "kind" of its own, so detect it from the already-formatted
             // "+12.34%"/"-1.23%" string instead of threading extra metadata
-            // through buildFortnightlyExportSections just for this.
+            // through buildFortnightlyExportSections just for this. The
+            // section's own cellColors (e.g. SIP/Equity AUM, a LEVEL that's
+            // always positive and needs a comparison-based rule instead of
+            // sign-based) take priority when present, since the sign-based
+            // regex would otherwise mark that column always-green.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             didParseCell: (data: any) => {
               if (data.section !== "body") return;
+              const override = section.cellColors?.[data.row.index]?.[data.column.index];
+              if (override) {
+                const positive = override === "pos";
+                data.cell.styles.fillColor = positive ? POS_RGB : NEG_RGB;
+                data.cell.styles.textColor = positive ? POS_TEXT_RGB : NEG_TEXT_RGB;
+                data.cell.styles.fontStyle = "bold";
+                return;
+              }
               const text = String(data.cell.raw ?? "").trim();
               if (/^[+-]?\d[\d,.]*%$/.test(text)) {
                 const positive = !text.startsWith("-");

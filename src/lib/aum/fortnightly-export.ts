@@ -9,6 +9,14 @@ import type { FortnightlySheet, ScenarioValues } from "./fortnightly-update";
 export interface ExportSection {
   title: string;
   rows: string[][]; // first row is the header row
+  // Optional per-body-cell color override, keyed by body row index then
+  // column index (index 0 = the first row AFTER the header, matching
+  // jspdf-autotable's own body row/column indices) -- used only where a
+  // column's color can't be inferred from its own formatted text (e.g.
+  // SIP/Equity AUM, a LEVEL that's always positive, needing a comparison-
+  // based rule instead of the default sign-based "+"/"-" detector). Sparse:
+  // a row/col with no entry here falls through to that default detector.
+  cellColors?: Record<number, Record<number, "pos" | "neg">>;
 }
 
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : formatPct(v, { alwaysSign: true }));
@@ -54,6 +62,25 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   const m = sheet.manual;
   const v = sheet.valuation;
 
+  const effectiveVerdict = m.verdictOverride ?? sheet.autoVerdict;
+  const overview: ExportSection = {
+    title: "Overview",
+    rows: [
+      ["Metric", "Value"],
+      ["CMP", price(sheet.cmpInr)],
+      ["Target Price (Base)", price(v.fy28TargetPriceInr.base)],
+      ["Upside (Base)", pct(v.fy28UpsidePct.base)],
+      ["Target Period", "FY28E"],
+      ["Verdict", effectiveVerdict ? effectiveVerdict.toUpperCase() : "—"],
+      // Free text -- an analyst's own note, or the "Regenerate from data"
+      // draft, can contain a literal ₹ (the draft's own template does).
+      // jsPDF's Helvetica font has no ₹ glyph (see price()/cr() above) --
+      // swap it for "Rs." here too, PDF-only; the live UI and the Excel
+      // export both keep the real m.summary value untouched.
+      ["Summary", (m.summary ?? "—").replace(/₹/g, "Rs.")],
+    ],
+  };
+
   const header: ExportSection = {
     title: `${sheet.overviewName} — as of ${formatShortDate(sheet.asOfDate)}`,
     rows: [
@@ -93,7 +120,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   };
 
   const qaaum: ExportSection = {
-    title: "Quarterly Averages — QAAUM",
+    title: "MTM Growth - QAAUM",
     rows: [
       ["Period", "Val (Cr)", "QoQ", "YoY"],
       ...sheet.qaaum.map((r) => [r.label, cr(r.valCr), pct(r.qoqPct ?? null), pct(r.yoyPct ?? null)]),
@@ -108,6 +135,17 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     [`Last Year Same Quarter (${sheet.sipAmcLabels.yoyQ2})`, m.sipAmcYoyQ2ValCr, m.sipAmcYoyQ2Pct],
   ];
   const sipAmcRatios = periodRatios(sipAmcRows.map(([, val]) => val));
+  // SIP/Equity AUM is a LEVEL, not a growth rate -- color column index 4
+  // by comparing it to the Latest Available Quarter's (row 0) own ratio,
+  // same rule as the live tab's sipEquityAumColorClass, instead of the
+  // sign-based default (which would mark this always-positive column
+  // always-green).
+  const sipAmcQtdPct = sipAmcRows[0][2];
+  const sipAmcCellColors: Record<number, Record<number, "pos" | "neg">> = {};
+  sipAmcRows.forEach(([, , p], i) => {
+    if (p === null || sipAmcQtdPct === null || p === sipAmcQtdPct) return;
+    sipAmcCellColors[i] = { 4: p > sipAmcQtdPct ? "pos" : "neg" };
+  });
   const sipAmc: ExportSection = {
     title: "SIP AMC Growth",
     rows: [
@@ -120,6 +158,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
         p === null ? "—" : pct(p),
       ]),
     ],
+    cellColors: sipAmcCellColors,
   };
 
   const withPeriod = (base: string, period: string | undefined) => (period ? `${base} (${period})` : base);
@@ -187,6 +226,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     rows: [
       ["SD Level", sheet.ratio?.sdLevel === null || sheet.ratio?.sdLevel === undefined ? "—" : sheet.ratio.sdLevel.toFixed(2)],
       ["Upside to Mean", pct(sheet.ratio?.upsideToMeanPct ?? null)],
+      ["Mean Target Price", price(sheet.ratio?.fairValueAtMeanInr ?? null)],
       ["Time Period", sheet.ratio?.timePeriodLabel ?? "—"],
       ["Avg AUM Days", sheet.ratio ? `${sheet.ratio.avgAumDays} Days` : "—"],
       ["Correlation", pct(sheet.ratio?.correlationPct ?? null)],
@@ -202,7 +242,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     ],
   };
 
-  return [header, pat, valuation, qaaum, sipAmc, sipIndustryQuarterly, sipIndustryMonthly, ratio, amcScore];
+  return [header, overview, pat, valuation, qaaum, sipAmc, sipIndustryQuarterly, sipIndustryMonthly, ratio, amcScore];
 }
 
 // ---------------------------------------------------------------------
@@ -264,6 +304,31 @@ function writeNum(ws: Worksheet, row: number, col: number, value: number | null,
   if (input) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_FILL } };
 }
 
+// SIP/Equity AUM is a LEVEL (always positive), not a growth rate, so
+// writePct's sign-based green/red can't apply -- same comparison-to-QTD
+// rule as the live tab's own sipEquityAumColorClass (fortnightly-update-
+// panel.tsx): green if this period's ratio is higher than the Latest
+// Available Quarter's own ratio, red if lower, the usual blue input fill
+// if equal (including the QTD row itself).
+function writeConditionalPctInput(ws: Worksheet, row: number, col: number, value: number | null, qtdValue: number | null): void {
+  const cell = ws.getCell(row, col);
+  if (value === null) {
+    cell.value = "—";
+    cell.alignment = { horizontal: "right" };
+    return;
+  }
+  cell.value = value;
+  cell.numFmt = "0.0%";
+  cell.alignment = { horizontal: "right" };
+  if (qtdValue === null || value === qtdValue) {
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_FILL } };
+    return;
+  }
+  const positive = value > qtdValue;
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: positive ? POS_FILL : NEG_FILL } };
+  cell.font = { bold: true, color: { argb: positive ? POS_FONT : NEG_FONT } };
+}
+
 function writePct(ws: Worksheet, row: number, col: number, value: number | null | undefined): void {
   const cell = ws.getCell(row, col);
   if (value === null || value === undefined) {
@@ -317,6 +382,35 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   const v = sheet.valuation;
   let row = 1;
 
+  const effectiveVerdict = m.verdictOverride ?? sheet.autoVerdict;
+  writeBanner(ws, row, "Overview", 5);
+  row++;
+  writeLabel(ws, row, 1, "CMP");
+  writeNum(ws, row, 2, sheet.cmpInr, PRICE_FORMAT);
+  row++;
+  writeLabel(ws, row, 1, "Target Price (Base)");
+  writeNum(ws, row, 2, v.fy28TargetPriceInr.base, PRICE_FORMAT);
+  row++;
+  writeLabel(ws, row, 1, "Upside (Base)");
+  writePct(ws, row, 2, v.fy28UpsidePct.base);
+  row++;
+  writeLabel(ws, row, 1, "Target Period");
+  writeLabel(ws, row, 2, "FY28E");
+  row++;
+  writeLabel(ws, row, 1, "Verdict");
+  writeLabel(ws, row, 2, effectiveVerdict ? effectiveVerdict.toUpperCase() : "—");
+  row++;
+  writeLabel(ws, row, 1, "Summary");
+  {
+    const summaryText = m.summary ?? "—";
+    ws.mergeCells(row, 2, row, 5);
+    const summaryCell = ws.getCell(row, 2);
+    summaryCell.value = summaryText;
+    summaryCell.alignment = { wrapText: true, vertical: "top" };
+    ws.getRow(row).height = Math.max(20, summaryText.split("\n").length * 15);
+  }
+  row += 2;
+
   writeBanner(ws, row, "Stock", 5);
   row++;
   writeLabel(ws, row, 1, "Stock");
@@ -363,7 +457,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   writeScenarioRow(ws, row, "FY26 Upside %", v.fy26UpsidePct, (col, val) => writePct(ws, row, col, val));
   row += 2;
 
-  writeBanner(ws, row, "Quarterly Averages — QAAUM", 4);
+  writeBanner(ws, row, "MTM Growth - QAAUM", 4);
   row++;
   writeHeaderRow(ws, row, ["Period", "Val (Cr)", "QoQ", "YoY"]);
   row++;
@@ -396,9 +490,9 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
     // Raw fraction + Excel's native "%" numFmt (not *100 -- Excel's own
     // percentage format multiplies by 100 for display), matching the tab's
     // own new "%" suffix on this cell and the PDF export's pct() call
-    // below; blue input fill (not green/red) since this isn't a gain/loss
-    // metric, just a manually-entered ratio.
-    writeNum(ws, row, 5, pctVal, "0.0%", true);
+    // below; colored vs. the Latest Available Quarter's own ratio (see
+    // writeConditionalPctInput), not a flat blue input fill.
+    writeConditionalPctInput(ws, row, 5, pctVal, sipAmcRows[0][2]);
     row++;
   });
   row++;
@@ -468,6 +562,9 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   row++;
   writeLabel(ws, row, 1, "Upside to Mean");
   writePct(ws, row, 2, sheet.ratio?.upsideToMeanPct ?? null);
+  row++;
+  writeLabel(ws, row, 1, "Mean Target Price");
+  writeNum(ws, row, 2, sheet.ratio?.fairValueAtMeanInr ?? null, PRICE_FORMAT);
   row++;
   writeLabel(ws, row, 1, "Time Period");
   writeLabel(ws, row, 2, sheet.ratio?.timePeriodLabel ?? "—");
