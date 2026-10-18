@@ -1,6 +1,6 @@
 import type { Workbook, Worksheet } from "exceljs";
 import { formatPct, formatPriceInr, formatShortDate } from "../utils/format";
-import type { FortnightlySheet, ScenarioValues } from "./fortnightly-update";
+import { parseSummaryRows, type FortnightlySheet, type ScenarioValues } from "./fortnightly-update";
 
 // Shared intermediate representation consumed by both the Excel (xlsx) and
 // PDF (jsPDF/autotable) exporters, so the two can never drift out of sync
@@ -454,19 +454,19 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   writeLabel(ws, row, 1, "Summary");
   row++;
   {
-    // Two-column (bold Label | Detail) rows inside a blue-shaded box (this
-    // app's own manual-input blue, INPUT_FILL / a matching border tone) --
-    // the user's chosen formatting, confirmed via preview. Each stored
-    // line is "• Label: detail"; a line that doesn't match that shape (an
-    // analyst's own free-form note) renders with an empty label, detail
-    // only -- no crash, since this field is free text.
-    const lines = m.summary && m.summary.length > 0 ? m.summary.split("\n") : ["No summary written yet."];
-    const BOX_BORDER_ARGB = "FFA9D2F2";
+    // Two-column (bold Label | Detail) rows inside a dedicated light-blue
+    // box -- lighter than this app's usual manual-input blue (INPUT_FILL),
+    // confirmed via preview after an earlier round of options wasn't light
+    // enough. parseSummaryRows (shared with the live table and the PDF
+    // export) is the single source of truth for "• Label: detail" vs. a
+    // continuation line (e.g. QAAUM's previous-quarter figures, folded
+    // into the same row's detail as an embedded "\n" -- ExcelJS's
+    // wrapText renders that as a 2nd line within the one cell).
+    const rows = parseSummaryRows(m.summary);
+    const SUMMARY_BOX_FILL_ARGB = "FFF5FAFF";
+    const BOX_BORDER_ARGB = "FFD7E8F7";
     const TEXT_ARGB = "FF0B2338";
-    lines.forEach((line, i) => {
-      const match = /^•\s*([^:]+):(.*)$/.exec(line);
-      const label = match ? match[1].trim() : "";
-      const detail = (match ? match[2] : line).trim();
+    rows.forEach((r, i) => {
       const border = {
         top: i === 0 ? ({ style: "thin", color: { argb: BOX_BORDER_ARGB } } as const) : undefined,
         bottom: { style: "thin", color: { argb: BOX_BORDER_ARGB } } as const,
@@ -475,21 +475,26 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
       };
 
       const labelCell = ws.getCell(row, 1);
-      labelCell.value = label;
+      labelCell.value = r.label;
       labelCell.font = { bold: true, color: { argb: TEXT_ARGB } };
       labelCell.alignment = { vertical: "top", wrapText: true };
-      labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_FILL } };
+      labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SUMMARY_BOX_FILL_ARGB } };
       labelCell.border = border;
 
       ws.mergeCells(row, 2, row, 5);
       const detailCell = ws.getCell(row, 2);
-      detailCell.value = detail;
+      detailCell.value = r.detail;
       detailCell.font = { color: { argb: TEXT_ARGB } };
       detailCell.alignment = { vertical: "top", wrapText: true };
-      detailCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INPUT_FILL } };
+      detailCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SUMMARY_BOX_FILL_ARGB } };
       detailCell.border = border;
 
-      ws.getRow(row).height = Math.max(16, Math.ceil(detail.length / 70) * 14);
+      // Height accounts for both explicit continuation lines (embedded
+      // "\n") and natural text-wrapping of a long single line, whichever
+      // needs more room.
+      const embeddedLines = r.detail.split("\n").length;
+      const wrappedLines = Math.ceil(r.detail.length / 70);
+      ws.getRow(row).height = Math.max(16, Math.max(embeddedLines, wrappedLines) * 14);
       row++;
     });
   }

@@ -11,7 +11,15 @@ import { FortnightlyDownloadPanel } from "./fortnightly-download-panel";
 import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
 import { useFortnightlyEligibleAmcs, useFortnightlySheet } from "@/hooks/use-fortnightly-update";
 import { formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
-import { VERDICT_TIERS, type FortnightlyFieldName, type FortnightlySheet, type ScenarioValues, type VerdictThresholds, type VerdictTier } from "@/lib/aum/fortnightly-update";
+import {
+  VERDICT_TIERS,
+  parseSummaryRows,
+  type FortnightlyFieldName,
+  type FortnightlySheet,
+  type ScenarioValues,
+  type VerdictThresholds,
+  type VerdictTier,
+} from "@/lib/aum/fortnightly-update";
 
 const selectClass =
   "min-w-0 max-w-[260px] rounded-md border bg-background px-2 py-1 text-sm hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
@@ -550,13 +558,22 @@ function generateOverviewDraft(sheet: FortnightlySheet): string {
   const m = sheet.manual;
   const bullets: string[] = [];
 
+  // QAAUM: both the latest quarter AND the previous quarter get their own
+  // Val/QoQ/YoY line -- sheet.qaaum[1] (the prior quarter) already carries
+  // its own qoqPct/yoyPct (vs. its own prior quarter / year-ago quarter),
+  // same shape as qaaum[0], no new computation needed. The 2nd line has NO
+  // "•" prefix -- parseSummaryRows (fortnightly-update.ts) treats a
+  // non-bulleted line as a continuation of the preceding bullet, folding
+  // it into the SAME row's detail (shown as a 2nd line within one table
+  // cell in the live/PDF/Excel views) rather than a separate bullet.
+  const formatQuarterLine = (q: FortnightlySheet["qaaum"][number]) =>
+    `${q.valCr === null ? "—" : formatCrRounded(q.valCr)} in ${q.label}, ` +
+    `${q.qoqPct == null ? "—" : formatPct(q.qoqPct, { alwaysSign: true })} QoQ, ` +
+    `${q.yoyPct == null ? "—" : formatPct(q.yoyPct, { alwaysSign: true })} YoY`;
   const qaaumLatest = sheet.qaaum[0];
+  const qaaumPrev = sheet.qaaum[1];
   if (qaaumLatest) {
-    bullets.push(
-      `• QAAUM: ${qaaumLatest.valCr === null ? "—" : formatCrRounded(qaaumLatest.valCr)} in ${qaaumLatest.label}, ` +
-        `${qaaumLatest.qoqPct == null ? "—" : formatPct(qaaumLatest.qoqPct, { alwaysSign: true })} QoQ, ` +
-        `${qaaumLatest.yoyPct == null ? "—" : formatPct(qaaumLatest.yoyPct, { alwaysSign: true })} YoY`
-    );
+    bullets.push(`• QAAUM: ${formatQuarterLine(qaaumLatest)}` + (qaaumPrev ? `\n${formatQuarterLine(qaaumPrev)}` : ""));
   }
 
   const sipQoq =
@@ -669,8 +686,42 @@ function ThresholdInput({
         if (Number.isFinite(parsed) && parsed !== valuePct) onCommit(parsed);
         else setDraft(String(valuePct));
       }}
-      className="w-14 rounded border border-dashed border-white/40 bg-white/10 px-1.5 py-0.5 text-right text-xs tabular-nums text-white focus:border-white focus:bg-white/20 focus:outline-none"
+      className="w-14 rounded border border-dashed bg-background px-1.5 py-0.5 text-right text-xs tabular-nums text-foreground hover:border-foreground/40 focus:border-foreground/60 focus:outline-none"
     />
+  );
+}
+
+// Read-only, bold-Label/Detail table matching the PDF/Excel Summary box
+// exactly (same #f5faff fill / #d7e8f7 border, confirmed shade) -- shown
+// by default; clicking it swaps in the editable textarea (see
+// OverviewCard's editingSummary state). Uses the same parseSummaryRows
+// shared with both exports, so a bullet's continuation line (e.g.
+// QAAUM's previous-quarter figures) always renders identically in all 3
+// places: this table, the PDF, and Excel.
+function SummaryTable({ summary, onClick }: { summary: string | null; onClick: () => void }) {
+  const rows = parseSummaryRows(summary);
+  return (
+    <div
+      onClick={onClick}
+      title="Click to edit"
+      className="cursor-text overflow-hidden rounded-md border"
+      style={{ borderColor: "#d7e8f7" }}
+    >
+      {rows.map((row, i) => (
+        <div
+          key={i}
+          className="flex gap-3 px-4 py-2 text-sm"
+          style={{
+            background: "#f5faff",
+            color: "#0b2338",
+            borderBottom: i < rows.length - 1 ? "1px solid #d7e8f7" : undefined,
+          }}
+        >
+          <div className="w-36 shrink-0 font-bold">{row.label}</div>
+          <div className="whitespace-pre-line">{row.detail}</div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -682,6 +733,7 @@ function OverviewCard({
   onSave: (field: FortnightlyFieldName, value: number | string | null) => Promise<void>;
 }) {
   const [regenerating, setRegenerating] = useState(false);
+  const [editingSummary, setEditingSummary] = useState(false);
   const t = sheet.verdictThresholds;
   const effectiveVerdict = sheet.manual.verdictOverride ?? sheet.autoVerdict;
 
@@ -693,6 +745,7 @@ function OverviewCard({
     setRegenerating(true);
     try {
       await onSave("summary", generateOverviewDraft(sheet));
+      setEditingSummary(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to regenerate summary");
     } finally {
@@ -781,11 +834,18 @@ function OverviewCard({
             {regenerating ? "Regenerating…" : "↻ Regenerate from data"}
           </button>
         </div>
-        <EditTextareaCell
-          value={sheet.manual.summary}
-          onSave={(v) => onSave("summary", v)}
-          placeholder='Click "Regenerate from data" for an auto-drafted starting point, or write your own.'
-        />
+        {editingSummary ? (
+          <EditTextareaCell
+            value={sheet.manual.summary}
+            onSave={async (v) => {
+              await onSave("summary", v);
+              setEditingSummary(false);
+            }}
+            placeholder='Click "Regenerate from data" for an auto-drafted starting point, or write your own.'
+          />
+        ) : (
+          <SummaryTable summary={sheet.manual.summary} onClick={() => setEditingSummary(true)} />
+        )}
       </div>
     </div>
   );

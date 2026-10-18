@@ -6,7 +6,7 @@ import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-contex
 import { useFortnightlyEligibleAmcs } from "@/hooks/use-fortnightly-update";
 import { buildFortnightlyExportSections, buildFortnightlySheetExcel, price, pct, sanitizeForPdf } from "@/lib/aum/fortnightly-export";
 import { formatShortDate } from "@/lib/utils/format";
-import type { FortnightlySheet, VerdictTier } from "@/lib/aum/fortnightly-update";
+import { parseSummaryRows, type FortnightlySheet, type VerdictTier } from "@/lib/aum/fortnightly-update";
 
 // ExcelJS has no browser writeFile helper (unlike SheetJS's writeFileXLSX) --
 // write to an in-memory buffer, wrap it in a Blob, and trigger the save via
@@ -44,6 +44,13 @@ const OVERVIEW_SUBTEXT_RGB: [number, number, number] = [203, 213, 225]; // text-
 const UPSIDE_POS_RGB: [number, number, number] = [134, 239, 172]; // #86efac
 const UPSIDE_NEG_RGB: [number, number, number] = [252, 165, 165]; // #fca5a5
 
+// Summary box colors -- a dedicated, much lighter blue than this app's
+// usual manual-input shade (INPUT_FILL/#d7ecff), confirmed via preview
+// after the first round of options wasn't light enough.
+const SUMMARY_BOX_FILL_RGB: [number, number, number] = [245, 250, 255]; // #f5faff
+const SUMMARY_BOX_BORDER_RGB: [number, number, number] = [215, 232, 247]; // #d7e8f7
+const SUMMARY_BOX_TEXT_RGB: [number, number, number] = [11, 35, 56]; // #0b2338
+
 // Same 5-tier colors as the live tab's VERDICT_PILL_CLASS (light-mode
 // values only -- a PDF has no dark-mode concept).
 const VERDICT_PILL_RGB: Record<VerdictTier, { fill: [number, number, number]; text: [number, number, number] }> = {
@@ -74,7 +81,7 @@ const addSelectClass =
 // dynamically inside handleDownloadPdf, not available at module scope.
 // Returns the Y position to continue drawing from.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function drawOverviewBanner(doc: any, sheet: FortnightlySheet, pageWidth: number, startY: number): number {
+function drawOverviewBanner(doc: any, autoTable: any, sheet: FortnightlySheet, pageWidth: number, startY: number): number {
   const bannerHeight = 26;
   const leftX = 18;
   const rightX = pageWidth - 18;
@@ -125,56 +132,51 @@ function drawOverviewBanner(doc: any, sheet: FortnightlySheet, pageWidth: number
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.text("Summary", 14, cursorY);
-  cursorY += 5;
+  cursorY += 3;
 
-  // Two-column (bold Label | Detail) rows inside a bordered box using this
-  // app's own manual-input blue (#d7ecff fill / #a9d2f2 border) -- the
-  // user's chosen formatting, confirmed via preview. Each stored line is
-  // "• Label: detail"; a line that doesn't match that shape (an analyst's
-  // own free-form note) renders with an empty label, detail only -- no
-  // crash, since this field is free text.
-  const rawSummary = sheet.manual.summary;
-  const lines = rawSummary && rawSummary.length > 0 ? rawSummary.split("\n") : ["No summary written yet."];
-  const boxX = 14;
-  const boxWidth = pageWidth - 28;
-  const labelColWidth = 34;
-  const detailColX = boxX + 6 + labelColWidth + 4;
-  const detailColWidth = boxX + boxWidth - 6 - detailColX;
+  // Two-column (bold Label | Detail) rows inside a light-blue box --
+  // drawn via autoTable (the same mechanism every other section in this
+  // PDF already uses) instead of hand-computed row heights/separator
+  // positions. The earlier hand-drawn version's row-height estimate
+  // (flat chars-per-line * line-count) drifted from jsPDF's actual
+  // rendered line spacing, especially for wrapped 2+-line rows, causing
+  // the separator rules to land in the wrong place -- autoTable measures
+  // each cell's real wrapped height itself, so this can't drift.
+  // parseSummaryRows (shared with the live table and the Excel export) is
+  // the single source of truth for "• Label: detail" vs. a continuation
+  // line (e.g. QAAUM's previous-quarter figures, folded into the same
+  // row's detail as an embedded "\n" -- autoTable renders that as a 2nd
+  // line within the one cell, same as its own word-wrapping).
+  const summaryRows = parseSummaryRows(sheet.manual.summary).map((r) => [sanitizeForPdf(r.label), sanitizeForPdf(r.detail)]);
 
-  doc.setFontSize(8);
-  const rowsData = lines.map((line) => {
-    const match = /^•\s*([^:]+):(.*)$/.exec(line);
-    const label = match ? sanitizeForPdf(match[1].trim()) : "";
-    const detail = sanitizeForPdf((match ? match[2] : line).trim());
-    doc.setFont("helvetica", "normal");
-    const detailLines: string[] = doc.splitTextToSize(detail, detailColWidth);
-    const rowHeight = Math.max(detailLines.length * 3.6, 6) + 3;
-    return { label, detailLines, rowHeight };
+  autoTable(doc, {
+    startY: cursorY,
+    body: summaryRows,
+    theme: "plain",
+    styles: {
+      fontSize: 8,
+      cellPadding: { top: 2.5, bottom: 2.5, left: 4, right: 4 },
+      fillColor: SUMMARY_BOX_FILL_RGB,
+      textColor: SUMMARY_BOX_TEXT_RGB,
+      lineColor: SUMMARY_BOX_BORDER_RGB,
+      lineWidth: { bottom: 0.2, top: 0, left: 0, right: 0 },
+    },
+    columnStyles: {
+      0: { fontStyle: "bold", cellWidth: 34 },
+      1: { cellWidth: pageWidth - 28 - 34 },
+    },
+    // The last row's own bottom rule would sit right at the box's own
+    // edge, redundant with the box simply ending there.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    didParseCell: (data: any) => {
+      if (data.row.index === summaryRows.length - 1) {
+        data.cell.styles.lineWidth = { bottom: 0, top: 0, left: 0, right: 0 };
+      }
+    },
+    margin: { left: 14, right: 14 },
   });
-  const boxHeight = rowsData.reduce((sum, r) => sum + r.rowHeight, 0) + 6;
-
-  doc.setFillColor(215, 236, 255); // #d7ecff
-  doc.setDrawColor(169, 210, 242); // #a9d2f2
-  doc.roundedRect(boxX, cursorY, boxWidth, boxHeight, 1.5, 1.5, "FD");
-
-  let rowY = cursorY + 7;
-  doc.setTextColor(11, 35, 56); // #0b2338
-  rowsData.forEach((r, i) => {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.text(r.label, boxX + 6, rowY);
-    doc.setFont("helvetica", "normal");
-    doc.text(r.detailLines, detailColX, rowY);
-    if (i < rowsData.length - 1) {
-      const sepY = rowY + r.rowHeight - 1.5;
-      doc.setLineWidth(0.2);
-      doc.line(boxX + 3, sepY, boxX + boxWidth - 3, sepY);
-    }
-    rowY += r.rowHeight;
-  });
-
   doc.setTextColor(0, 0, 0);
-  cursorY += boxHeight + 8;
+  cursorY = (doc as any).lastAutoTable.finalY + 8;
   return cursorY;
 }
 
@@ -253,7 +255,7 @@ export function FortnightlyDownloadPanel() {
         if (i > 0) doc.addPage();
         const sheet = await fetchLatestSheet(selected[i], includeFlowEstimate);
         const sections = buildFortnightlyExportSections(sheet);
-        let cursorY = drawOverviewBanner(doc, sheet, pageWidth, 14);
+        let cursorY = drawOverviewBanner(doc, autoTable, sheet, pageWidth, 14);
         for (const section of sections.slice(1)) {
           // Section banner bar -- same black-fill/white-text as the
           // dashboard's own SectionBanner and the Excel export's writeBanner.

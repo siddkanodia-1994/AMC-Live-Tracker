@@ -821,6 +821,50 @@ export function computeValuationBlock(manual: FortnightlyManualFields, cmpInr: n
 }
 
 // ---------------------------------------------------------------------
+// Overview card Summary parsing -- single source of truth shared by the
+// live read-only table, the PDF export, and the Excel export, so the 3
+// can never drift out of sync over what counts as "a new bullet" vs "a
+// continuation line".
+// ---------------------------------------------------------------------
+
+export interface SummaryRow {
+  label: string;
+  // May itself contain an embedded "\n" when a bullet has a continuation
+  // line (e.g. QAAUM's previous-quarter figures) -- every consumer
+  // (autoTable, ExcelJS with wrapText, and the live table's own
+  // white-space: pre-line) already renders an embedded "\n" as a second
+  // line within the same cell/row.
+  detail: string;
+}
+
+/**
+ * Splits the stored plain-text summary into (label, detail) rows. A line
+ * matching "• Label: detail" starts a new row; any other line is treated
+ * as a CONTINUATION of the immediately preceding row (folded into its
+ * detail as an extra line) rather than spawning its own empty-label row --
+ * this is what lets a single bullet (like QAAUM) carry more than one
+ * period's figures. General-purpose, not specific to any one bullet.
+ */
+export function parseSummaryRows(summary: string | null): SummaryRow[] {
+  if (!summary || summary.length === 0) {
+    return [{ label: "", detail: "No summary written yet." }];
+  }
+  const lines = summary.split("\n");
+  const rows: SummaryRow[] = [];
+  for (const line of lines) {
+    const match = /^•\s*([^:]+):(.*)$/.exec(line);
+    if (match) {
+      rows.push({ label: match[1].trim(), detail: match[2].trim() });
+    } else if (rows.length > 0) {
+      rows[rows.length - 1].detail += `\n${line.trim()}`;
+    } else {
+      rows.push({ label: "", detail: line.trim() });
+    }
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------------
 // Full sheet assembly
 // ---------------------------------------------------------------------
 
