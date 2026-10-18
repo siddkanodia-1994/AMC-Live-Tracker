@@ -6,7 +6,7 @@ import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-contex
 import { useFortnightlyEligibleAmcs } from "@/hooks/use-fortnightly-update";
 import { buildFortnightlyExportSections, buildFortnightlySheetExcel, price, pct, sanitizeForPdf } from "@/lib/aum/fortnightly-export";
 import { formatShortDate } from "@/lib/utils/format";
-import { parseSummaryRows, type FortnightlySheet, type VerdictTier } from "@/lib/aum/fortnightly-update";
+import { parseSummaryRows, getEffectiveVerdictLabel, type FortnightlySheet, type VerdictTier } from "@/lib/aum/fortnightly-update";
 
 // ExcelJS has no browser writeFile helper (unlike SheetJS's writeFileXLSX) --
 // write to an in-memory buffer, wrap it in a Blob, and trigger the save via
@@ -60,14 +60,13 @@ const VERDICT_PILL_RGB: Record<VerdictTier, { fill: [number, number, number]; te
   reduce: { fill: [254, 215, 170], text: [154, 52, 18] },
   sell: { fill: [255, 199, 206], text: [156, 0, 6] },
 };
-const VERDICT_PDF_LABELS: Record<VerdictTier, string> = {
-  buy: "BUY",
-  accumulate: "ACCUMULATE",
-  hold: "HOLD",
-  reduce: "REDUCE",
-  sell: "SELL",
+// Matches the live tab's neutral slate-200/slate-700 fallback -- used when
+// there's no verdict at all yet, or when a custom (un-sentiment-colored)
+// label is in use.
+const VERDICT_NEUTRAL_RGB: { fill: [number, number, number]; text: [number, number, number] } = {
+  fill: [226, 232, 240],
+  text: [51, 65, 85],
 };
-
 const addSelectClass =
   "min-w-0 max-w-[240px] rounded-md border border-dashed bg-background px-2 py-1 text-sm text-muted-foreground hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
@@ -85,7 +84,7 @@ function drawOverviewBanner(doc: any, autoTable: any, sheet: FortnightlySheet, p
   const bannerHeight = 26;
   const leftX = 18;
   const rightX = pageWidth - 18;
-  const effectiveVerdict = sheet.manual.verdictOverride ?? sheet.autoVerdict;
+  const effectiveVerdict = getEffectiveVerdictLabel(sheet.manual, sheet.autoVerdict);
 
   doc.setFillColor(...OVERVIEW_BANNER_RGB);
   doc.rect(14, startY, pageWidth - 28, bannerHeight, "F");
@@ -101,8 +100,8 @@ function drawOverviewBanner(doc: any, autoTable: any, sheet: FortnightlySheet, p
   doc.text(`As of ${formatShortDate(sheet.asOfDate)} · CMP ${price(sheet.cmpInr)}`, leftX, startY + 15);
 
   // Verdict pill, top-right.
-  const verdictLabel = effectiveVerdict ? VERDICT_PDF_LABELS[effectiveVerdict] : "—";
-  const pillColors = effectiveVerdict ? VERDICT_PILL_RGB[effectiveVerdict] : { fill: [255, 255, 255] as [number, number, number], text: OVERVIEW_BANNER_RGB };
+  const verdictLabel = effectiveVerdict.label;
+  const pillColors = effectiveVerdict.tier ? VERDICT_PILL_RGB[effectiveVerdict.tier] : VERDICT_NEUTRAL_RGB;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   const pillW = doc.getTextWidth(verdictLabel) + 8;

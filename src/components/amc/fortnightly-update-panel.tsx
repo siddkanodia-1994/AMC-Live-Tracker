@@ -14,6 +14,7 @@ import { formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
 import {
   VERDICT_TIERS,
   parseSummaryRows,
+  getEffectiveVerdictLabel,
   type FortnightlyFieldName,
   type FortnightlySheet,
   type ScenarioValues,
@@ -53,7 +54,7 @@ function fyOptionsAround(selectedFy: number): number[] {
 }
 
 // Same "wide net around whatever's currently selected" rationale as
-// fyOptionsAround, for the SIP Industry Growth month picker.
+// fyOptionsAround, for the Industry SIP Growth month picker.
 function yearOptionsAround(selectedYear: number): number[] {
   const options: number[] = [];
   for (let y = selectedYear - 10; y <= selectedYear + 5; y++) options.push(y);
@@ -633,8 +634,7 @@ function generateOverviewDraft(sheet: FortnightlySheet): string {
       `${sheet.cmpInr === null ? "—" : formatPriceInr(sheet.cmpInr)}`
   );
 
-  const effectiveVerdict = m.verdictOverride ?? sheet.autoVerdict;
-  bullets.push(`• Verdict: ${effectiveVerdict === null ? "—" : effectiveVerdict.toUpperCase()}`);
+  bullets.push(`• Verdict: ${getEffectiveVerdictLabel(m, sheet.autoVerdict).label}`);
 
   return bullets.join("\n");
 }
@@ -691,6 +691,37 @@ function ThresholdInput({
   );
 }
 
+const CUSTOM_VERDICT_MAX_LENGTH = 40;
+
+// Inline, commit-on-blur text input for the "Custom" verdict option --
+// same local-draft-state shape as ThresholdInput, for free text instead
+// of a percentage. Unlike ThresholdInput's own recent bug (styled for a
+// dark background while actually sitting on a light row), this ONE
+// genuinely renders inside the dark navy banner, so the white-on-
+// translucent styling is correct here.
+function CustomVerdictInput({ value, onSave }: { value: string | null; onSave: (v: string | null) => Promise<void> }) {
+  const [draft, setDraft] = useState(value ?? "");
+  const [prev, setPrev] = useState(value);
+  if (value !== prev) {
+    setPrev(value);
+    setDraft(value ?? "");
+  }
+  return (
+    <input
+      type="text"
+      value={draft}
+      maxLength={CUSTOM_VERDICT_MAX_LENGTH}
+      placeholder="Type custom verdict…"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const trimmed = draft.trim();
+        if (trimmed !== (value ?? "")) void onSave(trimmed === "" ? null : trimmed);
+      }}
+      className="w-36 rounded border border-dashed border-white/40 bg-white/10 px-1.5 py-0.5 text-[11px] text-white placeholder:text-white/50 focus:border-white focus:outline-none"
+    />
+  );
+}
+
 // Read-only, bold-Label/Detail table matching the PDF/Excel Summary box
 // exactly (same #f5faff fill / #d7e8f7 border, confirmed shade) -- shown
 // by default; clicking it swaps in the editable textarea (see
@@ -735,7 +766,7 @@ function OverviewCard({
   const [regenerating, setRegenerating] = useState(false);
   const [editingSummary, setEditingSummary] = useState(false);
   const t = sheet.verdictThresholds;
-  const effectiveVerdict = sheet.manual.verdictOverride ?? sheet.autoVerdict;
+  const effectiveVerdict = getEffectiveVerdictLabel(sheet.manual, sheet.autoVerdict);
 
   function updateThreshold(field: keyof VerdictThresholds, newPct: number) {
     saveVerdictThresholds({ ...t, [field]: newPct / 100 });
@@ -784,14 +815,18 @@ function OverviewCard({
           </div>
           <div className="flex flex-col items-end gap-1">
             <div className="text-[10.5px] font-bold uppercase tracking-wide text-blue-300">Verdict</div>
-            <span className={`rounded-full px-3 py-1 text-xs font-extrabold tracking-wide ${effectiveVerdict ? VERDICT_PILL_CLASS[effectiveVerdict] : "bg-white/20 text-white"}`}>
-              {effectiveVerdict ? VERDICT_LABELS[effectiveVerdict] : "—"}
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-extrabold tracking-wide ${
+                effectiveVerdict.tier ? VERDICT_PILL_CLASS[effectiveVerdict.tier] : "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200"
+              }`}
+            >
+              {effectiveVerdict.label}
             </span>
             <select
               value={sheet.manual.verdictOverride ?? ""}
               onChange={(e) => onSave("verdictOverride", e.target.value === "" ? null : e.target.value)}
               className="rounded border border-dashed border-white/40 bg-white/10 px-1.5 py-0.5 text-[11px] text-white focus:border-white focus:outline-none"
-              title="Auto-suggested from the Base-case upside %; pick to override"
+              title="Auto-suggested from the Base-case upside %; pick to override, or write your own custom label"
             >
               <option value="" className="text-black">
                 Auto ({sheet.autoVerdict ? VERDICT_LABELS[sheet.autoVerdict] : "—"})
@@ -801,7 +836,13 @@ function OverviewCard({
                   Override: {VERDICT_LABELS[tier]}
                 </option>
               ))}
+              <option value="custom" className="text-black">
+                Custom
+              </option>
             </select>
+            {sheet.manual.verdictOverride === "custom" && (
+              <CustomVerdictInput value={sheet.manual.verdictCustomText} onSave={(v) => onSave("verdictCustomText", v)} />
+            )}
           </div>
         </div>
       </div>
@@ -993,14 +1034,14 @@ function FortnightlySheetView({
         </div>
       </div>
 
-      {/* Row 3: SIP AMC Growth / SIP Industry Growth (Quarterly) -- fully
+      {/* Row 3: AMC SIP Growth / Industry SIP Growth (Quarterly) -- fully
           manual / auto-pulled respectively */}
       <div className="grid gap-4 lg:grid-cols-2">
         <SipAmcGrowthTable sheet={sheet} onSave={onSave} />
         <SipIndustryQuarterlyGrowthTable sheet={sheet} onSave={onSave} />
       </div>
 
-      {/* Row 4: Ratio section (pulled, read-only) / SIP Industry Growth
+      {/* Row 4: Ratio section (pulled, read-only) / Industry SIP Growth
           (Monthly) -- the monthly card moved here to make room for the new
           quarterly one above, in Row 3's old slot. */}
       <div className="grid gap-4 lg:grid-cols-2">
@@ -1076,7 +1117,7 @@ function SipAmcGrowthTable({
     <div className="overflow-hidden rounded-lg border bg-card">
       <Table className={TABLE_TEXT_CLASS}>
         <TableBody>
-          <SectionBanner title="SIP AMC Growth" colSpan={5} />
+          <SectionBanner title="AMC SIP Growth" colSpan={5} />
           <TableRow>
             <TableCell className="font-semibold">Latest Available Quarter</TableCell>
             <TableCell colSpan={2} />
@@ -1181,7 +1222,7 @@ function SipIndustryQuarterlyGrowthTable({
     <div className="overflow-hidden rounded-lg border bg-card">
       <Table className={TABLE_TEXT_CLASS}>
         <TableBody>
-          <SectionBanner title="SIP Industry Growth (Quarterly)" colSpan={4} />
+          <SectionBanner title="Industry SIP Growth (Quarterly)" colSpan={4} />
           {auto && (
             <TableRow>
               <TableCell className="font-semibold">Latest Available Quarter</TableCell>
@@ -1299,7 +1340,7 @@ function SipIndustryGrowthTable({
     <div className="overflow-hidden rounded-lg border bg-card">
       <Table className={TABLE_TEXT_CLASS}>
         <TableBody>
-          <SectionBanner title="SIP Industry Growth (Monthly)" colSpan={4} />
+          <SectionBanner title="Industry SIP Growth (Monthly)" colSpan={4} />
           {auto && (
             <TableRow>
               <TableCell className="font-semibold">Latest Available Month</TableCell>

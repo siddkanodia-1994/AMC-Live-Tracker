@@ -1,0 +1,1 @@
+ALTER TABLE "amc_fortnightly_update" ADD COLUMN "verdict_custom_text" text;

@@ -31,10 +31,13 @@ export const GET = withErrorHandling(async (request: Request) => {
 const DATE_FIELD_NAMES: readonly string[] = ["amcScoreAnchorDate"];
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-// The Overview card's two text fields -- summary is free-form (length-
-// capped so an unbounded paste can't bloat the row), verdictOverride is
-// enum-checked against the 5-tier scale.
+// The Overview card's text fields -- summary is free-form (length-capped
+// so an unbounded paste can't bloat the row); verdictOverride is enum-
+// checked against the 5-tier scale plus the literal "custom" sentinel;
+// verdictCustomText is free-form but capped short (same cap the UI's own
+// input enforces), since it's meant to be a pill-sized label, not a note.
 const SUMMARY_MAX_LENGTH = 4000;
+const VERDICT_CUSTOM_TEXT_MAX_LENGTH = 40;
 
 // POST { amcId, asOfDate, field, value: number | string | null } -- saves
 // one manual cell, same per-field upsert shape as the net-flow override
@@ -65,8 +68,19 @@ export const POST = withErrorHandling(async (request: Request) => {
     }
     value = rawValue;
   } else if (field === "verdictOverride") {
-    if (typeof rawValue !== "string" || !(VERDICT_TIERS as readonly string[]).includes(rawValue)) {
-      return NextResponse.json({ error: `verdictOverride must be one of ${VERDICT_TIERS.join(", ")}, or null` }, { status: 400 });
+    if (typeof rawValue !== "string" || (!(VERDICT_TIERS as readonly string[]).includes(rawValue) && rawValue !== "custom")) {
+      return NextResponse.json(
+        { error: `verdictOverride must be one of ${VERDICT_TIERS.join(", ")}, "custom", or null` },
+        { status: 400 }
+      );
+    }
+    value = rawValue;
+  } else if (field === "verdictCustomText") {
+    if (typeof rawValue !== "string") {
+      return NextResponse.json({ error: "verdictCustomText must be a string or null" }, { status: 400 });
+    }
+    if (rawValue.length > VERDICT_CUSTOM_TEXT_MAX_LENGTH) {
+      return NextResponse.json({ error: `verdictCustomText must be ${VERDICT_CUSTOM_TEXT_MAX_LENGTH} characters or fewer` }, { status: 400 });
     }
     value = rawValue;
   } else if (DATE_FIELD_NAMES.includes(field)) {

@@ -61,11 +61,20 @@ export interface FortnightlyManualFields {
   sipIndustryQtrYoyQ2ValCr: number | null;
   amcScoreAnchorDate: string | null;
   summary: string | null;
-  verdictOverride: VerdictTier | null;
+  verdictOverride: VerdictOverrideValue | null;
+  // The analyst's own free-typed verdict label -- only meaningful when
+  // verdictOverride === "custom"; see getEffectiveVerdictLabel below.
+  verdictCustomText: string | null;
 }
 
 export const VERDICT_TIERS = ["buy", "accumulate", "hold", "reduce", "sell"] as const;
 export type VerdictTier = (typeof VERDICT_TIERS)[number];
+// verdictOverride's own type -- one of the 5 fixed tiers, or "custom" to
+// signal "use verdictCustomText instead". Deliberately NOT folded into
+// VerdictTier itself: computeAutoVerdict's auto-suggestion can never be
+// "custom" (that only ever comes from a manual override), and the 5-tier
+// color maps/threshold logic stay a closed, literal 5-value enum.
+export type VerdictOverrideValue = VerdictTier | "custom";
 
 export const MANUAL_FIELD_NAMES = [
   "noOfSharesCr",
@@ -102,6 +111,7 @@ export const MANUAL_FIELD_NAMES = [
   "amcScoreAnchorDate",
   "summary",
   "verdictOverride",
+  "verdictCustomText",
 ] as const satisfies readonly (keyof FortnightlyManualFields)[];
 
 export type FortnightlyFieldName = (typeof MANUAL_FIELD_NAMES)[number];
@@ -149,12 +159,13 @@ function rowToManualFields(row: typeof amcFortnightlyUpdate.$inferSelect): Fortn
     sipIndustryQtrYoyQ2ValCr: toNum(row.sipIndustryQtrYoyQ2ValCr),
     amcScoreAnchorDate: row.amcScoreAnchorDate,
     summary: row.summary,
-    verdictOverride: isVerdictTier(row.verdictOverride) ? row.verdictOverride : null,
+    verdictOverride: isVerdictOverrideValue(row.verdictOverride) ? row.verdictOverride : null,
+    verdictCustomText: row.verdictCustomText,
   };
 }
 
-function isVerdictTier(v: string | null): v is VerdictTier {
-  return v !== null && (VERDICT_TIERS as readonly string[]).includes(v);
+function isVerdictOverrideValue(v: string | null): v is VerdictOverrideValue {
+  return v !== null && ((VERDICT_TIERS as readonly string[]).includes(v) || v === "custom");
 }
 
 // ---------------------------------------------------------------------
@@ -578,6 +589,27 @@ export function computeAutoVerdict(baseUpsidePct: number | null, thresholds: Ver
   if (baseUpsidePct > thresholds.holdMinPct) return "hold";
   if (baseUpsidePct > thresholds.reduceMinPct) return "reduce";
   return "sell";
+}
+
+/**
+ * Single source of truth for "what does the Verdict pill/line actually
+ * show" -- shared by the live Overview card, generateOverviewDraft's
+ * "Verdict: X" bullet, the PDF banner, and the Excel Overview section, so
+ * the 4 can never drift. `tier: null` tells every caller "use the
+ * neutral/gray treatment, not a tier color" -- covers both "no verdict at
+ * all yet" and "a custom label is in use" (arbitrary text has no
+ * inherent sentiment to color by).
+ */
+export function getEffectiveVerdictLabel(
+  manual: FortnightlyManualFields,
+  autoVerdict: VerdictTier | null
+): { label: string; tier: VerdictTier | null } {
+  if (manual.verdictOverride === "custom") {
+    const text = manual.verdictCustomText?.trim();
+    return { label: text ? text.toUpperCase() : "CUSTOM", tier: null };
+  }
+  const tier = manual.verdictOverride ?? autoVerdict;
+  return { label: tier ? tier.toUpperCase() : "—", tier };
 }
 
 // One extra, clearly-marked row each SIP Industry card can show (when

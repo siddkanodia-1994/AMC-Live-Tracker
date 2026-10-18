@@ -1,6 +1,6 @@
 import type { Workbook, Worksheet } from "exceljs";
 import { formatPct, formatPriceInr, formatShortDate } from "../utils/format";
-import { parseSummaryRows, type FortnightlySheet, type ScenarioValues } from "./fortnightly-update";
+import { parseSummaryRows, getEffectiveVerdictLabel, type FortnightlySheet, type ScenarioValues } from "./fortnightly-update";
 
 // Shared intermediate representation consumed by both the Excel (xlsx) and
 // PDF (jsPDF/autotable) exporters, so the two can never drift out of sync
@@ -176,7 +176,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     }
   }
   const sipAmc: ExportSection = {
-    title: "SIP AMC Growth",
+    title: "AMC SIP Growth",
     rows: [
       ["Period", "Val (Cr)", "QoQ", "YoY", "SIP/Equity AUM"],
       ...sipAmcRows.map(([label, val, p], i) => [
@@ -204,7 +204,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   const qtrLatestVal = sipIndustryQtrRows[0][1];
   const qtrEstimate = industryQtrAuto?.estimate;
   const sipIndustryQuarterly: ExportSection = {
-    title: "SIP Industry Growth (Quarterly)",
+    title: "Industry SIP Growth (Quarterly)",
     rows: [
       ["Period", "Val (Cr)", "QoQ", "YoY"],
       ...sipIndustryQtrRows.map(([label, val], i) => [label, cr(val), pct(sipIndustryQtrRatios.stepByRow[i]), pct(sipIndustryQtrRatios.yoyByRow[i])]),
@@ -233,7 +233,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   const monthlyLatestVal = sipIndustryRows[0][1];
   const monthlyEstimate = industryAuto?.estimate;
   const sipIndustryMonthly: ExportSection = {
-    title: "SIP Industry Growth (Monthly)",
+    title: "Industry SIP Growth (Monthly)",
     rows: [
       ["Period", "Val (Cr)", "MoM", "YoY"],
       ...sipIndustryRows.map(([label, val], i) => [label, cr(val), pct(sipIndustryRatios.stepByRow[i]), pct(sipIndustryRatios.yoyByRow[i])]),
@@ -433,7 +433,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   const v = sheet.valuation;
   let row = 1;
 
-  const effectiveVerdict = m.verdictOverride ?? sheet.autoVerdict;
+  const effectiveVerdict = getEffectiveVerdictLabel(m, sheet.autoVerdict);
   writeBanner(ws, row, "Overview", 5);
   row++;
   writeLabel(ws, row, 1, "CMP");
@@ -449,7 +449,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   writeLabel(ws, row, 2, "FY28E");
   row++;
   writeLabel(ws, row, 1, "Verdict");
-  writeLabel(ws, row, 2, effectiveVerdict ? effectiveVerdict.toUpperCase() : "—");
+  writeLabel(ws, row, 2, effectiveVerdict.label);
   row++;
   writeLabel(ws, row, 1, "Summary");
   row++;
@@ -559,7 +559,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   }
   row++;
 
-  writeBanner(ws, row, "SIP AMC Growth", 5);
+  writeBanner(ws, row, "AMC SIP Growth", 5);
   row++;
   writeHeaderRow(ws, row, ["Period", "Val (Cr)", "QoQ", "YoY", "SIP/Equity AUM"]);
   row++;
@@ -594,7 +594,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
 
   const withPeriod = (base: string, period: string | undefined) => (period ? `${base} (${period})` : base);
 
-  writeBanner(ws, row, "SIP Industry Growth (Quarterly)", 4);
+  writeBanner(ws, row, "Industry SIP Growth (Quarterly)", 4);
   row++;
   writeHeaderRow(ws, row, ["Period", "Val (Cr)", "QoQ", "YoY"]);
   row++;
@@ -622,7 +622,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   }
   row++;
 
-  writeBanner(ws, row, "SIP Industry Growth (Monthly)", 4);
+  writeBanner(ws, row, "Industry SIP Growth (Monthly)", 4);
   row++;
   writeHeaderRow(ws, row, ["Period", "Val (Cr)", "MoM", "YoY"]);
   row++;
