@@ -581,7 +581,7 @@ function generateOverviewDraft(sheet: FortnightlySheet): string {
   const sipYoy =
     m.sipAmcYoyQValCr !== null && m.sipAmcQtdValCr !== null && m.sipAmcYoyQValCr !== 0 ? m.sipAmcQtdValCr / m.sipAmcYoyQValCr - 1 : null;
   bullets.push(
-    `• SIP flows: ${m.sipAmcQtdValCr === null ? "—" : formatCrRounded(m.sipAmcQtdValCr)}, ` +
+    `• SIP flows: ${m.sipAmcQtdValCr === null ? "—" : formatCrRounded(m.sipAmcQtdValCr)} in ${sheet.sipAmcLabels.qtd}, ` +
       `${sipQoq === null ? "—" : formatPct(sipQoq, { alwaysSign: true })} QoQ, ` +
       `${sipYoy === null ? "—" : formatPct(sipYoy, { alwaysSign: true })} YoY — SIP/Equity AUM at ` +
       `${m.sipAmcQtdPct === null ? "—" : formatPct(m.sipAmcQtdPct)} ` +
