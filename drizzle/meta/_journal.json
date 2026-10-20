@@ -225,6 +225,13 @@
       "when": 1792322514077,
       "tag": "0031_lonely_talos",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792442075073,
+      "tag": "0032_light_the_renegades",
+      "breakpoints": true
     }
   ]
 }

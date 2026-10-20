@@ -609,6 +609,61 @@ export const etfDailyNav = pgTable(
   (t) => [uniqueIndex("etf_daily_nav_scheme_date_idx").on(t.schemeId, t.snapshotDate)]
 );
 
+// Real month-end (and, from May-2026 onward, fortnightly) Exit AUM per
+// ETF scheme, sourced from the user's own CRISIL "Index Funds" archive
+// (see scripts/ingest-etf-crisil-exit-aum.ts) -- the ground-truth anchors
+// that etfDailyAumEstimate's daily series is built to land on exactly.
+// Deliberately separate from etfPeriodAum: that table is AMFI's own
+// disclosed QUARTERLY average AUM baseline for the live-NAV-ratio
+// estimate; this one is a real, independently-sourced point-in-time AUM
+// figure used for a completely different purpose (the daily backfill).
+// Keyed by exact date, not a "YYYY-MM" label, since the source cadence
+// itself switches from monthly to fortnightly partway through the
+// backfill window -- the reconciliation algorithm works between any two
+// consecutive anchors regardless of spacing.
+export const etfExitAumAnchor = pgTable(
+  "etf_exit_aum_anchor",
+  {
+    id: serial("id").primaryKey(),
+    schemeId: integer("scheme_id")
+      .notNull()
+      .references(() => etfSchemes.id, { onDelete: "cascade" }),
+    anchorDate: date("anchor_date").notNull(), // the CRISIL file's own embedded NAV Date, never a folder/file name
+    exitAumCr: numeric("exit_aum_cr", { precision: 18, scale: 4 }).notNull(),
+    sourceFile: text("source_file").notNull(), // e.g. "3 Year AMFI Data/2026 04-April/042026_Index Funds.xlsx", for traceability
+  },
+  (t) => [uniqueIndex("etf_exit_aum_anchor_scheme_date_idx").on(t.schemeId, t.anchorDate)]
+);
+
+// The computed daily estimate bridging etfExitAumAnchor's real points:
+// each day's AUM compounds the prior day's by that scheme's own NAV
+// return (etfDailyNav), then a single constant Rs flow per day (solved so
+// the segment lands exactly on the next anchor) is added -- a
+// Modified-Dietz-style equal-daily-flow reconciliation, NOT the
+// multiplicative ramp amcHistoricalAumEstimate uses (see
+// src/lib/etf/historical-backfill.ts for the exact algorithm). Chosen
+// because a single-commodity ETF's own tracking error vs. its own NAV is
+// near-zero, so nearly the whole gap between the roll-forward and the
+// next real anchor genuinely is investor flow, unlike the equity
+// precedent where most of the gap is portfolio-vs-index tracking error.
+export const etfDailyAumEstimate = pgTable(
+  "etf_daily_aum_estimate",
+  {
+    id: serial("id").primaryKey(),
+    schemeId: integer("scheme_id")
+      .notNull()
+      .references(() => etfSchemes.id, { onDelete: "cascade" }),
+    snapshotDate: date("snapshot_date").notNull(),
+    estimatedAumCr: numeric("estimated_aum_cr", { precision: 18, scale: 4 }).notNull(), // final, what every downstream reader uses
+    rawCompoundedAumCr: numeric("raw_compounded_aum_cr", { precision: 18, scale: 4 }).notNull(), // pre-flow, pure NAV-compounded value, audit only
+    dailyFlowCr: numeric("daily_flow_cr", { precision: 18, scale: 4 }).notNull(), // this segment's single solved constant, same value on every row in the segment
+    anchorStartDate: date("anchor_start_date").notNull(),
+    anchorEndDate: date("anchor_end_date").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("etf_daily_aum_estimate_scheme_date_idx").on(t.schemeId, t.snapshotDate)]
+);
+
 // Which MCX futures contract currently stands in for "the price of gold/
 // silver" -- one row per metal, hand-maintained via scripts/seed-mcx-
 // contracts.ts (same reviewable-script convention as seed-etf-schemes.ts)

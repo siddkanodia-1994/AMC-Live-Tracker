@@ -3,15 +3,20 @@
 // the ETF itself), verified directly against api.tigzig.com/mf/v1's own
 // category filter and cross-checked against DHAN's public ETF listing.
 // Safe to re-run (upserts on scheme_code). "quant Silver ETF" (scheme code
-// 154625, launched 2026-08-25) is deliberately omitted: it has no ISIN and
-// no disclosed quarter yet, so there's nothing to seed until AMFI publishes
-// its first AAUM figure -- add it once that happens.
+// 154625, launched 2026-08-25, no ISIN yet) is now included at the user's
+// explicit request (2026-10-20) despite having only ~2 months of real
+// history -- tracked from day one rather than waiting for more data.
+// "Aditya Birla Sun Life Gold ETF" (scheme code 115127) was found missing
+// from this list entirely while cross-referencing the CRISIL exit-AUM
+// archive for the Gold/Silver daily-AUM backfill -- an apparent oversight
+// from the original seed (only their Silver ETF had been added) -- added
+// here to fix the gap.
 import { db } from "../src/lib/db/client";
 import { etfSchemes } from "../src/lib/db/schema";
 
 interface SeedRow {
   schemeCode: number;
-  isin: string;
+  isin: string | null;
   name: string;
   amc: string;
   assetClass: "gold" | "silver";
@@ -24,6 +29,7 @@ interface SeedRow {
 // no equity counterpart in amcs yet -- for those, "<Name> Mutual Fund"
 // follows the same naming convention as a best-effort placeholder.
 const GOLD_ETFS: SeedRow[] = [
+  { schemeCode: 115127, isin: "INF209KB18D3", name: "Aditya Birla Sun Life Gold ETF", amc: "Aditya Birla Sun Life Mutual Fund", assetClass: "gold", slug: "aditya-birla-sun-life-gold-etf" },
   { schemeCode: 153357, isin: "INF579M01BB5", name: "360 ONE Gold ETF", amc: "360 ONE Mutual Fund", assetClass: "gold", slug: "360-one-gold-etf" },
   { schemeCode: 153826, isin: "INF1J2R01114", name: "Angel One Gold ETF", amc: "Angel One Mutual Fund", assetClass: "gold", slug: "angel-one-gold-etf" },
   { schemeCode: 113434, isin: "INF846K01W80", name: "Axis Gold ETF", amc: "Axis Mutual Fund", assetClass: "gold", slug: "axis-gold-etf" },
@@ -75,6 +81,9 @@ const SILVER_ETFS: SeedRow[] = [
   { schemeCode: 152285, isin: "INF277KA1984", name: "Tata Silver ETF", amc: "Tata Mutual Fund", assetClass: "silver", slug: "tata-silver-etf" },
   { schemeCode: 151730, isin: "INF789F1AYK6", name: "UTI Silver ETF", amc: "UTI Mutual Fund", assetClass: "silver", slug: "uti-silver-etf" },
   { schemeCode: 153413, isin: "INF0R8F01091", name: "Zerodha Silver ETF", amc: "Zerodha Mutual Fund", assetClass: "silver", slug: "zerodha-silver-etf" },
+  // No ISIN yet (brand-new, launched 2026-08-25) -- "quant Mutual Fund" is a
+  // different AMC from the already-tracked "Quantum Mutual Fund".
+  { schemeCode: 154625, isin: null, name: "quant Silver ETF", amc: "quant Mutual Fund", assetClass: "silver", slug: "quant-silver-etf" },
 ];
 
 async function main() {

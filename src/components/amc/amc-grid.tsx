@@ -14,7 +14,7 @@ import { AumTrendChart } from "./aum-trend-chart";
 import { TotalAumGrowthTable } from "./total-aum-growth-table";
 import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-table";
 import { SectoralHoldingsTable } from "./sectoral-holdings-table";
-import { EtfTable } from "@/components/etf/etf-table";
+import { EtfTabContent } from "@/components/etf/etf-tab-content";
 import { StockCorrelationTable } from "./stock-correlation-table";
 import { FortnightlyUpdatePanel } from "./fortnightly-update-panel";
 import { SummaryPage } from "./summary-page";
@@ -1265,7 +1265,7 @@ export function AmcGrid({
           )}
         </TabsContent>
         <TabsContent value="gold-silver-etfs">
-          <EtfTable />
+          <EtfTabContent />
         </TabsContent>
         <TabsContent value="amc-stock-correlation">
           <StockCorrelationTable />

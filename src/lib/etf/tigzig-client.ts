@@ -108,6 +108,44 @@ export async function fetchNavAsOf(schemeCodes: number[], date: string): Promise
 }
 
 /**
+ * The FULL daily NAV history for a batch of schemes between `since` and
+ * `to` (inclusive), ascending by date -- unlike fetchNavAsOf, this omits
+ * `latest=true` so TigZig returns every row in range instead of just the
+ * most recent match. Live-verified (2026-10-20): a single call for one
+ * scheme spanning 2022-04-01 to 2026-10-19 returned all 1,124 daily
+ * points with no pagination/chunking needed -- used by the Gold/Silver
+ * historical AUM backfill (src/lib/etf/historical-backfill.ts) to get
+ * each scheme's own daily returns for the whole window in one shot.
+ */
+export async function fetchFullNavHistory(schemeCodes: number[], since: string, to: string): Promise<Map<number, EtfNavRow[]>> {
+  const result = new Map<number, EtfNavRow[]>();
+  if (schemeCodes.length === 0) return result;
+
+  for (const batch of chunk(schemeCodes, NAV_BATCH_SIZE)) {
+    try {
+      const url = `${BASE_URL}/nav?schemes=${batch.join(",")}&since=${since}&to=${to}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.error(`[tigzig] full-nav-history batch failed with status ${res.status}`);
+        continue;
+      }
+      const json = (await res.json()) as TigzigNavApiResponse;
+      for (const row of json.schemes ?? []) {
+        const ascending = [...(row.data ?? [])].sort((a, b) => a.date.localeCompare(b.date));
+        result.set(
+          row.scheme_code,
+          ascending.map((d) => ({ schemeCode: row.scheme_code, nav: d.nav, date: d.date }))
+        );
+      }
+    } catch (err) {
+      console.error("[tigzig] network error fetching full nav history batch:", err);
+    }
+  }
+
+  return result;
+}
+
+/**
  * A single CSV line, RFC4180-ish (handles double-quoted fields with
  * embedded commas/quotes) -- TigZig's bulk file is almost entirely
  * unquoted, but a handful of scheme names do need it.
