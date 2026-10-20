@@ -105,19 +105,27 @@ export function EtfOverviewStyleTable() {
   const { data: comparisonData, isLoading, error } = useEtfWindowComparison(w1Start, w1End, w2Start, w2End);
   const bounds = comparisonData?.dataBounds;
 
+  // The dropdown's latest selectable quarter is always "today", not the
+  // latest REAL anchor (bounds.maxDate) -- an in-progress quarter (e.g.
+  // Q3FY27) has no real anchor yet by definition, but the backend already
+  // computes it correctly via a live NAV-only extrapolation. Capping the
+  // list at bounds.maxDate instead would silently drop the current quarter
+  // from both dropdowns, leaving Window 2 unable to go any later than
+  // Window 1's own default. bounds.minDate is still the right floor --
+  // there's genuinely no data before the first real anchor.
   const quarterOptions = useMemo(() => {
-    if (!bounds?.minDate || !bounds?.maxDate) return [];
-    return listFiscalQuarters(bounds.minDate, bounds.maxDate > today ? today : bounds.maxDate);
+    if (!bounds?.minDate) return [];
+    return listFiscalQuarters(bounds.minDate, today);
   }, [bounds, today]);
 
   const w1QuarterKey = useMemo(() => {
-    const match = quarterOptions.find((q) => q.start === w1Start && clippedEnd(q.end, bounds?.maxDate ?? null) === w1End);
+    const match = quarterOptions.find((q) => q.start === w1Start && clippedEnd(q.end, today) === w1End);
     return match?.key ?? CUSTOM_VALUE;
-  }, [quarterOptions, w1Start, w1End, bounds]);
+  }, [quarterOptions, w1Start, w1End, today]);
   const w2QuarterKey = useMemo(() => {
-    const match = quarterOptions.find((q) => q.start === w2Start && clippedEnd(q.end, bounds?.maxDate ?? null) === w2End);
+    const match = quarterOptions.find((q) => q.start === w2Start && clippedEnd(q.end, today) === w2End);
     return match?.key ?? CUSTOM_VALUE;
-  }, [quarterOptions, w2Start, w2End, bounds]);
+  }, [quarterOptions, w2Start, w2End, today]);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) setSortDesc((d) => !d);
@@ -240,7 +248,7 @@ export function EtfOverviewStyleTable() {
                 const q = quarterOptions.find((o) => o.key === e.target.value);
                 if (q) {
                   setW1Start(q.start);
-                  setW1End(clippedEnd(q.end, bounds?.maxDate ?? null));
+                  setW1End(clippedEnd(q.end, today));
                 }
               }}
             >
@@ -266,7 +274,7 @@ export function EtfOverviewStyleTable() {
                 const q = quarterOptions.find((o) => o.key === e.target.value);
                 if (q) {
                   setW2Start(q.start);
-                  setW2End(clippedEnd(q.end, bounds?.maxDate ?? today));
+                  setW2End(clippedEnd(q.end, today));
                 }
               }}
             >
