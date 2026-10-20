@@ -16,8 +16,9 @@ export const GET = withErrorHandling(async (request: Request) => {
   }
   const asOfDate = url.searchParams.get("asOfDate") ?? undefined;
   const includeFlowEstimate = url.searchParams.get("includeFlowEstimate") === "true";
+  const blendGoldSilver = url.searchParams.get("blendGoldSilver") === "true";
 
-  const sheet = await getFortnightlySheet(amcId, asOfDate, includeFlowEstimate);
+  const sheet = await getFortnightlySheet(amcId, asOfDate, includeFlowEstimate, blendGoldSilver);
   if (!sheet) {
     return NextResponse.json({ error: "Unknown amcId" }, { status: 404 });
   }

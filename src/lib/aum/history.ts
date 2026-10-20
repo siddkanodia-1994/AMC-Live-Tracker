@@ -3,6 +3,41 @@ import { db } from "../db/client";
 import { amcHistoricalAumEstimate, amcManualNetFlow, amcPeriods, amcs, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { addDaysToDateString, getIstDateString } from "../utils/date";
 import { firstDayOfNextMonth, lastDayOfReportMonth, nextReportPeriod } from "./report-period";
+import { getEtfDailyAumByAmcIds } from "../etf/average-aum";
+
+/**
+ * Adds each AMC's combined Gold+Silver daily AUM (where it exists) onto
+ * the matching date's liveAumCr, in place, for whichever amcIds are in
+ * `blendAmcIds` -- the "blend Gold/Silver into Equity AUM" toggle's one
+ * shared primitive, reused by every AUM-history reader below. A day with
+ * no Gold/Silver data for that AMC is left untouched (+0, equity-only
+ * fallback), never treated as missing/an error -- confirmed user decision.
+ */
+async function blendGoldSilverIntoHistory(
+  pointsByAmcId: Map<number, { date: string; liveAumCr: number }[]>,
+  blendAmcIds: number[]
+): Promise<void> {
+  if (blendAmcIds.length === 0) return;
+  let minDate: string | null = null;
+  let maxDate: string | null = null;
+  for (const amcId of blendAmcIds) {
+    for (const p of pointsByAmcId.get(amcId) ?? []) {
+      if (minDate === null || p.date < minDate) minDate = p.date;
+      if (maxDate === null || p.date > maxDate) maxDate = p.date;
+    }
+  }
+  if (minDate === null || maxDate === null) return;
+
+  const goldSilverByAmcId = await getEtfDailyAumByAmcIds(blendAmcIds, minDate, maxDate);
+  for (const amcId of blendAmcIds) {
+    const goldSilverByDate = goldSilverByAmcId.get(amcId);
+    if (!goldSilverByDate) continue;
+    for (const p of pointsByAmcId.get(amcId) ?? []) {
+      const extra = goldSilverByDate.get(p.date);
+      if (extra != null) p.liveAumCr += extra;
+    }
+  }
+}
 
 /**
  * Each AMC's reported AUM for one arbitrary (possibly past) report period --
@@ -96,7 +131,8 @@ export interface AverageAumRange {
 export async function getAverageAumForRange(
   startDate: string,
   endDate: string,
-  flowCtx?: FlowAdjustmentContext
+  flowCtx?: FlowAdjustmentContext,
+  blendGoldSilverAmcIds?: number[]
 ): Promise<Map<number, AverageAumRange>> {
   const rows = await db
     .select({
@@ -124,6 +160,49 @@ export async function getAverageAumForRange(
     }
     map.set(r.amcId, { avgLiveAumCr: r.avgLiveAumCr, avgFlowAdjustedLiveAumCr, daysCount: r.daysCount });
   }
+
+  // Blended AMCs need the TRUE day-by-day sum averaged (not two separate
+  // averages added together, which would only be exact if the equity and
+  // Gold/Silver series shared the identical set of dates) -- so these are
+  // recomputed from raw per-day rows instead of the SQL aggregate above.
+  const toBlend = (blendGoldSilverAmcIds ?? []).filter((id) => map.has(id));
+  if (toBlend.length > 0) {
+    const rawRows = await db
+      .select({ amcId: liveAumDailySnapshot.amcId, snapshotDate: liveAumDailySnapshot.snapshotDate, liveAumCr: liveAumDailySnapshot.liveAumCr })
+      .from(liveAumDailySnapshot)
+      .where(
+        and(
+          inArray(liveAumDailySnapshot.amcId, toBlend),
+          gte(liveAumDailySnapshot.snapshotDate, startDate),
+          lte(liveAumDailySnapshot.snapshotDate, endDate),
+          eq(liveAumDailySnapshot.isCanonical, true)
+        )
+      );
+    const goldSilverByAmcId = await getEtfDailyAumByAmcIds(toBlend, startDate, endDate);
+
+    const sums = new Map<number, number>();
+    const counts = new Map<number, number>();
+    for (const r of rawRows) {
+      const extra = goldSilverByAmcId.get(r.amcId)?.get(r.snapshotDate) ?? 0;
+      const blended = Number(r.liveAumCr) + extra;
+      sums.set(r.amcId, (sums.get(r.amcId) ?? 0) + blended);
+      counts.set(r.amcId, (counts.get(r.amcId) ?? 0) + 1);
+    }
+    for (const amcId of toBlend) {
+      const count = counts.get(amcId);
+      if (!count) continue;
+      const avgLiveAumCr = sums.get(amcId)! / count;
+      const existing = map.get(amcId)!;
+      let avgFlowAdjustedLiveAumCr: number | null = null;
+      const netFlowCr = flowCtx?.netFlowCrByAmcId.get(amcId);
+      if (netFlowCr !== undefined) {
+        const adjustment = flowAdjustmentForDate(endDate, netFlowCr, flowCtx!.reportPeriod);
+        avgFlowAdjustedLiveAumCr = adjustment === null ? avgLiveAumCr : avgLiveAumCr + adjustment;
+      }
+      map.set(amcId, { avgLiveAumCr, avgFlowAdjustedLiveAumCr, daysCount: existing.daysCount });
+    }
+  }
+
   return map;
 }
 
@@ -166,7 +245,7 @@ async function getHistoricalAumEstimatePoints(amcId: number): Promise<AumHistory
   }));
 }
 
-export async function getAmcAumHistory(amcId: number): Promise<AumHistoryPoint[]> {
+export async function getAmcAumHistory(amcId: number, options?: { blendGoldSilver?: boolean }): Promise<AumHistoryPoint[]> {
   const rows = await db
     .select()
     .from(liveAumDailySnapshot)
@@ -180,7 +259,13 @@ export async function getAmcAumHistory(amcId: number): Promise<AumHistoryPoint[]
     reportPeriod: r.reportPeriod,
   }));
   const estimateHistory = await getHistoricalAumEstimatePoints(amcId);
-  return [...estimateHistory, ...liveHistory];
+  const combined = [...estimateHistory, ...liveHistory];
+
+  if (options?.blendGoldSilver) {
+    const byAmcId = new Map([[amcId, combined]]);
+    await blendGoldSilverIntoHistory(byAmcId, [amcId]);
+  }
+  return combined;
 }
 
 export interface AmcStockPricePoint {
@@ -216,7 +301,8 @@ export async function getAmcListedStockPriceHistory(isin: string, fromDate: stri
  */
 export async function getAumHistoryForAmcIds(
   amcIds: number[],
-  fromDates?: Map<number, string>
+  fromDates?: Map<number, string>,
+  blendGoldSilverAmcIds?: number[]
 ): Promise<Map<number, AumHistoryPoint[]>> {
   const map = new Map<number, AumHistoryPoint[]>();
   if (amcIds.length === 0) return map;
@@ -249,6 +335,10 @@ export async function getAumHistoryForAmcIds(
       reportPeriod: r.reportPeriod,
     });
     map.set(r.amcId, list);
+  }
+
+  if (blendGoldSilverAmcIds && blendGoldSilverAmcIds.length > 0) {
+    await blendGoldSilverIntoHistory(map, blendGoldSilverAmcIds.filter((id) => amcIds.includes(id)));
   }
   return map;
 }

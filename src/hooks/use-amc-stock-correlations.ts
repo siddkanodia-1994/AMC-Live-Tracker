@@ -1,6 +1,7 @@
 import useSWR from "swr";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import type { StockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
+import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
 
 export interface AmcStockCorrelationsResponse {
   amcs: AmcStockCorrelationEntry[];
@@ -20,7 +21,9 @@ async function fetcher(url: string): Promise<AmcStockCorrelationsResponse> {
 // No refreshInterval: like the ETF tab, this is once-a-day cron-updated
 // history, not a 45s-poll live feed -- nothing new to fetch within a day.
 export function useAmcStockCorrelations() {
-  return useSWR<AmcStockCorrelationsResponse>("/api/amc-stock-correlations", fetcher, {
+  const blendGoldSilverAmcIds = useActiveGoldSilverBlendAmcIds();
+  const qs = blendGoldSilverAmcIds.length > 0 ? `?blendGoldSilverAmcIds=${blendGoldSilverAmcIds.join(",")}` : "";
+  return useSWR<AmcStockCorrelationsResponse>(`/api/amc-stock-correlations${qs}`, fetcher, {
     revalidateOnFocus: false,
   });
 }

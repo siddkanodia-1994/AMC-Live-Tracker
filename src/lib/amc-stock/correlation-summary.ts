@@ -31,7 +31,7 @@ export interface AmcStockCorrelationData {
  * share-price toggle) recomputes that client-side from a single shared
  * input, so there's nothing to recompute server-side per keystroke.
  */
-export async function getAmcStockCorrelationData(): Promise<AmcStockCorrelationData> {
+export async function getAmcStockCorrelationData(blendGoldSilverAmcIds?: number[]): Promise<AmcStockCorrelationData> {
   const mappings = await db
     .select({
       amcId: amcListedStock.amcId,
@@ -64,7 +64,7 @@ export async function getAmcStockCorrelationData(): Promise<AmcStockCorrelationD
   // starts) -- which then made trimToLastContinuousRun discard everything
   // before that gap, including the newly-backfilled Jan-Dec 2025 estimate.
   const [aumByAmcId, priceByIsin] = await Promise.all([
-    getAumHistoryForAmcIds(amcIds),
+    getAumHistoryForAmcIds(amcIds, undefined, blendGoldSilverAmcIds),
     getAmcListedStockPriceHistoryForIsins(isins, priceFromDates),
   ]);
 

@@ -1,5 +1,6 @@
 import useSWR from "swr";
 import type { EligibleAmc, FortnightlySheet } from "@/lib/aum/fortnightly-update";
+import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
 
 async function fetcher<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -15,10 +16,12 @@ export function useFortnightlyEligibleAmcs() {
 }
 
 export function useFortnightlySheet(amcId: number | null, asOfDate: string | null, includeFlowEstimate: boolean) {
+  const blendGoldSilverAmcIds = useActiveGoldSilverBlendAmcIds();
   const params = new URLSearchParams();
   if (amcId !== null) params.set("amcId", String(amcId));
   if (asOfDate) params.set("asOfDate", asOfDate);
   if (includeFlowEstimate) params.set("includeFlowEstimate", "true");
+  if (amcId !== null && blendGoldSilverAmcIds.includes(amcId)) params.set("blendGoldSilver", "true");
   return useSWR<FortnightlySheet>(
     amcId !== null ? `/api/fortnightly-update?${params.toString()}` : null,
     fetcher,

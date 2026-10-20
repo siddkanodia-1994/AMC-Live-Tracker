@@ -935,7 +935,8 @@ async function getCurrentReportPeriod(): Promise<string | null> {
 export async function getFortnightlySheet(
   amcId: number,
   requestedAsOfDate?: string,
-  includeFlowEstimate?: boolean
+  includeFlowEstimate?: boolean,
+  blendGoldSilver?: boolean
 ): Promise<FortnightlySheet | null> {
   const [amc] = await db.select().from(amcs).where(eq(amcs.id, amcId));
   if (!amc) return null;
@@ -954,7 +955,7 @@ export async function getFortnightlySheet(
         .where(and(eq(amcFortnightlyUpdate.amcId, amcId), eq(amcFortnightlyUpdate.asOfDate, asOfDate)))
         .then((rows) => rows[0] ?? null),
       getEodPriceAsOf(amcId, asOfDate),
-      getAmcAumHistory(amcId),
+      getAmcAumHistory(amcId, { blendGoldSilver }),
       // Scoped to just THIS AMC's own isin -- getAmcStockCorrelationData()
       // fetches all 8 AMCs at once (built for the Stock Correlation tab,
       // which shows all 8 side by side); reusing it here cost ~10s per

@@ -69,6 +69,7 @@ export async function getOverviewAdjustments(options?: {
   currentAvgFrom?: string;
   currentAvgTo?: string;
   histLiveDate?: string;
+  blendGoldSilverAmcIds?: number[];
 }): Promise<OverviewAdjustments> {
   const [currentReportPeriod, availableReportPeriods, bounds] = await Promise.all([
     getCurrentReportPeriod(),
@@ -109,8 +110,8 @@ export async function getOverviewAdjustments(options?: {
   const [reportedAumMap, avgAumMap, currentAvgAumMap, histLiveAumMap, indexAvgLevelByKey, indexCurrentAvgLevelByKey, indexHistLiveLevelByKey] =
     await Promise.all([
       getReportedAumForPeriod(reportPeriod),
-      getAverageAumForRange(avgFrom, avgTo, flowCtx),
-      getAverageAumForRange(currentAvgFrom, currentAvgTo, flowCtx),
+      getAverageAumForRange(avgFrom, avgTo, flowCtx, options?.blendGoldSilverAmcIds),
+      getAverageAumForRange(currentAvgFrom, currentAvgTo, flowCtx, options?.blendGoldSilverAmcIds),
       getAllAmcsLiveAumAsOf(histLiveDate),
       getAverageIndexLevelForRange(avgFrom, avgTo),
       getAverageIndexLevelForRange(currentAvgFrom, currentAvgTo),

@@ -1,8 +1,9 @@
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { etfDailyAumEstimate } from "../db/schema";
+import { amcs, etfDailyAumEstimate, etfSchemes } from "../db/schema";
 import { getFiscalQuarterBounds, getPreviousFiscalQuarterBounds } from "../aum/report-period";
 import { getIstDateString } from "../utils/date";
+import { getEtfCombinedDailySeriesBySchemeIds } from "./daily-series";
 
 export interface EtfAverageAumRange {
   avgAumCr: number;
@@ -70,4 +71,53 @@ export async function getEtfAverageAumSummary(): Promise<EtfAverageAumSummary> {
     avgAumByScheme: Object.fromEntries(avgAumMap),
     currentAvgAumByScheme: Object.fromEntries(currentAvgAumMap),
   };
+}
+
+/**
+ * Each requested equity amcId's combined Gold+Silver daily AUM, keyed by
+ * date -- the primitive behind "blend Gold/Silver into this AMC's Equity
+ * AUM" (the Overview/Correlation/Fortnightly tabs' toggle). Matches an
+ * equity AMC to its Gold/Silver schemes by name (`etfSchemes.amc ===
+ * amcs.overviewName`), the same convention already used everywhere this
+ * app cross-references the two sides of the business. An AMC with no
+ * Gold/Silver scheme, or a day outside that scheme's own data, simply has
+ * no entry for that date -- callers should treat a missing day as +0
+ * (equity-only fallback), never as an error.
+ */
+export async function getEtfDailyAumByAmcIds(amcIds: number[], startDate: string, endDate: string): Promise<Map<number, Map<string, number>>> {
+  const result = new Map<number, Map<string, number>>();
+  if (amcIds.length === 0) return result;
+
+  const amcRows = await db.select({ id: amcs.id, overviewName: amcs.overviewName }).from(amcs).where(inArray(amcs.id, amcIds));
+  if (amcRows.length === 0) return result;
+
+  const overviewNames = amcRows.map((a) => a.overviewName);
+  const schemeRows = await db
+    .select({ id: etfSchemes.id, amc: etfSchemes.amc })
+    .from(etfSchemes)
+    .where(inArray(etfSchemes.amc, overviewNames));
+  if (schemeRows.length === 0) return result;
+
+  const schemeIdsByOverviewName = new Map<string, number[]>();
+  for (const s of schemeRows) {
+    if (!schemeIdsByOverviewName.has(s.amc)) schemeIdsByOverviewName.set(s.amc, []);
+    schemeIdsByOverviewName.get(s.amc)!.push(s.id);
+  }
+
+  const allSchemeIds = schemeRows.map((s) => s.id);
+  const seriesBySchemeId = await getEtfCombinedDailySeriesBySchemeIds(allSchemeIds, startDate, endDate);
+
+  for (const amc of amcRows) {
+    const schemeIds = schemeIdsByOverviewName.get(amc.overviewName);
+    if (!schemeIds || schemeIds.length === 0) continue;
+    const dailyTotals = new Map<string, number>();
+    for (const schemeId of schemeIds) {
+      for (const point of seriesBySchemeId.get(schemeId) ?? []) {
+        dailyTotals.set(point.date, (dailyTotals.get(point.date) ?? 0) + point.aum);
+      }
+    }
+    result.set(amc.id, dailyTotals);
+  }
+
+  return result;
 }

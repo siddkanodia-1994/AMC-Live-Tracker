@@ -15,6 +15,13 @@ export async function GET(request: Request) {
   const currentAvgTo = currentAvgToRaw && /^\d{4}-\d{2}-\d{2}$/.test(currentAvgToRaw) ? currentAvgToRaw : undefined;
   const histLiveDateRaw = url.searchParams.get("histLiveDate");
   const histLiveDate = histLiveDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(histLiveDateRaw) ? histLiveDateRaw : undefined;
+  const blendGoldSilverAmcIdsRaw = url.searchParams.get("blendGoldSilverAmcIds");
+  const blendGoldSilverAmcIds = blendGoldSilverAmcIdsRaw
+    ? blendGoldSilverAmcIdsRaw
+        .split(",")
+        .map((s) => Number(s))
+        .filter((n) => Number.isFinite(n))
+    : undefined;
 
   try {
     const result = await getOverviewAdjustments({
@@ -24,6 +31,7 @@ export async function GET(request: Request) {
       currentAvgFrom,
       currentAvgTo,
       histLiveDate,
+      blendGoldSilverAmcIds,
     });
     return NextResponse.json(result);
   } catch (err) {

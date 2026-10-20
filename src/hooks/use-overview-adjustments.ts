@@ -1,5 +1,6 @@
 import useSWR from "swr";
 import type { OverviewAdjustments } from "@/lib/aum/overview-adjustments";
+import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
 
 async function fetcher(url: string): Promise<OverviewAdjustments> {
   const res = await fetch(url);
@@ -22,6 +23,7 @@ export function useOverviewAdjustments(
   currentAvgTo?: string,
   histLiveDate?: string
 ) {
+  const blendGoldSilverAmcIds = useActiveGoldSilverBlendAmcIds();
   const params = new URLSearchParams();
   if (reportPeriod) params.set("reportPeriod", reportPeriod);
   if (avgFrom) params.set("avgFrom", avgFrom);
@@ -29,6 +31,7 @@ export function useOverviewAdjustments(
   if (currentAvgFrom) params.set("currentAvgFrom", currentAvgFrom);
   if (currentAvgTo) params.set("currentAvgTo", currentAvgTo);
   if (histLiveDate) params.set("histLiveDate", histLiveDate);
+  if (blendGoldSilverAmcIds.length > 0) params.set("blendGoldSilverAmcIds", blendGoldSilverAmcIds.join(","));
   const qs = params.toString();
   return useSWR<OverviewAdjustments>(`/api/overview-adjustments${qs ? `?${qs}` : ""}`, fetcher, {
     revalidateOnFocus: false,

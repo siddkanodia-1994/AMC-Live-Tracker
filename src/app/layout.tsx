@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/layout/theme-provider";
 import { ExportProvider } from "@/components/layout/export-context";
 import { FlowEstimateProvider } from "@/components/layout/flow-estimate-context";
+import { GoldSilverBlendProvider } from "@/components/layout/gold-silver-blend-context";
 import { Toaster } from "@/components/ui/sonner";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
@@ -56,10 +57,12 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <ExportProvider>
             <FlowEstimateProvider>
-              <Header />
-              <main className="flex-1">{children}</main>
-              <Footer />
-              <Toaster />
+              <GoldSilverBlendProvider>
+                <Header />
+                <main className="flex-1">{children}</main>
+                <Footer />
+                <Toaster />
+              </GoldSilverBlendProvider>
             </FlowEstimateProvider>
           </ExportProvider>
         </ThemeProvider>
