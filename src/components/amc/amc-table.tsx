@@ -42,8 +42,20 @@ type SortKey =
 // already use -- applied here too so the combined QoQ% moves together
 // with the toggle exactly like the equity-only avgAumQoQChangePct does
 // (same bug class/fix as that field; see amc-grid.tsx's adjustedAmcs).
-function combinedAvgFigures(amc: AmcLiveAum, etfTotalsByAmc: Record<string, number>, includeFlowEstimate: boolean) {
-  const etfTotal = etfTotalsByAmc[amc.overviewName] ?? 0;
+// blendedAmcIds: AMCs where the OTHER Gold/Silver toggle (the global
+// "Incl. Gold/Silver AUM" blend, gold-silver-blend-context.tsx) is already
+// folding real daily Gold+Silver AUM into amc.avgLiveAumCr/
+// currentQuarterAvgLiveAumCr server-side -- for those AMCs etfTotal must be
+// 0 here, or this toggle's flat AMFI figure gets added on top of data
+// that's already blended, double-counting Gold/Silver (confirmed bug:
+// ~21%/Rs87,500 Cr overstatement for Nippon with both toggles on).
+function combinedAvgFigures(
+  amc: AmcLiveAum,
+  etfTotalsByAmc: Record<string, number>,
+  includeFlowEstimate: boolean,
+  blendedAmcIds: Set<number>
+) {
+  const etfTotal = blendedAmcIds.has(amc.amcId) ? 0 : (etfTotalsByAmc[amc.overviewName] ?? 0);
   const effectiveCurrentQuarterAvgLiveAumCr = includeFlowEstimate
     ? (amc.currentQuarterAvgLiveAumCrFlowAdjusted ?? amc.currentQuarterAvgLiveAumCr)
     : amc.currentQuarterAvgLiveAumCr;
@@ -63,10 +75,11 @@ function sortValue(
   amc: AmcLiveAum,
   key: SortKey,
   etfTotalsByAmc: Record<string, number>,
-  includeFlowEstimate: boolean
+  includeFlowEstimate: boolean,
+  blendedAmcIds: Set<number>
 ): number | string | null | undefined {
   if (COMBINED_SORT_KEYS.includes(key)) {
-    const combined = combinedAvgFigures(amc, etfTotalsByAmc, includeFlowEstimate);
+    const combined = combinedAvgFigures(amc, etfTotalsByAmc, includeFlowEstimate, blendedAmcIds);
     if (key === "avgLiveAumCrCombined") return combined.avgLiveAumCrCombined;
     if (key === "avgAumCrCombined") return combined.avgAumCrCombined;
     return combined.avgAumQoQChangePctCombined;
@@ -185,7 +198,12 @@ interface Totals {
   totalNetFlowPct: number | null;
 }
 
-function computeTotals(list: AmcLiveAum[], etfTotalsByAmc: Record<string, number>, includeFlowEstimate: boolean): Totals {
+function computeTotals(
+  list: AmcLiveAum[],
+  etfTotalsByAmc: Record<string, number>,
+  includeFlowEstimate: boolean,
+  blendedAmcIds: Set<number>
+): Totals {
   const totalLiveAumCr = list.reduce((sum, a) => sum + a.liveAumCr, 0);
   const totalLiveAumCrFlowAdjusted = list.reduce((sum, a) => sum + (a.flowAdjustedLiveAumCr ?? a.liveAumCr), 0);
   const totalAvgAumCr = list.reduce((sum, a) => sum + (a.avgLiveAumCr ?? a.reportedAumCr), 0);
@@ -219,7 +237,10 @@ function computeTotals(list: AmcLiveAum[], etfTotalsByAmc: Record<string, number
   // columns above, so the displayed "+Gold/Silver" Cr figures and their own
   // QoQ% move with the toggle exactly like the equity-only ones do (same
   // bug/fix as combinedAvgFigures' per-row counterpart).
-  const totalEtfTotal = list.reduce((sum, a) => sum + (etfTotalsByAmc[a.overviewName] ?? 0), 0);
+  const totalEtfTotal = list.reduce(
+    (sum, a) => sum + (blendedAmcIds.has(a.amcId) ? 0 : (etfTotalsByAmc[a.overviewName] ?? 0)),
+    0
+  );
   const totalAvgAumCrCombined = effectiveTotalAvgAumCr + totalEtfTotal;
   const totalCurrentQuarterAvgAumCrCombined = effectiveTotalCurrentQuarterAvgAumCr + totalEtfTotal;
   const totalAvgAumQoQChangePctCombined =
@@ -360,6 +381,7 @@ export function AmcTable({
   etfTotalsByAmc,
   showGoldSilver,
   onToggleGoldSilver,
+  blendedAmcIds,
 }: {
   amcs: AmcLiveAum[];
   allAmcs: AmcLiveAum[];
@@ -396,6 +418,12 @@ export function AmcTable({
   // getEtfReportedAumTotalsByAmc). An AMC absent from this map runs no
   // Gold/Silver ETF and contributes 0.
   etfTotalsByAmc: Record<string, number>;
+  // AMCs where the OTHER Gold/Silver toggle (the global "Incl. Gold/Silver
+  // AUM" blend) is already folding real daily Gold+Silver AUM into these
+  // rows' own avgLiveAumCr/currentQuarterAvgLiveAumCr server-side --
+  // combinedAvgFigures/computeTotals must skip adding etfTotalsByAmc's flat
+  // figure for these AMCs, or Gold/Silver gets double-counted.
+  blendedAmcIds: Set<number>;
   // Lifted to AmcGrid (unlike showNetFlow below) because it also drives the
   // "Average Industry AUM" summary card above this table, not just the
   // table itself.
@@ -421,8 +449,8 @@ export function AmcTable({
   const sorted = useMemo(() => {
     const list = [...limited];
     list.sort((a, b) => {
-      const av = sortValue(a, sortKey, etfTotalsByAmc, includeFlowEstimate);
-      const bv = sortValue(b, sortKey, etfTotalsByAmc, includeFlowEstimate);
+      const av = sortValue(a, sortKey, etfTotalsByAmc, includeFlowEstimate, blendedAmcIds);
+      const bv = sortValue(b, sortKey, etfTotalsByAmc, includeFlowEstimate, blendedAmcIds);
       if (av === null || av === undefined) return 1;
       if (bv === null || bv === undefined) return -1;
       const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
@@ -478,7 +506,7 @@ export function AmcTable({
     sheetName: "Overview",
     rows: [
       ...sorted.map((amc) => {
-        const combined = combinedAvgFigures(amc, etfTotalsByAmc, includeFlowEstimate);
+        const combined = combinedAvgFigures(amc, etfTotalsByAmc, includeFlowEstimate, blendedAmcIds);
         return {
           AMC: amc.overviewName,
           [`Avg Live AUM (${currentAvgWindowExportLabel}) (Cr)`]: historical
@@ -547,8 +575,8 @@ export function AmcTable({
     ],
   }));
 
-  const subsetTotals = computeTotals(limited, etfTotalsByAmc, includeFlowEstimate);
-  const industryTotals = computeTotals(allAmcs, etfTotalsByAmc, includeFlowEstimate);
+  const subsetTotals = computeTotals(limited, etfTotalsByAmc, includeFlowEstimate, blendedAmcIds);
+  const industryTotals = computeTotals(allAmcs, etfTotalsByAmc, includeFlowEstimate, blendedAmcIds);
 
   const isRestricted = isSearchActive || topN !== "all";
   const subsetLabel = isSearchActive
@@ -718,7 +746,7 @@ export function AmcTable({
           </TableHeader>
           <TableBody>
             {sorted.map((amc) => {
-              const combined = combinedAvgFigures(amc, etfTotalsByAmc, includeFlowEstimate);
+              const combined = combinedAvgFigures(amc, etfTotalsByAmc, includeFlowEstimate, blendedAmcIds);
               return (
               <TableRow key={amc.amcId}>
                 <TableCell className="font-serif font-medium">

@@ -24,6 +24,7 @@ import { DailyDataTable } from "./daily-data-table";
 import { CorrectionsLog } from "./corrections-log";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
+import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
 import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -265,6 +266,14 @@ export function AmcGrid({
     () => Object.values(etfTotalsByAmc).reduce((sum, v) => sum + v, 0),
     [etfTotalsByAmc]
   );
+  // AMCs where the OTHER Gold/Silver toggle ("Incl. Gold/Silver AUM",
+  // global header toggle) is already folding real daily Gold+Silver AUM
+  // into these rows' own avgLiveAumCr/currentQuarterAvgLiveAumCr
+  // server-side -- combinedAvgFigures/computeTotals in amc-table.tsx must
+  // skip adding etfTotalsByAmc's flat figure for these AMCs, or Gold/
+  // Silver gets double-counted when both toggles are on at once.
+  const activeBlendAmcIds = useActiveGoldSilverBlendAmcIds();
+  const blendedAmcIds = useMemo(() => new Set(activeBlendAmcIds), [activeBlendAmcIds]);
 
   // Overlays the Reported AUM month / Avg AUM range / Avg Live AUM range
   // adjustments onto the live snapshot's AMC rows, recomputing Live vs
@@ -1257,6 +1266,7 @@ export function AmcGrid({
             distinctDebtInstrumentCount={data.distinctDebtInstrumentCount}
             distinctLivePricedCount={data.distinctLivePricedCount}
             etfTotalsByAmc={etfTotalsByAmc}
+            blendedAmcIds={blendedAmcIds}
             showGoldSilver={showGoldSilver}
             onToggleGoldSilver={() => setShowGoldSilver((v) => !v)}
           />
