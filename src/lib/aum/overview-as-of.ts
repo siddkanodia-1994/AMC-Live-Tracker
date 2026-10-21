@@ -134,6 +134,7 @@ export async function computeOverviewAsOf(
     reportPeriod: string;
     snapshotDate: string;
     prevLiveAumCr: number | null;
+    prevSnapshotDate: string | null;
   }
   const byAmcId = new Map<number, AsOfValues>();
   for (const groupRows of snapshotRowsPerGroup) {
@@ -160,6 +161,7 @@ export async function computeOverviewAsOf(
         reportPeriod: resolvedPeriodByAmc.get(amcId)!,
         snapshotDate: chosen.snapshotDate,
         prevLiveAumCr: prev ? prev.liveAumCr : null,
+        prevSnapshotDate: prev ? prev.snapshotDate : null,
       });
     }
   }
@@ -196,6 +198,7 @@ export async function computeOverviewAsOf(
       avgLiveAumCr90dFlowAdjusted: null,
       avgLiveAumCrPrev90d: null,
       previousDayLiveAumCr: s.prevLiveAumCr,
+      previousDaySnapshotDate: s.prevSnapshotDate,
       oneDayChangePct: s.prevLiveAumCr !== null && s.prevLiveAumCr !== 0 ? s.liveAumCr / s.prevLiveAumCr - 1 : null,
       netFlowCr: null,
       netFlowPct: null,

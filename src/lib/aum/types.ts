@@ -109,6 +109,17 @@ export interface AmcLiveAum {
   // today's liveAumCr — null if no prior-day snapshot exists yet (e.g. a
   // brand-new AMC). May span more than 1 calendar day if collection had a gap.
   previousDayLiveAumCr: number | null;
+  // The exact date previousDayLiveAumCr/oneDayChangePct were computed
+  // against -- null whenever previousDayLiveAumCr itself is null. Exists so
+  // a post-processing step (e.g. applyGoldSilverBlendToLiveSnapshot) can
+  // look up Gold/Silver data for the SAME date this cached snapshot
+  // already used, instead of calling getPreviousDayLiveAum() fresh, which
+  // could disagree on "yesterday" if the cache survives across an IST
+  // midnight rollover (off-hours TTL can run up to msUntilNextMarketOpen())
+  // -- that mismatch silently combined an equity figure from one date with
+  // a Gold/Silver figure from a different date, including flipping the
+  // sign of a blended AMC's displayed 1D Change on some nights.
+  previousDaySnapshotDate: string | null;
   oneDayChangePct: number | null;
   // Estimated net flow for this report period vs. the prior period's holdings
   // repriced through this period's month-end (see getNetFlowForPeriod) — null

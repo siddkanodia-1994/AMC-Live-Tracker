@@ -598,6 +598,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       avgLiveAumCr90dFlowAdjusted: null,
       avgLiveAumCrPrev90d: null,
       previousDayLiveAumCr: null,
+      previousDaySnapshotDate: null,
       oneDayChangePct: null,
       netFlowCr: null,
       netFlowPct: null,
@@ -758,6 +759,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
     if (prev) {
       if (tradingDay) {
         amc.previousDayLiveAumCr = prev.liveAumCr;
+        amc.previousDaySnapshotDate = prev.snapshotDate;
         amc.oneDayChangePct = prev.liveAumCr !== 0 ? (amc.liveAumCr - prev.liveAumCr) / prev.liveAumCr : null;
       } else {
         // Frozen day: today's figure is definitionally a repeat of the last
@@ -769,6 +771,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
         // holding here correctly uses the prior day's), which would produce
         // a spurious tiny nonzero "change" on a day nothing actually moved.
         amc.previousDayLiveAumCr = amc.liveAumCr;
+        amc.previousDaySnapshotDate = snapshot.priceAsOfDate;
         amc.oneDayChangePct = 0;
       }
     }
@@ -852,6 +855,17 @@ export async function computeLiveAum(options?: { forceRefresh?: boolean }): Prom
  * until the cache naturally expired. Returns a new snapshot object (and new
  * AmcLiveAum objects for the blended AMCs only) -- the cached object itself,
  * and every other AMC's entry, are never touched.
+ *
+ * Uses each AMC's own previousDaySnapshotDate (set once, inside
+ * runComputation, at the same time previousDayLiveAumCr/oneDayChangePct
+ * were computed) rather than a fresh getPreviousDayLiveAum() call here --
+ * this snapshot can be served from cache well after it was computed (the
+ * off-hours TTL can run up to msUntilNextMarketOpen()), so a fresh "what
+ * was yesterday" lookup can disagree with what the cached figures actually
+ * reflect once an IST midnight has passed in between, silently combining
+ * an equity base from one date with a Gold/Silver figure from another --
+ * confirmed to flip the sign of a blended AMC's displayed 1D Change on
+ * exactly that kind of night.
  */
 export async function applyGoldSilverBlendToLiveSnapshot(
   snapshot: LiveAumSnapshot,
@@ -861,12 +875,11 @@ export async function applyGoldSilverBlendToLiveSnapshot(
   if (toBlend.length === 0) return snapshot;
 
   const todayDate = snapshot.priceAsOfDate;
-  const previousDay = await getPreviousDayLiveAum();
 
   let minDate = todayDate;
   for (const amcId of toBlend) {
-    const prev = previousDay.get(amcId);
-    if (prev && prev.snapshotDate < minDate) minDate = prev.snapshotDate;
+    const amc = snapshot.amcs.find((a) => a.amcId === amcId);
+    if (amc?.previousDaySnapshotDate && amc.previousDaySnapshotDate < minDate) minDate = amc.previousDaySnapshotDate;
   }
   const goldSilverByAmcId = await getEtfDailyAumByAmcIds(toBlend, minDate, todayDate);
 
@@ -880,9 +893,8 @@ export async function applyGoldSilverBlendToLiveSnapshot(
 
     let previousDayLiveAumCr = amc.previousDayLiveAumCr;
     let oneDayChangePct = amc.oneDayChangePct;
-    const prev = previousDay.get(amc.amcId);
-    if (prev && amc.previousDayLiveAumCr != null) {
-      const extraYesterday = getGoldSilverAumOnOrBefore(series, prev.snapshotDate);
+    if (amc.previousDaySnapshotDate && amc.previousDayLiveAumCr != null) {
+      const extraYesterday = getGoldSilverAumOnOrBefore(series, amc.previousDaySnapshotDate);
       previousDayLiveAumCr = amc.previousDayLiveAumCr + extraYesterday;
       oneDayChangePct = previousDayLiveAumCr !== 0 ? (liveAumCr - previousDayLiveAumCr) / previousDayLiveAumCr : null;
     }

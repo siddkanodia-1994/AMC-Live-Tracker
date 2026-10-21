@@ -82,8 +82,13 @@ const SILVER_ETFS: SeedRow[] = [
   { schemeCode: 151730, isin: "INF789F1AYK6", name: "UTI Silver ETF", amc: "UTI Mutual Fund", assetClass: "silver", slug: "uti-silver-etf" },
   { schemeCode: 153413, isin: "INF0R8F01091", name: "Zerodha Silver ETF", amc: "Zerodha Mutual Fund", assetClass: "silver", slug: "zerodha-silver-etf" },
   // No ISIN yet (brand-new, launched 2026-08-25) -- "quant Mutual Fund" is a
-  // different AMC from the already-tracked "Quantum Mutual Fund".
-  { schemeCode: 154625, isin: null, name: "quant Silver ETF", amc: "quant Mutual Fund", assetClass: "silver", slug: "quant-silver-etf" },
+  // different AMC from the already-tracked "Quantum Mutual Fund". The `amc`
+  // field must match amcs.overview_name EXACTLY ("Quant Mutual Fund",
+  // capital Q) for every name-matching join (getEtfDailyAumByAmcIds, the
+  // old showGoldSilver toggle) to find this scheme -- the scheme's own
+  // real-world branding is lowercase ("quant Silver ETF" in `name` above),
+  // but that's a display string, not the join key.
+  { schemeCode: 154625, isin: null, name: "quant Silver ETF", amc: "Quant Mutual Fund", assetClass: "silver", slug: "quant-silver-etf" },
 ];
 
 async function main() {

@@ -238,6 +238,12 @@ export async function computeAmcAsOf(
     avgLiveAumCr90dFlowAdjusted: null,
     avgLiveAumCrPrev90d: null,
     previousDayLiveAumCr,
+    // No single well-defined "previous day" date here -- previousDaySumCr
+    // is built per-holding from each ISIN's own previousClosePriceInr
+    // lookup, not one uniform snapshot date. This historical reconstruction
+    // path is never passed through applyGoldSilverBlendToLiveSnapshot
+    // anyway (that only post-processes computeLiveAum's live-mode output).
+    previousDaySnapshotDate: null,
     oneDayChangePct: amcOneDayChangePct,
     netFlowCr: null,
     netFlowPct: null,
