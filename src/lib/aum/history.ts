@@ -33,8 +33,7 @@ async function blendGoldSilverIntoHistory(
     const goldSilverByDate = goldSilverByAmcId.get(amcId);
     if (!goldSilverByDate) continue;
     for (const p of pointsByAmcId.get(amcId) ?? []) {
-      const extra = goldSilverByDate.get(p.date);
-      if (extra != null) p.liveAumCr += extra;
+      p.liveAumCr += getGoldSilverAumOnOrBefore(goldSilverByDate, p.date);
     }
   }
 }
@@ -215,7 +214,7 @@ export async function getAverageAumForRange(
     const sums = new Map<number, number>();
     const counts = new Map<number, number>();
     for (const r of rawRows) {
-      const extra = goldSilverByAmcId.get(r.amcId)?.get(r.snapshotDate) ?? 0;
+      const extra = getGoldSilverAumOnOrBefore(goldSilverByAmcId.get(r.amcId), r.snapshotDate);
       const blended = Number(r.liveAumCr) + extra;
       sums.set(r.amcId, (sums.get(r.amcId) ?? 0) + blended);
       counts.set(r.amcId, (counts.get(r.amcId) ?? 0) + 1);
