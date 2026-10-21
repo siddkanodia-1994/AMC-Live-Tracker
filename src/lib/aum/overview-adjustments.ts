@@ -112,7 +112,7 @@ export async function getOverviewAdjustments(options?: {
       getReportedAumForPeriod(reportPeriod),
       getAverageAumForRange(avgFrom, avgTo, flowCtx, options?.blendGoldSilverAmcIds),
       getAverageAumForRange(currentAvgFrom, currentAvgTo, flowCtx, options?.blendGoldSilverAmcIds),
-      getAllAmcsLiveAumAsOf(histLiveDate),
+      getAllAmcsLiveAumAsOf(histLiveDate, options?.blendGoldSilverAmcIds),
       getAverageIndexLevelForRange(avgFrom, avgTo),
       getAverageIndexLevelForRange(currentAvgFrom, currentAvgTo),
       getIndexLevelsAsOf(histLiveDate),

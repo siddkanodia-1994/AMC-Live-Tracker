@@ -60,9 +60,23 @@ export async function getEtfCombinedDailySeriesBySchemeIds(
     realBySchemeId.get(r.schemeId)!.push({ date: r.snapshotDate, aum: Number(r.estimatedAumCr) });
   }
 
+  // The live tail below needs the NAV *on the last real anchor date* to
+  // compute each day's roll-forward ratio (anchorNav) -- so the NAV fetch
+  // must reach back to the earliest requested scheme's last anchor, not
+  // just the caller's own startDate. For a still-open quarter (startDate
+  // after every scheme's last anchor, e.g. "this month to date"), fetching
+  // from startDate alone would never see the anchor date's NAV, anchorNav
+  // would come back null, and the entire live tail would silently vanish
+  // (confirmed bug: produced a false -23% QoQ reading for Nippon's
+  // Gold/Silver blend once Q2FY27's anchors became the past quarter).
+  let navFetchStart = startDate;
+  for (const anchor of lastAnchorBySchemeId.values()) {
+    if (anchor.anchorDate < navFetchStart) navFetchStart = anchor.anchorDate;
+  }
+
   const navMap = await fetchFullNavHistory(
     schemes.map((s) => s.schemeCode),
-    startDate,
+    navFetchStart,
     rangeEnd
   );
   const navBySchemeId = new Map<number, NavPoint[]>();

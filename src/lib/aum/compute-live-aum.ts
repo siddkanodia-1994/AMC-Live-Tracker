@@ -33,6 +33,7 @@ import {
   getRolling90DayAverages,
   getTodayIsinPrices,
 } from "./history";
+import { getEtfDailyAumByAmcIds, getGoldSilverAumOnOrBefore } from "../etf/average-aum";
 import type {
   AmcLiveAum,
   ComputedLiveAum,
@@ -836,6 +837,60 @@ async function getOrCompute(forceRefresh: boolean | undefined): Promise<Computed
 export async function computeLiveAum(options?: { forceRefresh?: boolean }): Promise<LiveAumSnapshot> {
   const result = await getOrCompute(options?.forceRefresh);
   return result.snapshot;
+}
+
+/**
+ * Adds each selected AMC's point-in-time Gold+Silver AUM onto today's Live
+ * AUM (and recomputes 1D Change from blended today vs. blended yesterday) --
+ * the "blend Gold/Silver into Equity AUM" toggle's live-mode counterpart to
+ * blendGoldSilverIntoHistory (history.ts), which only covers historical
+ * series. Deliberately a POST-processing step over computeLiveAum's return
+ * value, never folded into runComputation/getOrCompute itself: that result
+ * is shared, in-memory cached across every caller regardless of their own
+ * blend selection, so mutating its amcs array in place here would leak one
+ * caller's blended figures into every other concurrent/subsequent caller
+ * until the cache naturally expired. Returns a new snapshot object (and new
+ * AmcLiveAum objects for the blended AMCs only) -- the cached object itself,
+ * and every other AMC's entry, are never touched.
+ */
+export async function applyGoldSilverBlendToLiveSnapshot(
+  snapshot: LiveAumSnapshot,
+  blendGoldSilverAmcIds: number[]
+): Promise<LiveAumSnapshot> {
+  const toBlend = blendGoldSilverAmcIds.filter((id) => snapshot.amcs.some((a) => a.amcId === id));
+  if (toBlend.length === 0) return snapshot;
+
+  const todayDate = snapshot.priceAsOfDate;
+  const previousDay = await getPreviousDayLiveAum();
+
+  let minDate = todayDate;
+  for (const amcId of toBlend) {
+    const prev = previousDay.get(amcId);
+    if (prev && prev.snapshotDate < minDate) minDate = prev.snapshotDate;
+  }
+  const goldSilverByAmcId = await getEtfDailyAumByAmcIds(toBlend, minDate, todayDate);
+
+  const blendSet = new Set(toBlend);
+  const amcs = snapshot.amcs.map((amc) => {
+    if (!blendSet.has(amc.amcId)) return amc;
+    const series = goldSilverByAmcId.get(amc.amcId);
+    const extraToday = getGoldSilverAumOnOrBefore(series, todayDate);
+    const liveAumCr = amc.liveAumCr + extraToday;
+    const flowAdjustedLiveAumCr = amc.flowAdjustedLiveAumCr != null ? amc.flowAdjustedLiveAumCr + extraToday : null;
+
+    let previousDayLiveAumCr = amc.previousDayLiveAumCr;
+    let oneDayChangePct = amc.oneDayChangePct;
+    const prev = previousDay.get(amc.amcId);
+    if (prev && amc.previousDayLiveAumCr != null) {
+      const extraYesterday = getGoldSilverAumOnOrBefore(series, prev.snapshotDate);
+      previousDayLiveAumCr = amc.previousDayLiveAumCr + extraYesterday;
+      oneDayChangePct = previousDayLiveAumCr !== 0 ? (liveAumCr - previousDayLiveAumCr) / previousDayLiveAumCr : null;
+    }
+
+    return { ...amc, liveAumCr, flowAdjustedLiveAumCr, previousDayLiveAumCr, oneDayChangePct };
+  });
+
+  return { ...snapshot, amcs, totalLiveAumCr: amcs.reduce((sum, a) => sum + a.liveAumCr, 0) };
 }
 
 export async function computeLiveAumForAmc(

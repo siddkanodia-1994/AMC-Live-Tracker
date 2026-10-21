@@ -121,3 +121,27 @@ export async function getEtfDailyAumByAmcIds(amcIds: number[], startDate: string
 
   return result;
 }
+
+/**
+ * The value for `date` in a getEtfDailyAumByAmcIds-shaped per-date map, or
+ * the closest earlier date's value when `date` itself has none -- e.g.
+ * "today" before that day's mutual fund NAV has been published yet (NAVs
+ * are an end-of-day figure released once, well after equity markets close,
+ * unlike the DHAN LTP feed this app's equity side reads from intraday).
+ * Without this fallback, a point-in-time blend comparing "today" (0 added,
+ * no NAV yet) against "yesterday" (a real addition already published)
+ * manufactures a false, large swing purely from that publication lag --
+ * the same asymmetric-blend failure shape as the NAV-fetch-range bug this
+ * feature already had, just triggered by time-of-day instead of an open
+ * quarter. Returns 0 only when the map is empty/undefined or every entry
+ * is after `date` (no earlier data exists at all) -- same "+0, equity-only
+ * fallback" convention as a missing day elsewhere in this feature.
+ */
+export function getGoldSilverAumOnOrBefore(byDate: Map<string, number> | undefined, date: string): number {
+  if (!byDate) return 0;
+  let best: string | null = null;
+  for (const d of byDate.keys()) {
+    if (d <= date && (best === null || d > best)) best = d;
+  }
+  return best !== null ? byDate.get(best)! : 0;
+}

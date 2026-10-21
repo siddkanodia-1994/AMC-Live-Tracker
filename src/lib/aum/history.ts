@@ -3,7 +3,7 @@ import { db } from "../db/client";
 import { amcHistoricalAumEstimate, amcManualNetFlow, amcPeriods, amcs, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { addDaysToDateString, getIstDateString } from "../utils/date";
 import { firstDayOfNextMonth, lastDayOfReportMonth, nextReportPeriod } from "./report-period";
-import { getEtfDailyAumByAmcIds } from "../etf/average-aum";
+import { getEtfDailyAumByAmcIds, getGoldSilverAumOnOrBefore } from "../etf/average-aum";
 
 /**
  * Adds each AMC's combined Gold+Silver daily AUM (where it exists) onto
@@ -36,6 +36,38 @@ async function blendGoldSilverIntoHistory(
       const extra = goldSilverByDate.get(p.date);
       if (extra != null) p.liveAumCr += extra;
     }
+  }
+}
+
+/**
+ * Single-point sibling of blendGoldSilverIntoHistory above, for a map of
+ * ONE dated liveAumCr value per AMC (not a whole series) -- e.g. "most
+ * recent snapshot as of a date" or "yesterday's snapshot", where each AMC's
+ * own entry can legitimately sit on a different actual date (a DISTINCT ON
+ * "most recent on/before X" lookup). Adds that entry's own date's combined
+ * Gold+Silver AUM, not the originally-requested date -- so an AMC whose
+ * latest snapshot is a few days stale still gets the correctly-dated
+ * addition, not a mismatched one.
+ */
+async function blendGoldSilverIntoPointInTime(
+  pointByAmcId: Map<number, { liveAumCr: number; snapshotDate: string }>,
+  blendAmcIds: number[]
+): Promise<void> {
+  const toBlend = blendAmcIds.filter((id) => pointByAmcId.has(id));
+  if (toBlend.length === 0) return;
+
+  let minDate: string | null = null;
+  let maxDate: string | null = null;
+  for (const amcId of toBlend) {
+    const d = pointByAmcId.get(amcId)!.snapshotDate;
+    if (minDate === null || d < minDate) minDate = d;
+    if (maxDate === null || d > maxDate) maxDate = d;
+  }
+
+  const goldSilverByAmcId = await getEtfDailyAumByAmcIds(toBlend, minDate!, maxDate!);
+  for (const amcId of toBlend) {
+    const entry = pointByAmcId.get(amcId)!;
+    entry.liveAumCr += getGoldSilverAumOnOrBefore(goldSilverByAmcId.get(amcId), entry.snapshotDate);
   }
 }
 
@@ -488,7 +520,7 @@ export interface LiveAumAsOf {
  * the Total AUM Growth tab's calendar-picked Live AUM column. AMCs with no
  * canonical snapshot on or before the date are simply absent from the map.
  */
-export async function getAllAmcsLiveAumAsOf(date: string): Promise<Map<number, LiveAumAsOf>> {
+export async function getAllAmcsLiveAumAsOf(date: string, blendGoldSilverAmcIds?: number[]): Promise<Map<number, LiveAumAsOf>> {
   // Same DISTINCT ON dedup-in-Postgres fix as getPreviousDayLiveAum above.
   const rows = await db
     .selectDistinctOn([liveAumDailySnapshot.amcId], {
@@ -503,6 +535,9 @@ export async function getAllAmcsLiveAumAsOf(date: string): Promise<Map<number, L
   const map = new Map<number, LiveAumAsOf>();
   for (const r of rows) {
     map.set(r.amcId, { liveAumCr: Number(r.liveAumCr), snapshotDate: r.snapshotDate });
+  }
+  if (blendGoldSilverAmcIds && blendGoldSilverAmcIds.length > 0) {
+    await blendGoldSilverIntoPointInTime(map, blendGoldSilverAmcIds);
   }
   return map;
 }

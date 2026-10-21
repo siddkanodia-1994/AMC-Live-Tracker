@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
+import { applyGoldSilverBlendToLiveSnapshot, computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
 import { computeOverviewAsOf } from "@/lib/aum/overview-as-of";
 import { getCanonicalSnapshotDateBounds } from "@/lib/aum/history";
 import { getDailyDataQualityAlerts } from "@/lib/aum/daily-data-quality";
@@ -11,6 +11,10 @@ export async function GET(request: Request) {
   const forceRefresh = url.searchParams.get("refresh") === "1";
   const asOfDateRaw = url.searchParams.get("asOfDate");
   const asOfDate = asOfDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(asOfDateRaw) ? asOfDateRaw : undefined;
+  const blendGoldSilverAmcIdsRaw = url.searchParams.get("blendGoldSilverAmcIds");
+  const blendGoldSilverAmcIds = blendGoldSilverAmcIdsRaw
+    ? blendGoldSilverAmcIdsRaw.split(",").map(Number).filter((n) => Number.isFinite(n))
+    : [];
 
   try {
     if (asOfDate) {
@@ -21,7 +25,7 @@ export async function GET(request: Request) {
     // DHAN LTP batch (see compute-live-aum.ts) -- no second, independent
     // DHAN call to coordinate here anymore, safe to run everything
     // concurrently.
-    const [snapshot, bounds, dailyDataQualityAlert, outageReclaims, staleMappingCorrections, unresolvedStaleMappings] = await Promise.all([
+    const [liveSnapshot, bounds, dailyDataQualityAlert, outageReclaims, staleMappingCorrections, unresolvedStaleMappings] = await Promise.all([
       computeLiveAum({ forceRefresh }),
       getCanonicalSnapshotDateBounds(),
       getDailyDataQualityAlerts().catch(() => null),
@@ -29,6 +33,10 @@ export async function GET(request: Request) {
       getRecentStaleMappingCorrections().catch(() => []),
       getUnresolvedStaleMappings().catch(() => []),
     ]);
+    const snapshot =
+      blendGoldSilverAmcIds.length > 0
+        ? await applyGoldSilverBlendToLiveSnapshot(liveSnapshot, blendGoldSilverAmcIds)
+        : liveSnapshot;
     return NextResponse.json({
       ...snapshot,
       asOfDate: null,
