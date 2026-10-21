@@ -45,9 +45,9 @@ interface RowData {
 type SortKey = keyof Omit<RowData, "amc"> | "amc";
 
 const COLUMN_LABELS: Record<Exclude<SortKey, "amc" | "g1" | "g2" | "s1" | "s2" | "t1" | "t2">, string> = {
-  gPrice: "Price QoQ",
+  gPrice: "Exit Price QoQ",
   gTotal: "Total QoQ",
-  sPrice: "Price QoQ",
+  sPrice: "Exit Price QoQ",
   sTotal: "Total QoQ",
   tPrice: "Price QoQ",
   tTotal: "Total QoQ",
