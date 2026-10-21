@@ -31,17 +31,14 @@ interface RowData {
   g1: number | null;
   g2: number | null;
   gPrice: number | null;
-  gFlow: number | null;
   gTotal: number | null;
   s1: number | null;
   s2: number | null;
   sPrice: number | null;
-  sFlow: number | null;
   sTotal: number | null;
   t1: number | null;
   t2: number | null;
   tPrice: number | null;
-  tFlow: number | null;
   tTotal: number | null;
 }
 
@@ -49,13 +46,10 @@ type SortKey = keyof Omit<RowData, "amc"> | "amc";
 
 const COLUMN_LABELS: Record<Exclude<SortKey, "amc" | "g1" | "g2" | "s1" | "s2" | "t1" | "t2">, string> = {
   gPrice: "Price QoQ",
-  gFlow: "Flow QoQ",
   gTotal: "Total QoQ",
   sPrice: "Price QoQ",
-  sFlow: "Flow QoQ",
   sTotal: "Total QoQ",
   tPrice: "Price QoQ",
-  tFlow: "Flow QoQ",
   tTotal: "Total QoQ",
 };
 
@@ -75,7 +69,7 @@ function PctCell({ value, className = "" }: { value: number | null | undefined; 
 }
 
 function GroupHeadingCell({ label, colorClass }: { label: string; colorClass: string }) {
-  return <TableHead colSpan={5} className={`text-center text-xs font-bold tracking-wide uppercase ${colorClass}`}>{label}</TableHead>;
+  return <TableHead colSpan={4} className={`text-center text-xs font-bold tracking-wide uppercase ${colorClass}`}>{label}</TableHead>;
 }
 
 function dashCell(className = "") {
@@ -164,15 +158,12 @@ export function EtfOverviewStyleTable() {
       const sTotal = s1 != null && s2 != null && s1 !== 0 ? (s2 - s1) / s1 : null;
       const gPrice = g?.priceOnlyPct ?? null;
       const sPrice = s?.priceOnlyPct ?? null;
-      const gFlow = gTotal != null && gPrice != null ? gTotal - gPrice : null;
-      const sFlow = sTotal != null && sPrice != null ? sTotal - sPrice : null;
       const t1 = g1 != null || s1 != null ? (g1 ?? 0) + (s1 ?? 0) : null;
       const t2 = g2 != null || s2 != null ? (g2 ?? 0) + (s2 ?? 0) : null;
       const tTotal = t1 != null && t1 !== 0 && t2 != null ? (t2 - t1) / t1 : null;
       const priceWeightSum = (gPrice != null && g1 ? g1 : 0) + (sPrice != null && s1 ? s1 : 0);
       const tPrice = priceWeightSum > 0 ? ((gPrice != null && g1 ? g1 * gPrice : 0) + (sPrice != null && s1 ? s1 * sPrice : 0)) / priceWeightSum : null;
-      const tFlow = tTotal != null && tPrice != null ? tTotal - tPrice : null;
-      return { amc: r.amc, g1, g2, gPrice, gFlow, gTotal, s1, s2, sPrice, sFlow, sTotal, t1, t2, tPrice, tFlow, tTotal };
+      return { amc: r.amc, g1, g2, gPrice, gTotal, s1, s2, sPrice, sTotal, t1, t2, tPrice, tTotal };
     });
   }, [comparisonData, schemeById, showExit]);
 
@@ -217,9 +208,6 @@ export function EtfOverviewStyleTable() {
   const tgPrice = weightedAvg(rows.map((r) => [r.g1, r.gPrice]));
   const tsPrice = weightedAvg(rows.map((r) => [r.s1, r.sPrice]));
   const ttPrice = weightedAvg(rows.map((r) => [r.t1, r.tPrice]));
-  const tgFlow = tgTotal != null && tgPrice != null ? tgTotal - tgPrice : null;
-  const tsFlow = tsTotal != null && tsPrice != null ? tsTotal - tsPrice : null;
-  const ttFlow = ttTotal != null && ttPrice != null ? ttTotal - ttPrice : null;
 
   function SortHead({ label, sk, className = "" }: { label: string; sk: SortKey; className?: string }) {
     const active = sk === sortKey;
@@ -314,20 +302,17 @@ export function EtfOverviewStyleTable() {
                   AMC{sortKey === "amc" ? (sortDesc ? " ↓" : " ↑") : ""}
                 </button>
               </TableHead>
+              <SortHead label={COLUMN_LABELS.gPrice} sk="gPrice" />
               <SortHead label={quarterOptions.find((q) => q.key === w1QuarterKey)?.label ?? "Window 1"} sk="g1" />
               <SortHead label={quarterOptions.find((q) => q.key === w2QuarterKey)?.label ?? "Window 2"} sk="g2" />
-              <SortHead label={COLUMN_LABELS.gPrice} sk="gPrice" />
-              <SortHead label={COLUMN_LABELS.gFlow} sk="gFlow" />
               <SortHead label={COLUMN_LABELS.gTotal} sk="gTotal" className={GROUP_DIVIDER_CLASS} />
+              <SortHead label={COLUMN_LABELS.sPrice} sk="sPrice" />
               <SortHead label={quarterOptions.find((q) => q.key === w1QuarterKey)?.label ?? "Window 1"} sk="s1" />
               <SortHead label={quarterOptions.find((q) => q.key === w2QuarterKey)?.label ?? "Window 2"} sk="s2" />
-              <SortHead label={COLUMN_LABELS.sPrice} sk="sPrice" />
-              <SortHead label={COLUMN_LABELS.sFlow} sk="sFlow" />
               <SortHead label={COLUMN_LABELS.sTotal} sk="sTotal" className={GROUP_DIVIDER_CLASS} />
+              <SortHead label={COLUMN_LABELS.tPrice} sk="tPrice" />
               <SortHead label={quarterOptions.find((q) => q.key === w1QuarterKey)?.label ?? "Window 1"} sk="t1" />
               <SortHead label={quarterOptions.find((q) => q.key === w2QuarterKey)?.label ?? "Window 2"} sk="t2" />
-              <SortHead label={COLUMN_LABELS.tPrice} sk="tPrice" />
-              <SortHead label={COLUMN_LABELS.tFlow} sk="tFlow" />
               <SortHead label={COLUMN_LABELS.tTotal} sk="tTotal" />
             </TableRow>
           </TableHeader>
@@ -335,20 +320,17 @@ export function EtfOverviewStyleTable() {
             {sorted.map((r) => (
               <TableRow key={r.amc}>
                 <TableCell className="font-medium">{r.amc}</TableCell>
+                <PctCell value={r.gPrice} />
                 <AumCell value={r.g1} />
                 <AumCell value={r.g2} />
-                <PctCell value={r.gPrice} />
-                <PctCell value={r.gFlow} />
                 <PctCell value={r.gTotal} className={GROUP_DIVIDER_CLASS} />
+                <PctCell value={r.sPrice} />
                 <AumCell value={r.s1} />
                 <AumCell value={r.s2} />
-                <PctCell value={r.sPrice} />
-                <PctCell value={r.sFlow} />
                 <PctCell value={r.sTotal} className={GROUP_DIVIDER_CLASS} />
+                <PctCell value={r.tPrice} />
                 <AumCell value={r.t1} className="font-medium" />
                 <AumCell value={r.t2} className="font-medium" />
-                <PctCell value={r.tPrice} />
-                <PctCell value={r.tFlow} />
                 <PctCell value={r.tTotal} />
               </TableRow>
             ))}
@@ -356,20 +338,17 @@ export function EtfOverviewStyleTable() {
           <TableFooter>
             <TableRow>
               <TableCell className="font-medium">Total ({rows.filter((r) => r.g1 != null || r.g2 != null).length} Gold / {rows.filter((r) => r.s1 != null || r.s2 != null).length} Silver AMCs)</TableCell>
+              <PctCell value={tgPrice} />
               <AumCell value={tg1} className="font-medium" />
               <AumCell value={tg2} className="font-medium" />
-              <PctCell value={tgPrice} />
-              <PctCell value={tgFlow} />
               <PctCell value={tgTotal} className={GROUP_DIVIDER_CLASS} />
+              <PctCell value={tsPrice} />
               <AumCell value={ts1} className="font-medium" />
               <AumCell value={ts2} className="font-medium" />
-              <PctCell value={tsPrice} />
-              <PctCell value={tsFlow} />
               <PctCell value={tsTotal} className={GROUP_DIVIDER_CLASS} />
+              <PctCell value={ttPrice} />
               <AumCell value={tt1} className="font-medium" />
               <AumCell value={tt2} className="font-medium" />
-              <PctCell value={ttPrice} />
-              <PctCell value={ttFlow} />
               <PctCell value={ttTotal} />
             </TableRow>
             {mcxData?.rows.map((row) => (
@@ -382,12 +361,10 @@ export function EtfOverviewStyleTable() {
                 </TableCell>
                 {row.metal === "gold" ? (
                   <>
+                    <PctCell value={row.deltaPct} />
                     <TableCell className="text-right tabular-nums">{row.quarterEndPriceInr != null ? `${formatPriceInr(row.quarterEndPriceInr)}/${row.unit}` : "—"}</TableCell>
                     <TableCell className="text-right tabular-nums">{row.livePriceInr != null ? `${formatPriceInr(row.livePriceInr)}/${row.unit}` : "—"}</TableCell>
-                    {dashCell()}
-                    {dashCell()}
-                    <PctCell value={row.deltaPct} className={GROUP_DIVIDER_CLASS} />
-                    {dashCell()}
+                    {dashCell(GROUP_DIVIDER_CLASS)}
                     {dashCell()}
                     {dashCell()}
                     {dashCell()}
@@ -398,16 +375,13 @@ export function EtfOverviewStyleTable() {
                     {dashCell()}
                     {dashCell()}
                     {dashCell()}
-                    {dashCell()}
                     {dashCell(GROUP_DIVIDER_CLASS)}
+                    <PctCell value={row.deltaPct} />
                     <TableCell className="text-right tabular-nums">{row.quarterEndPriceInr != null ? `${formatPriceInr(row.quarterEndPriceInr)}/${row.unit}` : "—"}</TableCell>
                     <TableCell className="text-right tabular-nums">{row.livePriceInr != null ? `${formatPriceInr(row.livePriceInr)}/${row.unit}` : "—"}</TableCell>
-                    {dashCell()}
-                    {dashCell()}
-                    <PctCell value={row.deltaPct} className={GROUP_DIVIDER_CLASS} />
+                    {dashCell(GROUP_DIVIDER_CLASS)}
                   </>
                 )}
-                {dashCell()}
                 {dashCell()}
                 {dashCell()}
                 {dashCell()}
