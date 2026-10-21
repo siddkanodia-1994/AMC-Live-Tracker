@@ -1,6 +1,6 @@
 import { and, asc, desc, gte, inArray, lte } from "drizzle-orm";
 import { db } from "../db/client";
-import { etfSchemes, etfExitAumAnchor, etfDailyAumEstimate } from "../db/schema";
+import { etfSchemes, etfExitAumAnchor, etfDailyAumEstimate, etfDailyNav } from "../db/schema";
 import { fetchFullNavHistory } from "./tigzig-client";
 import { adjustNavForSplits } from "./nav-split-detection";
 import type { NavPoint } from "./historical-backfill";
@@ -60,29 +60,78 @@ export async function getEtfCombinedDailySeriesBySchemeIds(
     realBySchemeId.get(r.schemeId)!.push({ date: r.snapshotDate, aum: Number(r.estimatedAumCr) });
   }
 
-  // The live tail below needs the NAV *on the last real anchor date* to
-  // compute each day's roll-forward ratio (anchorNav) -- so the NAV fetch
-  // must reach back to the earliest requested scheme's last anchor, not
-  // just the caller's own startDate. For a still-open quarter (startDate
-  // after every scheme's last anchor, e.g. "this month to date"), fetching
-  // from startDate alone would never see the anchor date's NAV, anchorNav
-  // would come back null, and the entire live tail would silently vanish
-  // (confirmed bug: produced a false -23% QoQ reading for Nippon's
-  // Gold/Silver blend once Q2FY27's anchors became the past quarter).
+  // Only schemes with an actual gap between their last real (backfilled)
+  // data point and rangeEnd need any NAV at all -- a window entirely
+  // covered by etf_daily_aum_estimate (e.g. any fully-closed historical
+  // quarter) needs no live tail, so no NAV fetch of any kind for those
+  // schemes. This used to fetch NAV unconditionally on every call,
+  // including for 100%-historical queries whose result was immediately
+  // discarded -- a real, confirmed source of redundant TigZig calls
+  // (Overview's Live AUM alone polls every 45s with the blend toggle on).
   let navFetchStart = startDate;
-  for (const anchor of lastAnchorBySchemeId.values()) {
-    if (anchor.anchorDate < navFetchStart) navFetchStart = anchor.anchorDate;
+  const schemesNeedingTail: typeof schemes = [];
+  for (const s of schemes) {
+    const real = realBySchemeId.get(s.id) ?? [];
+    const lastAnchor = lastAnchorBySchemeId.get(s.id);
+    const lastRealDate = real.length > 0 ? real[real.length - 1].date : (lastAnchor?.anchorDate ?? null);
+    if (!lastAnchor || lastRealDate === null || lastRealDate >= rangeEnd) continue;
+    schemesNeedingTail.push(s);
+    // The live tail below needs the NAV *on the last real anchor date* to
+    // compute each day's roll-forward ratio (anchorNav) -- so the NAV
+    // fetch must reach back to this scheme's own last anchor, not just the
+    // caller's own startDate (confirmed bug otherwise: produced a false
+    // -23% QoQ reading for Nippon's Gold/Silver blend once Q2FY27's
+    // anchors became the past quarter).
+    if (lastAnchor.anchorDate < navFetchStart) navFetchStart = lastAnchor.anchorDate;
   }
 
-  const navMap = await fetchFullNavHistory(
-    schemes.map((s) => s.schemeCode),
-    navFetchStart,
-    rangeEnd
-  );
   const navBySchemeId = new Map<number, NavPoint[]>();
-  for (const s of schemes) {
-    const raw = navMap.get(s.schemeCode) ?? [];
-    navBySchemeId.set(s.id, raw.length > 0 ? adjustNavForSplits(raw).adjusted : []);
+  if (schemesNeedingTail.length > 0) {
+    // Read from the local daily cache first (etf_daily_nav -- populated
+    // once a day by runEtfIngestion/src/lib/etf/ingest.ts for the older
+    // ratio-based live-AUM feature, but equally valid raw daily NAV for
+    // this purpose too) instead of hitting TigZig live on every call. Only
+    // schemes whose cached coverage doesn't fully span [navFetchStart,
+    // rangeEnd] -- e.g. an anchor older than the cache's own history
+    // (which only started 2026-09-07), or "today" before that day's cron
+    // has run yet -- fall back to a live fetch, for just their own range.
+    const cachedRows = await db
+      .select({ schemeId: etfDailyNav.schemeId, snapshotDate: etfDailyNav.snapshotDate, nav: etfDailyNav.nav })
+      .from(etfDailyNav)
+      .where(
+        and(
+          inArray(etfDailyNav.schemeId, schemesNeedingTail.map((s) => s.id)),
+          gte(etfDailyNav.snapshotDate, navFetchStart),
+          lte(etfDailyNav.snapshotDate, rangeEnd)
+        )
+      )
+      .orderBy(asc(etfDailyNav.snapshotDate));
+    const navSourceBySchemeId = new Map<number, NavPoint[]>();
+    for (const r of cachedRows) {
+      if (!navSourceBySchemeId.has(r.schemeId)) navSourceBySchemeId.set(r.schemeId, []);
+      navSourceBySchemeId.get(r.schemeId)!.push({ date: r.snapshotDate, nav: Number(r.nav) });
+    }
+
+    const schemesNeedingLiveFetch = schemesNeedingTail.filter((s) => {
+      const cached = navSourceBySchemeId.get(s.id);
+      return !cached || cached.length === 0 || cached[0].date > navFetchStart || cached[cached.length - 1].date < rangeEnd;
+    });
+
+    if (schemesNeedingLiveFetch.length > 0) {
+      const liveNavMap = await fetchFullNavHistory(
+        schemesNeedingLiveFetch.map((s) => s.schemeCode),
+        navFetchStart,
+        rangeEnd
+      );
+      for (const s of schemesNeedingLiveFetch) {
+        navSourceBySchemeId.set(s.id, liveNavMap.get(s.schemeCode) ?? []);
+      }
+    }
+
+    for (const s of schemesNeedingTail) {
+      const raw = navSourceBySchemeId.get(s.id) ?? [];
+      navBySchemeId.set(s.id, raw.length > 0 ? adjustNavForSplits(raw).adjusted : []);
+    }
   }
 
   function navOnOrBefore(adjustedNav: NavPoint[], date: string): number | null {
