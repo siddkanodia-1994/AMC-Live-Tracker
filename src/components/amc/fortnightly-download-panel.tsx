@@ -256,6 +256,14 @@ export function FortnightlyDownloadPanel() {
         const sections = buildFortnightlyExportSections(sheet);
         let cursorY = drawOverviewBanner(doc, autoTable, sheet, pageWidth, 14);
         for (const section of sections.slice(1)) {
+          // "AMC SIP Growth" otherwise lands wherever the cursor happens to
+          // be, often near the bottom of the page -- autoTable then splits
+          // it awkwardly across the page break. Force it to start fresh on
+          // its own page, same convention as the per-AMC addPage() above.
+          if (section.title === "AMC SIP Growth") {
+            doc.addPage();
+            cursorY = 14;
+          }
           // Section banner bar -- same black-fill/white-text as the
           // dashboard's own SectionBanner and the Excel export's writeBanner.
           doc.setFillColor(...BANNER_RGB);

@@ -216,15 +216,19 @@ function buildQuarterBlock(
   const q0 = getFiscalQuarterBounds(today);
   const q1 = getPreviousFiscalQuarterBounds(q0.start);
   const q2 = getPreviousFiscalQuarterBounds(q1.start);
+  const q3 = getPreviousFiscalQuarterBounds(q2.start);
   const yoy0 = nFiscalQuartersBack(today, 4);
   const yoy1 = nFiscalQuartersBack(q1.start, 4);
+  const yoy2 = nFiscalQuartersBack(q2.start, 4);
   const q0End = clampToToday(q0.end, today);
 
   const v0 = averageOrExitAum(points, q0.start, q0End, mode, flowAdjustment);
   const v1 = averageOrExitAum(points, q1.start, q1.end, mode, flowAdjustment);
   const v2 = averageOrExitAum(points, q2.start, q2.end, mode, flowAdjustment);
+  const v3 = averageOrExitAum(points, q3.start, q3.end, mode, flowAdjustment);
   const vY0 = averageOrExitAum(points, yoy0.start, yoy0.end, mode, flowAdjustment);
   const vY1 = averageOrExitAum(points, yoy1.start, yoy1.end, mode, flowAdjustment);
+  const vY2 = averageOrExitAum(points, yoy2.start, yoy2.end, mode, flowAdjustment);
 
   const label = (b: { start: string }) => {
     const { fy, q } = getFiscalYearAndQuarter(b.start);
@@ -234,7 +238,7 @@ function buildQuarterBlock(
   return [
     { label: label(q0), valCr: v0, qoqPct: pctChange(v0, v1), yoyPct: pctChange(v0, vY0), range: [q0.start, q0End] },
     { label: label(q1), valCr: v1, qoqPct: pctChange(v1, v2), yoyPct: pctChange(v1, vY1), range: [q1.start, q1.end] },
-    { label: label(q2), valCr: v2, range: [q2.start, q2.end] },
+    { label: label(q2), valCr: v2, qoqPct: pctChange(v2, v3), yoyPct: pctChange(v2, vY2), range: [q2.start, q2.end] },
     { label: label(yoy0), valCr: vY0, range: [yoy0.start, yoy0.end] },
     { label: label(yoy1), valCr: vY1, range: [yoy1.start, yoy1.end] },
   ];

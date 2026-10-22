@@ -9,6 +9,7 @@ import { EditNumberCell } from "./edit-number-cell";
 import { EditTextareaCell } from "./edit-textarea-cell";
 import { FortnightlyDownloadPanel } from "./fortnightly-download-panel";
 import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
+import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
 import { useFortnightlyEligibleAmcs, useFortnightlySheet } from "@/hooks/use-fortnightly-update";
 import { formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
 import {
@@ -557,7 +558,7 @@ function ScenarioEditRow({
 // other card into a short bulleted summary. Only ever runs when the
 // analyst explicitly clicks "Regenerate from data" -- never auto-fills or
 // silently overwrites whatever's already in the box.
-function generateOverviewDraft(sheet: FortnightlySheet): string {
+function generateOverviewDraft(sheet: FortnightlySheet, isBlended: boolean): string {
   const m = sheet.manual;
   const bullets: string[] = [];
 
@@ -576,7 +577,8 @@ function generateOverviewDraft(sheet: FortnightlySheet): string {
   const qaaumLatest = sheet.qaaum[0];
   const qaaumPrev = sheet.qaaum[1];
   if (qaaumLatest) {
-    bullets.push(`• QAAUM: ${formatQuarterLine(qaaumLatest)}` + (qaaumPrev ? `\n${formatQuarterLine(qaaumPrev)}` : ""));
+    const qaaumLabel = `QAAUM${isBlended ? " (incl Gold and Silver)" : ""}`;
+    bullets.push(`• ${qaaumLabel}: ${formatQuarterLine(qaaumLatest)}` + (qaaumPrev ? `\n${formatQuarterLine(qaaumPrev)}` : ""));
   }
 
   const sipQoq =
@@ -584,11 +586,13 @@ function generateOverviewDraft(sheet: FortnightlySheet): string {
   const sipYoy =
     m.sipAmcYoyQValCr !== null && m.sipAmcQtdValCr !== null && m.sipAmcYoyQValCr !== 0 ? m.sipAmcQtdValCr / m.sipAmcYoyQValCr - 1 : null;
   bullets.push(
-    `• SIP flows: ${m.sipAmcQtdValCr === null ? "—" : formatCrRounded(m.sipAmcQtdValCr)} in ${sheet.sipAmcLabels.qtd}, ` +
+    `• AMC SIP flows: ${m.sipAmcQtdValCr === null ? "—" : formatCrRounded(m.sipAmcQtdValCr)} in ${sheet.sipAmcLabels.qtd}, ` +
       `${sipQoq === null ? "—" : formatPct(sipQoq, { alwaysSign: true })} QoQ, ` +
-      `${sipYoy === null ? "—" : formatPct(sipYoy, { alwaysSign: true })} YoY — SIP/Equity AUM at ` +
-      `${m.sipAmcQtdPct === null ? "—" : formatPct(m.sipAmcQtdPct)} ` +
-      `(${m.sipAmcPrevQPct === null ? "—" : formatPct(m.sipAmcPrevQPct)} prior quarter)`
+      `${sipYoy === null ? "—" : formatPct(sipYoy, { alwaysSign: true })} YoY`
+  );
+  bullets.push(
+    `• SIP/Equity AUM: ${m.sipAmcQtdPct === null ? "—" : formatPct(m.sipAmcQtdPct)} in ${sheet.sipAmcLabels.qtd} vs ` +
+      `${m.sipAmcPrevQPct === null ? "—" : formatPct(m.sipAmcPrevQPct)} in ${sheet.sipAmcLabels.prevQ}`
   );
 
   if (sheet.ratio) {
@@ -612,7 +616,7 @@ function generateOverviewDraft(sheet: FortnightlySheet): string {
   const formatScoreComparison = (label: string, row: { score: number | null; changePct: number | null } | undefined) => {
     if (!row || row.score === null) return null;
     const chg = row.changePct === null ? "" : ` (${formatPct(row.changePct, { alwaysSign: true })})`;
-    return `${row.score.toFixed(2)} ${label}${chg}`;
+    return `${row.score.toFixed(2)} — ${label}${chg}`;
   };
   const scoreComparisons = [formatScoreComparison("15 days ago", scoreRows[1]), formatScoreComparison("a year ago", scoreRows[3])].filter(
     (s): s is string => s !== null
@@ -769,6 +773,7 @@ function OverviewCard({
   const [editingSummary, setEditingSummary] = useState(false);
   const t = sheet.verdictThresholds;
   const effectiveVerdict = getEffectiveVerdictLabel(sheet.manual, sheet.autoVerdict);
+  const blendGoldSilverAmcIds = useActiveGoldSilverBlendAmcIds();
 
   function updateThreshold(field: keyof VerdictThresholds, newPct: number) {
     saveVerdictThresholds({ ...t, [field]: newPct / 100 });
@@ -777,7 +782,7 @@ function OverviewCard({
   async function handleRegenerate() {
     setRegenerating(true);
     try {
-      await onSave("summary", generateOverviewDraft(sheet));
+      await onSave("summary", generateOverviewDraft(sheet, blendGoldSilverAmcIds.includes(sheet.amcId)));
       setEditingSummary(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to regenerate summary");
