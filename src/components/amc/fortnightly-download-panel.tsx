@@ -97,7 +97,14 @@ function drawOverviewBanner(doc: any, autoTable: any, sheet: FortnightlySheet, p
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(...OVERVIEW_SUBTEXT_RGB);
-  doc.text(`As of ${formatShortDate(sheet.asOfDate)} · CMP ${price(sheet.cmpInr)}`, leftX, startY + 15);
+  const cmpLine = `As of ${formatShortDate(sheet.asOfDate)} · CMP ${price(sheet.cmpInr)}`;
+  doc.text(cmpLine, leftX, startY + 15);
+  if (sheet.cmpIsLive) {
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...UPSIDE_POS_RGB);
+    doc.text(" · Live", leftX + doc.getTextWidth(cmpLine), startY + 15);
+    doc.setFont("helvetica", "normal");
+  }
 
   // Verdict pill, top-right.
   const verdictLabel = effectiveVerdict.label;

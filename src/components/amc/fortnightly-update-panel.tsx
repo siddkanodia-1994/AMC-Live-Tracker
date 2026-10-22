@@ -831,6 +831,12 @@ function OverviewCard({
           <div className="text-lg font-extrabold">{sheet.overviewName}</div>
           <div className="mt-0.5 text-xs text-slate-300">
             As of {formatShortDate(sheet.asOfDate)} · CMP {sheet.cmpInr === null ? "—" : formatPriceInr(sheet.cmpInr)}
+            {sheet.cmpIsLive && (
+              <span className="ml-1.5 inline-flex items-center gap-1 text-emerald-300">
+                <span className="inline-block size-1.5 rounded-full bg-emerald-400" />
+                Live
+              </span>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap items-end gap-6">

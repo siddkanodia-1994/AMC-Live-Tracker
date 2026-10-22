@@ -1,7 +1,10 @@
 import { and, desc, eq, inArray, lte } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcFortnightlyUpdate, amcListedStock, amcs, appSettings, isinDailyPrice } from "../db/schema";
+import { amcFortnightlyUpdate, amcListedStock, amcs, appSettings, instrumentMap, isinDailyPrice } from "../db/schema";
 import { getStockCorrelationDefaults } from "../amc-stock/correlation-defaults";
+import { fetchLtps, segmentKey } from "../dhan/client";
+import type { ExchangeSegment } from "../dhan/types";
+import { isMarketOpen } from "../utils/market-hours";
 import {
   trimToLastContinuousRun,
   computeMovingAverage,
@@ -284,6 +287,26 @@ export async function getEodPriceAsOf(amcId: number, asOfDate: string): Promise<
     .orderBy(desc(isinDailyPrice.snapshotDate))
     .limit(1);
   return row ? Number(row.priceInr) : null;
+}
+
+/**
+ * This AMC's own listed-stock live price right now, via the same DHAN LTP
+ * feed already used for live holdings repricing (compute-live-aum.ts) --
+ * null if the ISIN has no instrument_map entry or the DHAN call itself
+ * fails (expired token, network error, etc). Callers fall back to
+ * getEodPriceAsOf in every one of those cases, the same "degrade
+ * gracefully, never error" convention used everywhere else DHAN is called.
+ */
+export async function getListedStockLivePrice(isin: string): Promise<number | null> {
+  const [mapped] = await db
+    .select({ securityId: instrumentMap.securityId, exchangeSegment: instrumentMap.exchangeSegment })
+    .from(instrumentMap)
+    .where(eq(instrumentMap.isin, isin));
+  if (!mapped) return null;
+
+  const item = { securityId: mapped.securityId, exchangeSegment: mapped.exchangeSegment as ExchangeSegment };
+  const { pricesBySecurityId } = await fetchLtps([item]);
+  return pricesBySecurityId.get(segmentKey(item)) ?? null;
 }
 
 export interface RatioSection {
@@ -908,6 +931,11 @@ export interface FortnightlySheet {
   isLatest: boolean;
   availableDates: string[];
   cmpInr: number | null;
+  // True only when cmpInr is a live DHAN quote fetched just now (market
+  // open, viewing today's actual date, and the live fetch itself
+  // succeeded) -- false for every other case, including a live fetch
+  // attempt that failed and silently fell back to the last EOD close.
+  cmpIsLive: boolean;
   qaaum: QuarterRow[];
   ratio: RatioSection | null;
   sipAmcLabels: SipPeriodLabels;
@@ -947,7 +975,7 @@ export async function getFortnightlySheet(
 
   const [listedStock] = await db.select().from(amcListedStock).where(eq(amcListedStock.amcId, amcId));
 
-  const [savedRow, cmpInr, aumHistory, priceByIsin, correlationSettings, sipIndustryAuto, sipIndustryQuarterlyAuto, verdictThresholds] =
+  const [savedRow, eodCmpInr, aumHistory, priceByIsin, correlationSettings, sipIndustryAuto, sipIndustryQuarterlyAuto, verdictThresholds] =
     await Promise.all([
       db
         .select()
@@ -1011,6 +1039,22 @@ export async function getFortnightlySheet(
     ? computeRatioSection({ aumHistory, stockPriceSeries }, asOfDate, correlationSettings)
     : null;
 
+  // CMP goes live only when viewing today's actual date with the market
+  // open -- any older snapshot, even the latest one on file, always shows
+  // its own EOD close so it never mixes a right-now price into a
+  // valuation basis from a different day. The Ratio card's own SD-level/
+  // upside-to-mean % deliberately keeps reading stockPriceSeries's last
+  // EOD close above, unchanged, per explicit scoping.
+  let cmpInr = eodCmpInr;
+  let cmpIsLive = false;
+  if (listedStock && asOfDate === getIstDateString() && isMarketOpen()) {
+    const livePrice = await getListedStockLivePrice(listedStock.isin);
+    if (livePrice !== null) {
+      cmpInr = livePrice;
+      cmpIsLive = true;
+    }
+  }
+
   const valuation = computeValuationBlock(manual, cmpInr);
   const autoVerdict = computeAutoVerdict(valuation.fy28UpsidePct.base, verdictThresholds);
 
@@ -1026,6 +1070,7 @@ export async function getFortnightlySheet(
     isLatest,
     availableDates,
     cmpInr,
+    cmpIsLive,
     qaaum,
     ratio,
     sipAmcLabels: getSipAmcPeriodLabels(sipAmcLatestFy, sipAmcLatestQuarter),
