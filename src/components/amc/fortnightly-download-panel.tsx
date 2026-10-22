@@ -69,6 +69,12 @@ const REPORT_TABLE_COLUMN_WIDTHS: Record<string, Record<number, { cellWidth: num
   // unspecified (content-sized within the wrap-width table below).
   ratio: { 0: { cellWidth: 58 } },
   "amc-score": { 0: { cellWidth: 58 } },
+  // PAT and Valuation hold different shapes (FY26A/FY27E/FY28E,
+  // Bear/Base/Bull) with no "Val (Cr)" equivalent to line up against the
+  // tables above, so each gets its own widths sized to its own content
+  // instead of sharing the 58mm grid.
+  pat: { 0: { cellWidth: 28 }, 1: { cellWidth: 24 }, 2: { cellWidth: 24 }, 3: { cellWidth: 24 }, 4: { cellWidth: 24 } },
+  valuation: { 0: { cellWidth: 45 }, 1: { cellWidth: 26 }, 2: { cellWidth: 26 }, 3: { cellWidth: 26 } },
 };
 
 // Scales a REPORT_TABLE_COLUMN_WIDTHS entry by fontScale -- keeping each

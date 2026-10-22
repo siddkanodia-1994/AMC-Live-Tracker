@@ -1031,7 +1031,7 @@ function FortnightlySheetView({
         <div className="overflow-hidden rounded-lg border bg-card">
           <Table className={TABLE_TEXT_CLASS}>
             <TableBody>
-              <SectionBanner title="PAT" colSpan={5} />
+              <SectionBanner title="PAT (TUSK)" colSpan={5} />
               <TableRow>
                 <TableCell className="font-semibold">Period</TableCell>
                 <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">FY26A</TableCell>

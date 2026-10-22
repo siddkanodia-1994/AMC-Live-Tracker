@@ -114,7 +114,8 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   };
 
   const pat: ExportSection = {
-    title: "PAT",
+    title: "PAT (TUSK)",
+    key: "pat",
     rows: [
       ["Period", "FY26A", "FY27E", "FY28E", "2Y CAGR"],
       [
@@ -129,6 +130,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
 
   const valuation: ExportSection = {
     title: "Valuation (Bear / Base / Bull)",
+    key: "valuation",
     rows: [
       ["", "Bear", "Base", "Bull"],
       scenarioRow("Target PE", { bear: m.targetPeBear, base: m.targetPeBase, bull: m.targetPeBull }, (x) => (x === null ? "—" : String(x))),
@@ -562,7 +564,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   writeNum(ws, row, 2, m.noOfSharesCr, PLAIN_FORMAT + ".0", true);
   row += 2;
 
-  writeBanner(ws, row, "PAT", 5);
+  writeBanner(ws, row, "PAT (TUSK)", 5);
   row++;
   writeHeaderRow(ws, row, ["Period", "FY26A", "FY27E", "FY28E", "2Y CAGR"]);
   row++;
