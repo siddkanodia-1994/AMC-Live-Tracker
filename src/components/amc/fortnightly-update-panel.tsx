@@ -10,12 +10,14 @@ import { EditTextareaCell } from "./edit-textarea-cell";
 import { FortnightlyDownloadPanel } from "./fortnightly-download-panel";
 import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
 import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
+import { FontScaleProvider, useFontScale } from "@/components/layout/font-scale-context";
 import { useFortnightlyEligibleAmcs, useFortnightlySheet } from "@/hooks/use-fortnightly-update";
 import { formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
 import {
   VERDICT_TIERS,
   parseSummaryRows,
   getEffectiveVerdictLabel,
+  getAmcAbbreviation,
   type FortnightlyFieldName,
   type FortnightlySheet,
   type ScenarioValues,
@@ -269,6 +271,14 @@ function SectionBanner({ title, colSpan }: { title: string; colSpan: number }) {
 }
 
 export function FortnightlyUpdatePanel() {
+  return (
+    <FontScaleProvider>
+      <FortnightlyUpdatePanelInner />
+    </FontScaleProvider>
+  );
+}
+
+function FortnightlyUpdatePanelInner() {
   const { data: amcsData, isLoading: amcsLoading } = useFortnightlyEligibleAmcs();
   const [amcId, setAmcId] = useState<number | null>(null);
   const [asOfDate, setAsOfDate] = useState<string | null>(null); // null = latest
@@ -283,6 +293,7 @@ export function FortnightlyUpdatePanel() {
 
   const { includeFlowEstimate } = useFlowEstimateDisplay();
   const { data: sheet, error, isLoading, mutate } = useFortnightlySheet(amcId, asOfDate, includeFlowEstimate);
+  const { fontScale } = useFontScale();
 
   // Reset the date selector back to "latest" whenever the AMC changes, so
   // switching AMCs never silently carries over a date that may not exist
@@ -401,16 +412,62 @@ export function FortnightlyUpdatePanel() {
             {creating ? "Creating…" : "+ New fortnightly update"}
           </button>
         </div>
-        {sheet && !sheet.isLatest && (
-          <span className="ml-auto rounded-sm border border-amber-500/60 px-2 py-1 text-xs text-amber-700 dark:text-amber-400">
-            Viewing a past snapshot ({formatShortDate(sheet.asOfDate)})
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {sheet && !sheet.isLatest && (
+            <span className="rounded-sm border border-amber-500/60 px-2 py-1 text-xs text-amber-700 dark:text-amber-400">
+              Viewing a past snapshot ({formatShortDate(sheet.asOfDate)})
+            </span>
+          )}
+          <FontSizeControl />
+        </div>
       </div>
 
-      {sheet && <FortnightlySheetView sheet={sheet} onSave={saveField} />}
+      {sheet && (
+        <div style={{ zoom: fontScale }}>
+          <FortnightlySheetView sheet={sheet} onSave={saveField} />
+        </div>
+      )}
 
       <FortnightlyDownloadPanel />
+    </div>
+  );
+}
+
+// A-/A+ stepper for this tab's text size -- scales every table below (via
+// the zoom wrapper around FortnightlySheetView) and the next PDF download
+// (FortnightlyDownloadPanel reads the same fontScale). Deliberately NOT
+// inside the zoomed wrapper itself, so the control stays a stable size
+// regardless of what it's currently set to.
+function FontSizeControl() {
+  const { fontScale, increaseFontScale, decreaseFontScale, resetFontScale } = useFontScale();
+  return (
+    <div className="flex items-center gap-1 rounded-md border px-1 py-1" title="Text size for this tab and its PDF export">
+      <button
+        type="button"
+        onClick={decreaseFontScale}
+        disabled={fontScale <= 0.85}
+        className="rounded px-1.5 py-0.5 text-xs font-semibold text-muted-foreground hover:bg-muted disabled:opacity-40"
+        aria-label="Decrease text size"
+      >
+        A−
+      </button>
+      <button
+        type="button"
+        onClick={resetFontScale}
+        className="min-w-10 rounded px-1 py-0.5 text-center text-[11px] text-muted-foreground hover:bg-muted"
+        title="Reset to 100%"
+      >
+        {Math.round(fontScale * 100)}%
+      </button>
+      <button
+        type="button"
+        onClick={increaseFontScale}
+        disabled={fontScale >= 1.25}
+        className="rounded px-1.5 py-0.5 text-sm font-semibold text-muted-foreground hover:bg-muted disabled:opacity-40"
+        aria-label="Increase text size"
+      >
+        A+
+      </button>
     </div>
   );
 }
@@ -577,7 +634,7 @@ function generateOverviewDraft(sheet: FortnightlySheet, isBlended: boolean): str
   const qaaumLatest = sheet.qaaum[0];
   const qaaumPrev = sheet.qaaum[1];
   if (qaaumLatest) {
-    const qaaumLabel = `QAAUM${isBlended ? " (incl Gold and Silver)" : ""}`;
+    const qaaumLabel = `Equity QAAUM${isBlended ? " (incl Gold and Silver)" : ""}`;
     bullets.push(`• ${qaaumLabel}: ${formatQuarterLine(qaaumLatest)}` + (qaaumPrev ? `\n${formatQuarterLine(qaaumPrev)}` : ""));
   }
 
@@ -586,7 +643,7 @@ function generateOverviewDraft(sheet: FortnightlySheet, isBlended: boolean): str
   const sipYoy =
     m.sipAmcYoyQValCr !== null && m.sipAmcQtdValCr !== null && m.sipAmcYoyQValCr !== 0 ? m.sipAmcQtdValCr / m.sipAmcYoyQValCr - 1 : null;
   bullets.push(
-    `• AMC SIP flows: ${m.sipAmcQtdValCr === null ? "—" : formatCrRounded(m.sipAmcQtdValCr)} in ${sheet.sipAmcLabels.qtd}, ` +
+    `• ${getAmcAbbreviation(sheet.amcId)} SIP flows: ${m.sipAmcQtdValCr === null ? "—" : formatCrRounded(m.sipAmcQtdValCr)} in ${sheet.sipAmcLabels.qtd}, ` +
       `${sipQoq === null ? "—" : formatPct(sipQoq, { alwaysSign: true })} QoQ, ` +
       `${sipYoy === null ? "—" : formatPct(sipYoy, { alwaysSign: true })} YoY`
   );
@@ -1052,7 +1109,7 @@ function FortnightlySheetView({
         <div className="overflow-hidden rounded-lg border bg-card">
           <Table className={TABLE_TEXT_CLASS}>
             <TableBody>
-              <SectionBanner title="MTM Growth - QAAUM" colSpan={4} />
+              <SectionBanner title="MTM Growth - Equity QAAUM" colSpan={4} />
               <TableRow>
                 <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
                 <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Val (Cr)</TableCell>
@@ -1160,7 +1217,7 @@ function SipAmcGrowthTable({
     <div className="overflow-hidden rounded-lg border bg-card">
       <Table className={TABLE_TEXT_CLASS}>
         <TableBody>
-          <SectionBanner title="AMC SIP Growth" colSpan={5} />
+          <SectionBanner title={`${getAmcAbbreviation(sheet.amcId)} SIP Growth`} colSpan={5} />
           <TableRow>
             <TableCell className="font-semibold">Latest Available Quarter</TableCell>
             <TableCell colSpan={2} />

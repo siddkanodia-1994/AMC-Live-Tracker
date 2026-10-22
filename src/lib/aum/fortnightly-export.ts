@@ -1,6 +1,6 @@
 import type { Workbook, Worksheet } from "exceljs";
 import { formatPct, formatPriceInr, formatShortDate } from "../utils/format";
-import { parseSummaryRows, getEffectiveVerdictLabel, type FortnightlySheet, type ScenarioValues } from "./fortnightly-update";
+import { parseSummaryRows, getEffectiveVerdictLabel, getAmcAbbreviation, type FortnightlySheet, type ScenarioValues } from "./fortnightly-update";
 
 // Shared intermediate representation consumed by both the Excel (xlsx) and
 // PDF (jsPDF/autotable) exporters, so the two can never drift out of sync
@@ -8,6 +8,13 @@ import { parseSummaryRows, getEffectiveVerdictLabel, type FortnightlySheet, type
 // contains -- each section becomes one worksheet block / one autoTable.
 export interface ExportSection {
   title: string;
+  // Stable identifier, independent of `title` -- the PDF's page-break and
+  // column-width logic (fortnightly-download-panel.tsx) key off this
+  // instead of the display title, since "AMC SIP Growth" is now
+  // AMC-specific (e.g. "HDFC SIP Growth") and would otherwise silently
+  // stop matching a hardcoded title string. Omitted for sections whose
+  // title never changes and nothing else keys off it.
+  key?: string;
   rows: string[][]; // first row is the header row
   // Optional per-body-cell color override, keyed by body row index then
   // column index (index 0 = the first row AFTER the header, matching
@@ -136,7 +143,8 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   };
 
   const qaaum: ExportSection = {
-    title: "MTM Growth - QAAUM",
+    title: "MTM Growth - Equity QAAUM",
+    key: "mtm-growth-qaaum",
     rows: [
       ["Period", "Val (Cr)", "QoQ", "YoY"],
       ...sheet.qaaum.map((r) => [r.label, cr(r.valCr), pct(r.qoqPct ?? null), pct(r.yoyPct ?? null)]),
@@ -185,7 +193,8 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     }
   }
   const sipAmc: ExportSection = {
-    title: "AMC SIP Growth",
+    title: `${getAmcAbbreviation(sheet.amcId)} SIP Growth`,
+    key: "sip-amc-growth",
     rows: [
       ["Period", "Val (Cr)", "QoQ", "YoY", "SIP/Equity AUM"],
       ...sipAmcRows.map(([label, val, p], i) => [
@@ -214,6 +223,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   const qtrEstimate = industryQtrAuto?.estimate;
   const sipIndustryQuarterly: ExportSection = {
     title: "Industry SIP Growth (Quarterly)",
+    key: "sip-industry-quarterly",
     rows: [
       ["Period", "Val (Cr)", "QoQ", "YoY"],
       ...sipIndustryQtrRows.map(([label, val], i) => [label, cr(val), pct(sipIndustryQtrRatios.stepByRow[i]), pct(sipIndustryQtrRatios.yoyByRow[i])]),
@@ -243,6 +253,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   const monthlyEstimate = industryAuto?.estimate;
   const sipIndustryMonthly: ExportSection = {
     title: "Industry SIP Growth (Monthly)",
+    key: "sip-industry-monthly",
     rows: [
       ["Period", "Val (Cr)", "MoM", "YoY"],
       ...sipIndustryRows.map(([label, val], i) => [label, cr(val), pct(sipIndustryRatios.stepByRow[i]), pct(sipIndustryRatios.yoyByRow[i])]),
@@ -261,6 +272,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
 
   const ratio: ExportSection = {
     title: "Ratio (Price / Avg AUM)",
+    key: "ratio",
     rows: [
       ["SD Level", sheet.ratio?.sdLevel === null || sheet.ratio?.sdLevel === undefined ? "—" : sheet.ratio.sdLevel.toFixed(2)],
       ["Upside to Mean", pct(sheet.ratio?.upsideToMeanPct ?? null)],
@@ -274,6 +286,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
 
   const amcScore: ExportSection = {
     title: "AMC Score",
+    key: "amc-score",
     rows: [
       ["Period", "Score", "Change"],
       ...(sheet.amcScore?.rows.map((r) => [r.label, score(r.score), pct(r.changePct)]) ?? [["No AMC Score data available for this fund.", "—", "—"]]),
@@ -583,7 +596,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   writeScenarioRow(ws, row, "FY26 Upside %", v.fy26UpsidePct, (col, val) => writePct(ws, row, col, val));
   row += 2;
 
-  writeBanner(ws, row, "MTM Growth - QAAUM", 4);
+  writeBanner(ws, row, "MTM Growth - Equity QAAUM", 4);
   row++;
   writeHeaderRow(ws, row, ["Period", "Val (Cr)", "QoQ", "YoY"]);
   row++;
@@ -596,7 +609,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   }
   row++;
 
-  writeBanner(ws, row, "AMC SIP Growth", 5);
+  writeBanner(ws, row, `${getAmcAbbreviation(sheet.amcId)} SIP Growth`, 5);
   row++;
   writeHeaderRow(ws, row, ["Period", "Val (Cr)", "QoQ", "YoY", "SIP/Equity AUM"]);
   row++;
