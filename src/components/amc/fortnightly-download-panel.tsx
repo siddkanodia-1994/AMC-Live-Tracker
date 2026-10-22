@@ -36,6 +36,25 @@ const POS_TEXT_RGB: [number, number, number] = [0, 97, 0];
 const NEG_RGB: [number, number, number] = [255, 199, 206];
 const NEG_TEXT_RGB: [number, number, number] = [156, 0, 6];
 
+// Same explicitly-signed-percentage detector as the live Analyst Summary
+// card's SummaryTable (fortnightly-update-panel.tsx) -- a bare-magnitude
+// percentage (SIP/Equity AUM's ratio level, correlation %, R²) is never
+// given a forced sign, so it's naturally left out of this match. The
+// capturing group is required: String.split() only keeps a regex's
+// matches in its result (at the odd indices) when it has one.
+const SIGNED_PCT_RE = /([+-]\d[\d,.]*%)/g;
+
+// jsPDF's getTextWidth() for the built-in (non-embedded) Helvetica at 8pt
+// consistently under-measures real rendered text by ~2.2-2.7% -- confirmed
+// by cross-checking against a PDF's own actual glyph positions (PyMuPDF's
+// word-extraction) across several real summary strings of varying length,
+// both in PyMuPDF and in Chrome's own PDF viewer. Invisible for ordinary
+// paragraph text, but enough to visibly misplace a short colored segment
+// positioned via a running cursor built from these measurements -- this
+// flat correction (splitting the observed 2.2-2.7% range) brings that back
+// within a fraction of a millimeter.
+const PDF_TEXT_WIDTH_CORRECTION = 1.025;
+
 // The Overview card's own banner colors (fortnightly-update-panel.tsx's
 // Option-B header) -- jsPDF has no gradient fill, so this is a solid navy
 // approximation of that banner's start color, not a literal gradient.
@@ -178,6 +197,82 @@ function drawOverviewBanner(doc: any, autoTable: any, sheet: FortnightlySheet, p
       if (data.row.index === summaryRows.length - 1) {
         data.cell.styles.lineWidth = { bottom: 0, top: 0, left: 0, right: 0 };
       }
+    },
+    // Highlights explicitly-signed percentages inside the free-text detail
+    // column with the same red/green chip colors the live Analyst Summary
+    // card and every other table in this PDF already use for a +/- cell.
+    // autoTable has no notion of inline rich text within one cell, and the
+    // sign-based didParseCell detector elsewhere in this file only matches
+    // a cell whose ENTIRE content is one number -- here a cell is a full
+    // sentence with an embedded percentage.
+    //
+    // This redraws each line itself, segment by segment, rather than
+    // overlaying colored chips on top of autoTable's own already-drawn
+    // text at independently-measured positions: jsPDF's non-embedded
+    // Helvetica width table drifts from how a PDF viewer actually renders
+    // a long string (confirmed empirically -- a ~60-character prefix can
+    // land 1-2mm off), which is invisible for one continuous run of text
+    // but visibly misplaces a short overlay landing on top of it. Drawing
+    // every segment from a single running cursor keeps any such drift
+    // self-consistent instead of compounding into a visible seam.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    didDrawCell: (data: any) => {
+      if (data.section !== "body" || data.column.index !== 1) return;
+      const cell = data.cell;
+      const lines: string[] = cell.text ?? [];
+      if (lines.length === 0) return;
+
+      // jsPDF's x/y coordinates are in the document's own unit (mm), but
+      // setFontSize/getTextWidth both work in points -- fontSizeMm is only
+      // for the Y-axis line-height math below; text measurement must stay
+      // in points (cell.styles.fontSize) or getTextWidth returns bogus,
+      // tiny widths.
+      const fontSizePt = cell.styles.fontSize;
+      const k = (doc as any).internal.scaleFactor;
+      const fontSizeMm = (doc as any).internal.getFontSize() / k;
+      const lineHeightFactor = (doc as any).getLineHeightFactor ? (doc as any).getLineHeightFactor() : 1.15;
+      const lineHeight = fontSizeMm * lineHeightFactor;
+      const textPos = cell.getTextPos();
+      const baseY = textPos.y + fontSizeMm * (2 - 1.15);
+
+      // Blank out autoTable's own default-drawn text for the whole cell
+      // first -- this function replaces it entirely rather than patching
+      // over just the matched spans.
+      doc.setFillColor(...SUMMARY_BOX_FILL_RGB);
+      doc.rect(
+        cell.x + cell.padding("left"),
+        cell.y + cell.padding("top"),
+        cell.width - cell.padding("left") - cell.padding("right"),
+        cell.height - cell.padding("top") - cell.padding("bottom"),
+        "F"
+      );
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(fontSizePt);
+
+      lines.forEach((line, i) => {
+        const lineY = baseY + i * lineHeight;
+        let cursorX = textPos.x;
+        const parts = line.split(SIGNED_PCT_RE);
+        parts.forEach((part, partIndex) => {
+          if (part === "") return;
+          const partWidth = doc.getTextWidth(part) * PDF_TEXT_WIDTH_CORRECTION;
+          if (partIndex % 2 === 1) {
+            // A capturing split() puts each regex match at an odd index.
+            const positive = part.startsWith("+");
+            doc.setFillColor(...(positive ? POS_RGB : NEG_RGB));
+            doc.rect(cursorX - 0.4, lineY - fontSizeMm * 0.74, partWidth + 0.8, fontSizeMm * 0.95, "F");
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(...(positive ? POS_TEXT_RGB : NEG_TEXT_RGB));
+            doc.text(part, cursorX, lineY);
+            doc.setFont("helvetica", "normal");
+          } else {
+            doc.setTextColor(...SUMMARY_BOX_TEXT_RGB);
+            doc.text(part, cursorX, lineY);
+          }
+          cursorX += partWidth;
+        });
+      });
     },
     margin: { left: 14, right: 14 },
   });

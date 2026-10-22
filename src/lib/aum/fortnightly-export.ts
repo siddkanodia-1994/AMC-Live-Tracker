@@ -65,6 +65,13 @@ const scenarioRow = (label: string, values: ScenarioValues, fmt: (v: number | nu
   fmt(values.bull),
 ];
 
+// "FY27 Discounted Price" -> "FY27 Discounted Price (20%)" -- the live UI
+// shows this AMC's discount rate as its own separate editable row above
+// the price row; the PDF has no room for that extra row, so it's folded
+// into the label instead. Falls back to the plain label when no rate has
+// been entered yet.
+const withRateLabel = (base: string, ratePct: number | null) => (ratePct === null ? base : `${base} (${Math.round(ratePct * 100)}%)`);
+
 // Mirrors fortnightly-update-panel.tsx's SipAmcGrowthTable/
 // SipIndustryGrowthTable qoqByRow+yoyByRow (and momByRow+yoyByRow)
 // derivation: of the 5 period rows (latest, prevA, prevB, yoyA, yoyB),
@@ -121,9 +128,9 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
       scenarioRow("FY28 Target Market Cap (Cr)", v.fy28TargetMcapCr, cr),
       scenarioRow("FY28 Target Price", v.fy28TargetPriceInr, price),
       scenarioRow("FY28 Upside %", v.fy28UpsidePct, pct),
-      scenarioRow("FY27 Discounted Price", v.fy27DiscountedPriceInr, price),
+      scenarioRow(withRateLabel("FY27 Discounted Price", m.discountRateFy27Pct), v.fy27DiscountedPriceInr, price),
       scenarioRow("FY27 Upside %", v.fy27UpsidePct, pct),
-      scenarioRow("FY26 Discounted Price", v.fy26DiscountedPriceInr, price),
+      scenarioRow(withRateLabel("FY26 Discounted Price", m.discountRateFy26Pct), v.fy26DiscountedPriceInr, price),
       scenarioRow("FY26 Upside %", v.fy26UpsidePct, pct),
     ],
   };
@@ -300,6 +307,32 @@ const NEG_FONT = "FF9C0006";
 const BANNER_FILL = "FF000000";
 const BANNER_FONT = "FFFFFFFF";
 const INPUT_FILL = "FFD7ECFF"; // the dashboard's own input-cell shade
+
+// Same explicitly-signed-percentage detector as the live Analyst Summary
+// card's SummaryTable (fortnightly-update-panel.tsx) -- a bare-magnitude
+// percentage (SIP/Equity AUM's ratio level, correlation %, R²) is never
+// given a forced sign, so it's naturally left out of this match.
+const SIGNED_PCT_RE = /[+-]\d[\d,.]*%/g;
+
+// XLSX rich-text runs only carry font properties (bold/color/etc), never a
+// per-run background fill -- a true chip (colored rect behind the text,
+// like the live card and the PDF) isn't representable inline within one
+// cell's flowing text, only as a whole-cell fill. Bold + colored text is
+// the closest equivalent Excel actually supports here.
+function buildSummaryDetailRichText(detail: string, baseFontColorArgb: string): { richText: { text: string; font?: Record<string, unknown> }[] } {
+  const runs: { text: string; font?: Record<string, unknown> }[] = [];
+  let lastIndex = 0;
+  SIGNED_PCT_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = SIGNED_PCT_RE.exec(detail)) !== null) {
+    if (match.index > lastIndex) runs.push({ text: detail.slice(lastIndex, match.index), font: { color: { argb: baseFontColorArgb } } });
+    const positive = match[0].startsWith("+");
+    runs.push({ text: match[0], font: { bold: true, color: { argb: positive ? POS_FONT : NEG_FONT } } });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < detail.length) runs.push({ text: detail.slice(lastIndex), font: { color: { argb: baseFontColorArgb } } });
+  return { richText: runs };
+}
 
 function writeBanner(ws: Worksheet, row: number, text: string, span: number): void {
   ws.mergeCells(row, 1, row, span);
@@ -488,8 +521,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
 
       ws.mergeCells(row, 2, row, 5);
       const detailCell = ws.getCell(row, 2);
-      detailCell.value = r.detail;
-      detailCell.font = { color: { argb: TEXT_ARGB } };
+      detailCell.value = buildSummaryDetailRichText(r.detail, TEXT_ARGB);
       detailCell.alignment = { vertical: "top", wrapText: true };
       detailCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: SUMMARY_BOX_FILL_ARGB } };
       detailCell.border = border;
