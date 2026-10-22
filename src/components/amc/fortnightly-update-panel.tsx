@@ -598,7 +598,7 @@ function generateOverviewDraft(sheet: FortnightlySheet, isBlended: boolean): str
   if (sheet.ratio) {
     const direction = (sheet.ratio.sdLevel ?? 0) >= 0 ? "above" : "below";
     bullets.push(
-      `• Price/AUM ratio: ${sheet.ratio.sdLevel === null ? "—" : Math.abs(sheet.ratio.sdLevel).toFixed(2)}σ ${direction} historical mean — ` +
+      `• Price/AUM ratio: ${sheet.ratio.sdLevel === null ? "—" : Math.abs(sheet.ratio.sdLevel).toFixed(2)} SD ${direction} historical mean — ` +
         `${sheet.ratio.upsideToMeanPct === null ? "—" : formatPct(sheet.ratio.upsideToMeanPct, { alwaysSign: true })} upside to mean-reversion target ` +
         `${sheet.ratio.fairValueAtMeanInr === null ? "—" : formatPriceInr(sheet.ratio.fairValueAtMeanInr)} ` +
         `(${sheet.ratio.correlationPct === null ? "—" : formatPct(sheet.ratio.correlationPct)} correlation, ` +
@@ -622,7 +622,7 @@ function generateOverviewDraft(sheet: FortnightlySheet, isBlended: boolean): str
     (s): s is string => s !== null
   );
   let scoreBullet = `• AMC Score: ${currentScore === null ? "—" : currentScore.toFixed(2)}`;
-  if (scoreComparisons.length > 0) scoreBullet += ` vs ${scoreComparisons.join(" and ")}`;
+  if (scoreComparisons.length > 0) scoreBullet += ` Current vs ${scoreComparisons.join(" and ")}`;
   const chg15 = scoreRows[1]?.changePct ?? null;
   const chg1yr = scoreRows[3]?.changePct ?? null;
   if (chg15 !== null && chg1yr !== null) {
@@ -728,6 +728,36 @@ function CustomVerdictInput({ value, onSave }: { value: string | null; onSave: (
   );
 }
 
+// Wraps explicitly-signed percentages (QoQ/YoY/upside/score-change -- the
+// only ones ever formatted with formatPct's alwaysSign: true) in the same
+// red/green filled-chip colors the PDF/Excel exports already use for
+// their own +/- cells. Splitting on a capturing-group regex puts matches
+// at odd indices -- avoids global-regex .test()/lastIndex state bugs.
+// Bare-magnitude percentages (SIP/Equity AUM's ratio level, correlation
+// %, R²) never carry a forced sign, so this naturally leaves them plain.
+const SIGNED_PCT_RE = /([+-]\d[\d,.]*%)/g;
+
+function renderDetailWithPctShading(detail: string): React.ReactNode[] {
+  return detail.split(SIGNED_PCT_RE).map((part, i) =>
+    i % 2 === 1 ? (
+      <span
+        key={i}
+        style={{
+          background: part.startsWith("+") ? "#c6efce" : "#ffc7ce",
+          color: part.startsWith("+") ? "#006100" : "#9c0006",
+          fontWeight: 700,
+          borderRadius: 4,
+          padding: "1px 5px",
+        }}
+      >
+        {part}
+      </span>
+    ) : (
+      part
+    )
+  );
+}
+
 // Read-only, bold-Label/Detail table matching the PDF/Excel Summary box
 // exactly (same #f5faff fill / #d7e8f7 border, confirmed shade) -- shown
 // by default; clicking it swaps in the editable textarea (see
@@ -747,7 +777,7 @@ function SummaryTable({ summary, onClick }: { summary: string | null; onClick: (
       {rows.map((row, i) => (
         <div
           key={i}
-          className="flex gap-3 px-4 py-2 text-sm"
+          className="flex gap-3 px-4 py-2 text-[15px]"
           style={{
             background: "#f5faff",
             color: "#0b2338",
@@ -755,7 +785,7 @@ function SummaryTable({ summary, onClick }: { summary: string | null; onClick: (
           }}
         >
           <div className="w-36 shrink-0 font-bold">{row.label}</div>
-          <div className="whitespace-pre-line">{row.detail}</div>
+          <div className="whitespace-pre-line">{renderDetailWithPctShading(row.detail)}</div>
         </div>
       ))}
     </div>
