@@ -1,6 +1,13 @@
 import type { Workbook, Worksheet } from "exceljs";
-import { formatPct, formatPriceInr, formatShortDate } from "../utils/format";
-import { parseSummaryRows, getEffectiveVerdictLabel, getAmcAbbreviation, type FortnightlySheet, type ScenarioValues } from "./fortnightly-update";
+import { formatPct, formatShortDate } from "../utils/format";
+import {
+  parseSummaryRows,
+  getEffectiveVerdictLabel,
+  getAmcAbbreviation,
+  formatFortnightlyPriceInr,
+  type FortnightlySheet,
+  type ScenarioValues,
+} from "./fortnightly-update";
 
 // Shared intermediate representation consumed by both the Excel (xlsx) and
 // PDF (jsPDF/autotable) exporters, so the two can never drift out of sync
@@ -47,7 +54,7 @@ export const pct = (v: number | null | undefined) => (v === null || v === undefi
 const cr = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `Rs.${Math.round(v).toLocaleString("en-IN")} cr`);
 const crAmount = (v: number | null) => (v === null ? "—" : Math.round(v).toLocaleString("en-IN"));
 const score = (v: number | null | undefined) => (v === null || v === undefined ? "—" : v.toFixed(2));
-export const price = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `Rs.${formatPriceInr(v).slice(1)}`);
+export const price = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `Rs.${formatFortnightlyPriceInr(v).slice(1)}`);
 
 // jsPDF's built-in Helvetica font is missing glyphs for several Unicode
 // characters the Overview card's free-text Summary can contain (the
@@ -114,7 +121,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   };
 
   const pat: ExportSection = {
-    title: "PAT (TUSK)",
+    title: "PAT Estimates (TUSK)",
     key: "pat",
     rows: [
       ["Period", "FY26A", "FY27E", "FY28E", "2Y CAGR"],
@@ -311,7 +318,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
 
 const CR_FORMAT = '"₹"#,##0" cr"'; // whole crores, no decimals -- matches the tab's own formatCrRounded
 const PLAIN_FORMAT = "#,##0";
-const PRICE_FORMAT = '"₹"#,##0.00';
+const PRICE_FORMAT = '"₹"#,##0.0';
 const PCT_FORMAT = "+0.00%;-0.00%";
 const SCORE_FORMAT = "0.00";
 
@@ -564,7 +571,7 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
   writeNum(ws, row, 2, m.noOfSharesCr, PLAIN_FORMAT + ".0", true);
   row += 2;
 
-  writeBanner(ws, row, "PAT (TUSK)", 5);
+  writeBanner(ws, row, "PAT Estimates (TUSK)", 5);
   row++;
   writeHeaderRow(ws, row, ["Period", "FY26A", "FY27E", "FY28E", "2Y CAGR"]);
   row++;

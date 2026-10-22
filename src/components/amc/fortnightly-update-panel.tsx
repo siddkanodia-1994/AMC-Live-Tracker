@@ -12,12 +12,13 @@ import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-contex
 import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
 import { FontScaleProvider, useFontScale } from "@/components/layout/font-scale-context";
 import { useFortnightlyEligibleAmcs, useFortnightlySheet } from "@/hooks/use-fortnightly-update";
-import { formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
+import { formatPct, formatShortDate } from "@/lib/utils/format";
 import {
   VERDICT_TIERS,
   parseSummaryRows,
   getEffectiveVerdictLabel,
   getAmcAbbreviation,
+  formatFortnightlyPriceInr,
   type FortnightlyFieldName,
   type FortnightlySheet,
   type ScenarioValues,
@@ -253,7 +254,7 @@ function sipEquityAumGradientStyle(pct: number | null, allPcts: (number | null)[
 }
 
 function PriceCell({ value }: { value: number | null }) {
-  return <TableCell className="text-right tabular-nums font-semibold">{value === null ? "—" : formatPriceInr(value)}</TableCell>;
+  return <TableCell className="text-right tabular-nums font-semibold">{value === null ? "—" : formatFortnightlyPriceInr(value)}</TableCell>;
 }
 
 // Solid banner-bar section title, matching the Summary tab's own
@@ -657,7 +658,7 @@ function generateOverviewDraft(sheet: FortnightlySheet, isBlended: boolean): str
     bullets.push(
       `• Price/AUM ratio: ${sheet.ratio.sdLevel === null ? "—" : Math.abs(sheet.ratio.sdLevel).toFixed(2)} SD ${direction} historical mean — ` +
         `${sheet.ratio.upsideToMeanPct === null ? "—" : formatPct(sheet.ratio.upsideToMeanPct, { alwaysSign: true })} upside to mean-reversion target ` +
-        `${sheet.ratio.fairValueAtMeanInr === null ? "—" : formatPriceInr(sheet.ratio.fairValueAtMeanInr)} ` +
+        `${sheet.ratio.fairValueAtMeanInr === null ? "—" : formatFortnightlyPriceInr(sheet.ratio.fairValueAtMeanInr)} ` +
         `(${sheet.ratio.correlationPct === null ? "—" : formatPct(sheet.ratio.correlationPct)} correlation, ` +
         `R² ${sheet.ratio.rSquared === null ? "—" : formatPct(sheet.ratio.rSquared)})`
     );
@@ -692,9 +693,9 @@ function generateOverviewDraft(sheet: FortnightlySheet, isBlended: boolean): str
   const upsideBase = sheet.valuation.fy28UpsidePct.base;
   bullets.push(
     `• Valuation: Base-case Target PE ${m.targetPeBase === null ? "—" : m.targetPeBase}x FY28E PAT → Target Price ` +
-      `${targetPriceBase === null ? "—" : formatPriceInr(targetPriceBase)}, ` +
+      `${targetPriceBase === null ? "—" : formatFortnightlyPriceInr(targetPriceBase)}, ` +
       `${upsideBase === null ? "—" : formatPct(upsideBase, { alwaysSign: true })} upside from CMP ` +
-      `${sheet.cmpInr === null ? "—" : formatPriceInr(sheet.cmpInr)}`
+      `${sheet.cmpInr === null ? "—" : formatFortnightlyPriceInr(sheet.cmpInr)}`
   );
 
   bullets.push(`• Verdict: ${getEffectiveVerdictLabel(m, sheet.autoVerdict).label}`);
@@ -887,7 +888,7 @@ function OverviewCard({
         <div>
           <div className="text-lg font-extrabold">{sheet.overviewName}</div>
           <div className="mt-0.5 text-xs text-slate-300">
-            As of {formatShortDate(sheet.asOfDate)} · CMP {sheet.cmpInr === null ? "—" : formatPriceInr(sheet.cmpInr)}
+            As of {formatShortDate(sheet.asOfDate)} · CMP {sheet.cmpInr === null ? "—" : formatFortnightlyPriceInr(sheet.cmpInr)}
             {sheet.cmpIsLive && (
               <span className="ml-1.5 inline-flex items-center gap-1 text-emerald-300">
                 <span className="inline-block size-1.5 rounded-full bg-emerald-400" />
@@ -900,7 +901,7 @@ function OverviewCard({
           <div className="text-right">
             <div className="text-[10.5px] font-bold uppercase tracking-wide text-blue-300">Target Price (Base)</div>
             <div className="text-base font-bold tabular-nums">
-              {sheet.valuation.fy28TargetPriceInr.base === null ? "—" : formatPriceInr(sheet.valuation.fy28TargetPriceInr.base)}
+              {sheet.valuation.fy28TargetPriceInr.base === null ? "—" : formatFortnightlyPriceInr(sheet.valuation.fy28TargetPriceInr.base)}
             </div>
           </div>
           <div className="text-right">
@@ -1018,7 +1019,7 @@ function FortnightlySheetView({
               </LabelRow>
               <LabelRow label="CMP">
                 <TableCell className="text-right tabular-nums" title="Latest EOD close on or before the As-of date, pulled from the dashboard">
-                  {sheet.cmpInr === null ? "—" : formatPriceInr(sheet.cmpInr)}
+                  {sheet.cmpInr === null ? "—" : formatFortnightlyPriceInr(sheet.cmpInr)}
                 </TableCell>
               </LabelRow>
               <LabelRow label="No of Shares (Cr)">
@@ -1031,7 +1032,7 @@ function FortnightlySheetView({
         <div className="overflow-hidden rounded-lg border bg-card">
           <Table className={TABLE_TEXT_CLASS}>
             <TableBody>
-              <SectionBanner title="PAT (TUSK)" colSpan={5} />
+              <SectionBanner title="PAT Estimates (TUSK)" colSpan={5} />
               <TableRow>
                 <TableCell className="font-semibold">Period</TableCell>
                 <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">FY26A</TableCell>

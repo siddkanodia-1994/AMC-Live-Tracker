@@ -948,6 +948,19 @@ export function getAmcAbbreviation(amcId: number): string {
   return AMC_ABBREVIATIONS[amcId] ?? "AMC";
 }
 
+// Fortnightly-tab-only share-price formatting: 1 decimal instead of the
+// app-wide formatPriceInr's 2. Deliberately a separate function (not a
+// change to formatPriceInr itself) since that helper is also used by
+// Holdings, Backtest, AUM Trend Chart, Fair Value Explainer, Stock
+// Correlation Table, Corrections Log, ETF tables, and the Admin
+// weekend-price-anomalies page -- none of which this request touches.
+export function formatFortnightlyPriceInr(priceInr: number): string {
+  return `₹${priceInr.toLocaleString("en-IN", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 1,
+  })}`;
+}
+
 export interface FortnightlySheet {
   amcId: number;
   slug: string;
