@@ -145,10 +145,12 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
   ];
   const sipAmcRatios = periodRatios(sipAmcRows.map(([, val]) => val));
   // SIP/Equity AUM is a LEVEL, not a growth rate -- color column index 4
-  // on a continuous gradient across all 5 periods (lowest = full red,
-  // highest = full green, 2-stop direct blend), same rule/endpoints as the
-  // live tab's own sipEquityAumGradientStyle, instead of the sign-based
-  // default (which would mark this always-positive column always-green).
+  // on a continuous all-green gradient across all 5 periods (highest =
+  // this app's own green unchanged, lowest = a pale tint of it, 2-stop
+  // direct blend), same rule/endpoints as the live tab's own
+  // sipEquityAumGradientStyle, instead of the sign-based default (which
+  // would mark this always-positive column always-green) or a red/green
+  // scale (misleading -- every value here is positive).
   const sipAmcCellColors: Record<number, Record<number, { fill: [number, number, number]; text: [number, number, number] }>> = {};
   {
     const values = sipAmcRows.map(([, , p]) => p).filter((v): v is number => v !== null);
@@ -161,14 +163,14 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
         sipAmcCellColors[i] = {
           4: {
             fill: [
-              lerpChannel(GRADIENT_RED_RGB[0], GRADIENT_GREEN_RGB[0], t),
-              lerpChannel(GRADIENT_RED_RGB[1], GRADIENT_GREEN_RGB[1], t),
-              lerpChannel(GRADIENT_RED_RGB[2], GRADIENT_GREEN_RGB[2], t),
+              lerpChannel(GRADIENT_LOW_RGB[0], GRADIENT_HIGH_RGB[0], t),
+              lerpChannel(GRADIENT_LOW_RGB[1], GRADIENT_HIGH_RGB[1], t),
+              lerpChannel(GRADIENT_LOW_RGB[2], GRADIENT_HIGH_RGB[2], t),
             ],
             text: [
-              lerpChannel(GRADIENT_RED_TEXT_RGB[0], GRADIENT_GREEN_TEXT_RGB[0], t),
-              lerpChannel(GRADIENT_RED_TEXT_RGB[1], GRADIENT_GREEN_TEXT_RGB[1], t),
-              lerpChannel(GRADIENT_RED_TEXT_RGB[2], GRADIENT_GREEN_TEXT_RGB[2], t),
+              lerpChannel(GRADIENT_LOW_TEXT_RGB[0], GRADIENT_HIGH_TEXT_RGB[0], t),
+              lerpChannel(GRADIENT_LOW_TEXT_RGB[1], GRADIENT_HIGH_TEXT_RGB[1], t),
+              lerpChannel(GRADIENT_LOW_TEXT_RGB[2], GRADIENT_HIGH_TEXT_RGB[2], t),
             ],
           },
         };
@@ -345,19 +347,22 @@ function interpolateArgb(from: [number, number, number], to: [number, number, nu
   return `FF${toHex2(lerpChannel(from[0], to[0], t))}${toHex2(lerpChannel(from[1], to[1], t))}${toHex2(lerpChannel(from[2], to[2], t))}`;
 }
 
-const GRADIENT_RED_RGB: [number, number, number] = [255, 199, 206]; // matches NEG_FILL
-const GRADIENT_RED_TEXT_RGB: [number, number, number] = [156, 0, 6]; // matches NEG_FONT
-const GRADIENT_GREEN_RGB: [number, number, number] = [198, 239, 206]; // matches POS_FILL
-const GRADIENT_GREEN_TEXT_RGB: [number, number, number] = [0, 97, 0]; // matches POS_FONT
+const GRADIENT_LOW_RGB: [number, number, number] = [240, 249, 242]; // pale tint of the app's own green
+const GRADIENT_LOW_TEXT_RGB: [number, number, number] = [90, 140, 100];
+const GRADIENT_HIGH_RGB: [number, number, number] = [198, 239, 206]; // matches POS_FILL -- unchanged, the ceiling
+const GRADIENT_HIGH_TEXT_RGB: [number, number, number] = [0, 97, 0]; // matches POS_FONT
 
-// SIP/Equity AUM is a LEVEL (always positive), not a growth rate -- colored
-// on a continuous gradient across the whole 5-period set: the LOWEST value
-// gets full red, the HIGHEST gets full green, everything else gets the
-// proportional in-between shade (2-stop direct blend, confirmed with the
-// user -- not a 3-stop red-yellow-green scale). Same rule/hex endpoints as
-// the live tab's own sipEquityAumGradientStyle (fortnightly-update-
-// panel.tsx). Falls back to the plain blue input fill when fewer than 2
-// distinct values exist to form a range from.
+// SIP/Equity AUM is a LEVEL (always positive), not a growth rate -- a
+// red-to-green gradient was tried first but rejected (every value here is
+// positive, so the lowest of five healthy numbers reading as "red" was
+// misleading). Colored instead on an ALL-GREEN gradient across the whole
+// 5-period set: the HIGHEST value gets exactly this app's existing
+// positive green (unchanged, the ceiling), the LOWEST fades to a pale tint
+// of that same hue (2-stop direct blend, confirmed with the user via a
+// live preview -- not a 3-stop scale). Same rule/hex endpoints as the live
+// tab's own sipEquityAumGradientStyle (fortnightly-update-panel.tsx).
+// Falls back to the plain blue input fill when fewer than 2 distinct
+// values exist to form a range from.
 function writeConditionalPctInput(ws: Worksheet, row: number, col: number, value: number | null, allValues: (number | null)[]): void {
   const cell = ws.getCell(row, col);
   if (value === null) {
@@ -376,8 +381,8 @@ function writeConditionalPctInput(ws: Worksheet, row: number, col: number, value
     return;
   }
   const t = (value - min) / (max - min);
-  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: interpolateArgb(GRADIENT_RED_RGB, GRADIENT_GREEN_RGB, t) } };
-  cell.font = { bold: true, color: { argb: interpolateArgb(GRADIENT_RED_TEXT_RGB, GRADIENT_GREEN_TEXT_RGB, t) } };
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: interpolateArgb(GRADIENT_LOW_RGB, GRADIENT_HIGH_RGB, t) } };
+  cell.font = { bold: true, color: { argb: interpolateArgb(GRADIENT_LOW_TEXT_RGB, GRADIENT_HIGH_TEXT_RGB, t) } };
 }
 
 function writePct(ws: Worksheet, row: number, col: number, value: number | null | undefined): void {

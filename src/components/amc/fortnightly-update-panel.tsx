@@ -208,20 +208,22 @@ function PctCell({ value, className }: { value: number | null; className?: strin
 }
 
 // SIP/Equity AUM is a LEVEL (always positive), not a growth rate, so
-// PctCell's sign-based green/red can't apply to it -- instead every row
-// across the whole 5-period set is colored on a continuous gradient: the
-// LOWEST value gets full red, the HIGHEST gets full green, everything
-// else gets the proportional in-between shade (confirmed with the user: a
-// 2-stop DIRECT red-to-green blend, not a 3-stop red-yellow-green scale).
-// Reuses this app's own existing green/red tint pair (PctCell's hex
-// values) as the two endpoints for visual consistency with every other
-// green/red indicator already in the app. Returns undefined (falls back
-// to the default blue manual-input style) when fewer than 2 distinct
-// values exist to form a range from.
-const SIP_GRADIENT_RED: [number, number, number] = [255, 199, 206]; // #FFC7CE
-const SIP_GRADIENT_RED_TEXT: [number, number, number] = [156, 0, 6]; // #9C0006
-const SIP_GRADIENT_GREEN: [number, number, number] = [198, 239, 206]; // #C6EFCE
-const SIP_GRADIENT_GREEN_TEXT: [number, number, number] = [0, 97, 0]; // #006100
+// PctCell's sign-based green/red can't apply to it -- a red/green gradient
+// was tried first but rejected (every value here is positive, so the
+// lowest of five healthy numbers reading as "red" was misleading, and red
+// is reserved for genuine negatives elsewhere on this tab). Every row
+// across the whole 5-period set is instead colored on an ALL-GREEN
+// gradient: the HIGHEST value gets exactly this app's existing positive
+// green (PctCell's own green, #C6EFCE/#006100) -- the ceiling, never
+// anything darker -- and the LOWEST value fades to a pale, near-white
+// tint of that same hue, confirmed via a live preview before shipping
+// (2-stop direct blend, not 3-stop). Returns undefined (falls back to the
+// default blue manual-input style) when fewer than 2 distinct values
+// exist to form a range from.
+const SIP_GRADIENT_LOW: [number, number, number] = [240, 249, 242]; // pale tint of the app's own green
+const SIP_GRADIENT_LOW_TEXT: [number, number, number] = [90, 140, 100];
+const SIP_GRADIENT_HIGH: [number, number, number] = [198, 239, 206]; // #C6EFCE -- same as PctCell's positive green, unchanged
+const SIP_GRADIENT_HIGH_TEXT: [number, number, number] = [0, 97, 0]; // #006100
 
 function lerpChannel(from: number, to: number, t: number): number {
   return Math.round(from + (to - from) * t);
@@ -235,14 +237,14 @@ function sipEquityAumGradientStyle(pct: number | null, allPcts: (number | null)[
   if (values.length < 2 || min === max) return undefined;
   const t = (pct - min) / (max - min);
   const bg = [
-    lerpChannel(SIP_GRADIENT_RED[0], SIP_GRADIENT_GREEN[0], t),
-    lerpChannel(SIP_GRADIENT_RED[1], SIP_GRADIENT_GREEN[1], t),
-    lerpChannel(SIP_GRADIENT_RED[2], SIP_GRADIENT_GREEN[2], t),
+    lerpChannel(SIP_GRADIENT_LOW[0], SIP_GRADIENT_HIGH[0], t),
+    lerpChannel(SIP_GRADIENT_LOW[1], SIP_GRADIENT_HIGH[1], t),
+    lerpChannel(SIP_GRADIENT_LOW[2], SIP_GRADIENT_HIGH[2], t),
   ];
   const fg = [
-    lerpChannel(SIP_GRADIENT_RED_TEXT[0], SIP_GRADIENT_GREEN_TEXT[0], t),
-    lerpChannel(SIP_GRADIENT_RED_TEXT[1], SIP_GRADIENT_GREEN_TEXT[1], t),
-    lerpChannel(SIP_GRADIENT_RED_TEXT[2], SIP_GRADIENT_GREEN_TEXT[2], t),
+    lerpChannel(SIP_GRADIENT_LOW_TEXT[0], SIP_GRADIENT_HIGH_TEXT[0], t),
+    lerpChannel(SIP_GRADIENT_LOW_TEXT[1], SIP_GRADIENT_HIGH_TEXT[1], t),
+    lerpChannel(SIP_GRADIENT_LOW_TEXT[2], SIP_GRADIENT_HIGH_TEXT[2], t),
   ];
   return { backgroundColor: `rgb(${bg.join(",")})`, color: `rgb(${fg.join(",")})` };
 }
@@ -1170,7 +1172,7 @@ function SipAmcGrowthTable({
               <ManualCell
                 value={row.pct !== null ? row.pct * 100 : null}
                 onSave={(v) => onSave(row.pctField, v === null ? null : v / 100)}
-                title="SIP as a % of this period's Equity AUM -- gradient-colored: lowest of the 5 periods is red, highest is green"
+                title="SIP as a % of this period's Equity AUM -- gradient-colored: highest of the 5 periods is this app's own green, lowest fades to a pale tint of it"
                 suffix="%"
                 inputStyle={sipEquityAumGradientStyle(
                   row.pct,
