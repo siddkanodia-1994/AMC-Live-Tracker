@@ -16,6 +16,7 @@ import { CashHoldingsTable } from "@/components/cash-holdings/cash-holdings-tabl
 import { SectoralHoldingsTable } from "./sectoral-holdings-table";
 import { EtfTabContent } from "@/components/etf/etf-tab-content";
 import { StockCorrelationTable } from "./stock-correlation-table";
+import { RegressionPanel } from "./regression-panel";
 import { FortnightlyUpdatePanel } from "./fortnightly-update-panel";
 import { SummaryPage } from "./summary-page";
 import { BacktestPage } from "./backtest-page";
@@ -913,6 +914,9 @@ export function AmcGrid({
               <TabsTrigger value="amc-stock-correlation" className="after:bg-[var(--toolbar-accent)]">
                 Stock Correlation
               </TabsTrigger>
+              <TabsTrigger value="amc-regression" className="after:bg-[var(--toolbar-accent)]">
+                Regression
+              </TabsTrigger>
               <TabsTrigger value="fortnightly-update" className="after:bg-[var(--toolbar-accent)]">
                 Fortnightly AMC Update
               </TabsTrigger>
@@ -946,7 +950,7 @@ export function AmcGrid({
             </TabsList>
             <div className="flex items-center gap-3 text-sm">
               {activeTab === "overview" && <SearchBar value={query} onChange={setQuery} />}
-              {activeTab !== "stock" && activeTab !== "amc-stock-correlation" && (
+              {activeTab !== "stock" && activeTab !== "amc-stock-correlation" && activeTab !== "amc-regression" && (
                 <div className="flex items-center gap-1">
                   <span className="text-muted-foreground">Show:</span>
                   {TOP_N_OPTIONS.map((option) => (
@@ -1279,6 +1283,9 @@ export function AmcGrid({
         </TabsContent>
         <TabsContent value="amc-stock-correlation">
           <StockCorrelationTable />
+        </TabsContent>
+        <TabsContent value="amc-regression">
+          <RegressionPanel />
         </TabsContent>
         <TabsContent value="fortnightly-update">
           <FortnightlyUpdatePanel />

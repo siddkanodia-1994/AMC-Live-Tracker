@@ -2,9 +2,10 @@
 // Stock Correlation table -- kept in one place so "2 years" resolves to the
 // exact same cutoff date wherever it's selected, rather than two components
 // each rolling their own slightly-different definition.
-export type RangeOption = "6m" | "1y" | "2y" | "3y" | "all";
+export type RangeOption = "3m" | "6m" | "1y" | "2y" | "3y" | "all";
 
 export const RANGE_OPTIONS: { value: RangeOption; label: string; months: number | null }[] = [
+  { value: "3m", label: "3M", months: 3 },
   { value: "6m", label: "6M", months: 6 },
   { value: "1y", label: "1Y", months: 12 },
   { value: "2y", label: "2Y", months: 24 },
