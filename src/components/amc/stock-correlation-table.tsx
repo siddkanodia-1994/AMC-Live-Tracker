@@ -586,7 +586,7 @@ const maInputClass =
   "w-16 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 const ratioBasisSelectClass =
   "w-20 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
-const groupHeadClass = "border-l text-center text-xs font-bold tracking-wide uppercase text-muted-foreground";
+const groupHeadClass = "border-l-2 border-foreground/30 text-center text-xs font-bold tracking-wide uppercase text-muted-foreground";
 
 function formatZScore(z: number): string {
   return `${z >= 0 ? "+" : "−"}${Math.abs(z).toFixed(2)}σ`;
@@ -885,7 +885,7 @@ export function StockCorrelationTable() {
 
       <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>
-          <TableHeader>
+          <TableHeader className="[&_tr]:border-foreground/30">
             <TableRow>
               <TableHead />
               <TableHead colSpan={2} className="text-center text-xs font-bold tracking-wide uppercase text-muted-foreground">
@@ -900,7 +900,7 @@ export function StockCorrelationTable() {
                 Actual (returns)
               </TableHead>
               <TableHead colSpan={3} className={groupHeadClass}>
-                Fair value
+                Ratio model
               </TableHead>
               <TableHead colSpan={2} className={groupHeadClass}>
                 Regression model
@@ -910,22 +910,22 @@ export function StockCorrelationTable() {
               <TableHead className="align-bottom">AMC</TableHead>
               <TableHead className="text-right align-bottom">Live AUM</TableHead>
               <TableHead className="text-right align-bottom">Share Price</TableHead>
-              <TableHead className="border-l text-right align-bottom">Avg AUM</TableHead>
+              <TableHead className="border-l-2 border-foreground/30 text-right align-bottom">Avg AUM</TableHead>
               <TableHead className="text-right align-bottom">{aumOnlyAveraging ? "Share Price" : "Avg Share Price"}</TableHead>
-              <TableHead className="border-l text-right align-bottom">Corr</TableHead>
+              <TableHead className="border-l-2 border-foreground/30 text-right align-bottom">Corr</TableHead>
               <TableHead className="text-right align-bottom">R²</TableHead>
-              <TableHead className="border-l text-right align-bottom">
+              <TableHead className="border-l-2 border-foreground/30 text-right align-bottom">
                 Fair value price{activeBasis.value !== "mean" ? ` (${activeBasis.label})` : ""}
               </TableHead>
               <TableHead className="text-right align-bottom">Upside %</TableHead>
               <TableHead className="text-right align-bottom">Z-score</TableHead>
-              <TableHead className="border-l text-right align-bottom">Model fair value</TableHead>
+              <TableHead className="border-l-2 border-foreground/30 text-right align-bottom">Model fair value</TableHead>
               <TableHead className="text-right align-bottom">Model upside %</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((row) => (
-              <TableRow key={row.slug}>
+              <TableRow key={row.slug} className="border-foreground/25">
                 <TableCell className="font-medium">{row.overviewName}</TableCell>
                 <TableCell className="text-right tabular-nums">
                   {row.latestAumCr !== null ? formatCr(row.latestAumCr) : "—"}
@@ -933,13 +933,13 @@ export function StockCorrelationTable() {
                 <TableCell className="text-right tabular-nums">
                   {row.latestPriceInr !== null ? formatPriceInr(row.latestPriceInr) : "—"}
                 </TableCell>
-                <TableCell className="border-l text-right tabular-nums">
+                <TableCell className="border-l-2 border-foreground/30 text-right tabular-nums">
                   {row.avgAumCr !== null ? formatCr(row.avgAumCr) : "—"}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {row.avgPriceInr !== null ? formatPriceInr(row.avgPriceInr) : "—"}
                 </TableCell>
-                <TableCell className="border-l text-right tabular-nums">
+                <TableCell className="border-l-2 border-foreground/30 text-right tabular-nums">
                   {row.corr !== null ? (
                     <span
                       className={row.corr >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}
@@ -951,7 +951,7 @@ export function StockCorrelationTable() {
                   )}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{row.r2 !== null ? formatPct(row.r2) : "—"}</TableCell>
-                <TableCell className="border-l text-right tabular-nums">
+                <TableCell className="border-l-2 border-foreground/30 text-right tabular-nums">
                   {row.fairValuePriceInr !== null ? (
                     <div className="leading-tight">
                       <div>{formatPriceInr(row.fairValuePriceInr)}</div>
@@ -983,7 +983,7 @@ export function StockCorrelationTable() {
                     "—"
                   )}
                 </TableCell>
-                <TableCell className="border-l text-right tabular-nums">
+                <TableCell className="border-l-2 border-foreground/30 text-right tabular-nums">
                   {row.modelFairValuePriceInr !== null ? formatPriceInr(row.modelFairValuePriceInr) : "—"}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
