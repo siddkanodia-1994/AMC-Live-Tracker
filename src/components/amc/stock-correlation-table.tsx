@@ -1043,7 +1043,29 @@ export function StockCorrelationTable() {
           <summary className="cursor-pointer font-medium text-foreground">
             Regression model: how is {chartEntry.overviewName}&apos;s fair value calculated?
           </summary>
-          <p className="text-xs text-muted-foreground">AMC follows the selector above (AUM vs. Share Price). The controls below are the same Range/Moving avg (days)/Extra Lag as the table — changing either place updates both.</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              The controls below are the same Range/Moving avg (days)/Extra Lag as the table, and the AMC selector is
+              the same as the chart above — changing either place updates both.
+            </p>
+            <div className="flex items-center gap-2">
+              <label htmlFor="deep-dive-amc-select" className="text-xs text-muted-foreground">
+                AMC
+              </label>
+              <select
+                id="deep-dive-amc-select"
+                value={chartAmcSlug}
+                onChange={(e) => setChartAmcSlug(e.target.value)}
+                className={ratioBasisSelectClass}
+              >
+                {data?.amcs.map((a) => (
+                  <option key={a.slug} value={a.slug}>
+                    {a.overviewName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div className="flex flex-wrap items-center gap-4 rounded-lg border bg-background p-3">
             <ButtonGroup label="Range" options={RANGE_OPTIONS} value={range} onChange={setRange} />
             <MovingAvgDaysControl value={maDaysInput} onChange={setMaDaysInput} idPrefix="deep-dive" />
