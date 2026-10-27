@@ -20,7 +20,7 @@ import {
 } from "@/lib/aum/series-math";
 import { RANGE_OPTIONS, computeRangeCutoffDate, filterByCutoff, type RangeOption } from "@/lib/aum/date-range";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
-import { EXTRA_LAG_OPTIONS, computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
+import { EXTRA_LAG_OPTIONS, MA_WINDOW_OPTIONS, computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
 import { FairValueExplainer } from "./fair-value-explainer";
 import { RegressionDeepDive } from "./regression-deep-dive";
 import { AumTrendChart } from "./aum-trend-chart";
@@ -29,10 +29,85 @@ import { AumTrendChart } from "./aum-trend-chart";
 // requested, not user-selectable (yet).
 const EXPLAINER_AMC_SLUG = "hdfc-mutual-fund";
 
-// Quick-select buttons for "Moving avg (days)", matching the Regression
-// tab's own MA Window presets exactly -- the input stays free-text too
-// (clicking a preset just fills it), so any custom value still works.
-const MA_DAYS_PRESETS = [10, 20, 45];
+// Generic Range/Extra-Lag button-group rendering -- used for both the
+// table's own control row AND the regression deep-dive section's local
+// copy of the same controls (same underlying state either way, per the
+// user's own confirmation: changing either place updates both).
+function ButtonGroup<T extends string | number>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: readonly { value: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5" role="group" aria-label={label}>
+      <span className="text-xs text-muted-foreground">{label}</span>
+      {options.map((o) => (
+        <button
+          key={String(o.value)}
+          type="button"
+          onClick={() => onChange(o.value)}
+          className={
+            o.value === value
+              ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
+              : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          }
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// "Moving avg (days)" -- 10D/20D/45D quick-select presets (matching the
+// Regression tab's own MA Window presets) plus the existing free-text
+// input, so any custom value still works. Kept separate from the generic
+// ButtonGroup above since "which preset is active" compares against the
+// raw text input directly, not a plain controlled value. Also shared
+// between the table's control row and the deep-dive section's local copy.
+function MovingAvgDaysControl({ value, onChange, idPrefix }: { value: string; onChange: (v: string) => void; idPrefix: string }) {
+  const inputId = `${idPrefix}-ma-days`;
+  return (
+    <div className="flex items-center gap-2">
+      <label htmlFor={inputId} className="text-xs text-muted-foreground">
+        Moving avg (days)
+      </label>
+      <div className="flex items-center gap-1" role="group" aria-label="Moving avg (days) presets">
+        {MA_WINDOW_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(String(o.value))}
+            className={
+              value === String(o.value)
+                ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
+                : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+            }
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <input
+        id={inputId}
+        type="number"
+        min={0}
+        max={250}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="0"
+        className={maInputClass}
+        title="Click a preset above, or type any custom number of days"
+      />
+    </div>
+  );
+}
 
 interface ComputedRow {
   slug: string;
@@ -653,6 +728,15 @@ export function StockCorrelationTable() {
     () => (chartEntry ? computeRegressionResult(chartEntry.aumHistory, chartEntry.stockPriceSeries, { maWindow: maDays, extraLagDays, range }) : null),
     [chartEntry, maDays, extraLagDays, range]
   );
+  // "R² by window" readout in the deep-dive section's own control row,
+  // matching the standalone Regression tab's own readout exactly.
+  const chartR2ByWindow = useMemo(() => {
+    if (!chartEntry) return null;
+    return MA_WINDOW_OPTIONS.map((o) => ({
+      label: o.label,
+      r2: computeRegressionResult(chartEntry.aumHistory, chartEntry.stockPriceSeries, { maWindow: o.value, extraLagDays, range })?.r2 ?? null,
+    }));
+  }, [chartEntry, extraLagDays, range]);
 
   // Groups rows by their own truncatedFromDate and picks the date shared by
   // the MOST rows as the one general caption, calling out any row whose
@@ -716,22 +800,7 @@ export function StockCorrelationTable() {
           </p>
         </details>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1" role="group" aria-label="Date range">
-            {RANGE_OPTIONS.map((o) => (
-              <button
-                key={o.value}
-                type="button"
-                onClick={() => setRange(o.value)}
-                className={
-                  o.value === range
-                    ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
-                    : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-                }
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
+          <ButtonGroup label="Range" options={RANGE_OPTIONS} value={range} onChange={setRange} />
           <div className="flex items-center gap-2">
             <label htmlFor="summary-ratio-basis" className="text-xs text-muted-foreground">
               Ratio basis
@@ -749,55 +818,8 @@ export function StockCorrelationTable() {
               ))}
             </select>
           </div>
-          <div className="flex items-center gap-2">
-            <label htmlFor="summary-ma-days" className="text-xs text-muted-foreground">
-              Moving avg (days)
-            </label>
-            <div className="flex items-center gap-1" role="group" aria-label="Moving avg (days) presets">
-              {MA_DAYS_PRESETS.map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setMaDaysInput(String(n))}
-                  className={
-                    maDaysInput === String(n)
-                      ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
-                      : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-                  }
-                >
-                  {n}D
-                </button>
-              ))}
-            </div>
-            <input
-              id="summary-ma-days"
-              type="number"
-              min={0}
-              max={250}
-              value={maDaysInput}
-              onChange={(e) => setMaDaysInput(e.target.value)}
-              placeholder="0"
-              className={maInputClass}
-              title="Click a preset above, or type any custom number of days"
-            />
-          </div>
-          <div className="flex items-center gap-1" role="group" aria-label="Extra Lag" title="Trading-day lag applied to AUM before alignment, shared by every column below">
-            <span className="text-xs text-muted-foreground">Extra Lag</span>
-            {EXTRA_LAG_OPTIONS.map((o) => (
-              <button
-                key={o.value}
-                type="button"
-                onClick={() => setExtraLagDays(o.value)}
-                className={
-                  o.value === extraLagDays
-                    ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
-                    : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-                }
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
+          <MovingAvgDaysControl value={maDaysInput} onChange={setMaDaysInput} idPrefix="summary" />
+          <ButtonGroup label="Extra Lag" options={EXTRA_LAG_OPTIONS} value={extraLagDays} onChange={setExtraLagDays} />
           <label
             htmlFor="summary-aum-only-avg"
             title="Moving avg applies only to AUM; the ratio uses each day's raw share price instead of an averaged one"
@@ -1021,10 +1043,17 @@ export function StockCorrelationTable() {
           <summary className="cursor-pointer font-medium text-foreground">
             Regression model: how is {chartEntry.overviewName}&apos;s fair value calculated?
           </summary>
-          <p className="text-xs text-muted-foreground">
-            Follows the AMC selected above (AUM vs. Share Price) and this tab&apos;s own Moving avg (days)/Extra
-            Lag/Range — not a separate selector or settings.
-          </p>
+          <p className="text-xs text-muted-foreground">AMC follows the selector above (AUM vs. Share Price). The controls below are the same Range/Moving avg (days)/Extra Lag as the table — changing either place updates both.</p>
+          <div className="flex flex-wrap items-center gap-4 rounded-lg border bg-background p-3">
+            <ButtonGroup label="Range" options={RANGE_OPTIONS} value={range} onChange={setRange} />
+            <MovingAvgDaysControl value={maDaysInput} onChange={setMaDaysInput} idPrefix="deep-dive" />
+            <ButtonGroup label="Extra Lag" options={EXTRA_LAG_OPTIONS} value={extraLagDays} onChange={setExtraLagDays} />
+            {chartR2ByWindow && (
+              <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                R² by window (in-sample): {chartR2ByWindow.map((w) => `${w.label} ${w.r2 !== null ? w.r2.toFixed(2) : "—"}`).join(" · ")}
+              </span>
+            )}
+          </div>
           <RegressionDeepDive result={chartRegressionResult} tradingSymbol={chartEntry.tradingSymbol} maWindow={maDays} extraLagDays={extraLagDays} />
         </details>
       )}
