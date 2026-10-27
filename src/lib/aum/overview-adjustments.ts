@@ -22,16 +22,44 @@ async function getCurrentReportPeriod(): Promise<string | null> {
   return row?.value ?? null;
 }
 
-export interface OverviewAdjustments {
+// Each of the 7 heavy lookups below is independent of the others (confirmed
+// by the Promise.all they already ran in) -- this lets a caller ask for only
+// the slice(s) it actually needs instead of always paying for all 7. Omitting
+// `fields` entirely (the default) computes every field, exactly as before
+// this existed -- so any existing caller is unaffected.
+export type OverviewAdjustmentsField =
+  | "reportedAum"
+  | "avgAum"
+  | "currentAvgAum"
+  | "histLiveAum"
+  | "indexAvg"
+  | "indexCurrentAvg"
+  | "indexHistLive";
+
+export const ALL_OVERVIEW_ADJUSTMENTS_FIELDS: OverviewAdjustmentsField[] = [
+  "reportedAum",
+  "avgAum",
+  "currentAvgAum",
+  "histLiveAum",
+  "indexAvg",
+  "indexCurrentAvg",
+  "indexHistLive",
+];
+
+// The "wire" shape: a single field-scoped request only returns the heavy
+// fields it actually asked for (see `fields` above) -- `undefined` means
+// "not requested", never "computed and empty". Omitting `fields` entirely
+// computes and returns every field, satisfying `OverviewAdjustments` below.
+export interface OverviewAdjustmentsSlice {
   reportPeriod: string;
   availableReportPeriods: string[];
-  reportedAumByAmcId: Record<number, number>;
+  reportedAumByAmcId?: Record<number, number>;
   avgFrom: string;
   avgTo: string;
-  avgAumByAmcId: Record<number, AverageAumRange>;
+  avgAumByAmcId?: Record<number, AverageAumRange>;
   currentAvgFrom: string;
   currentAvgTo: string;
-  currentAvgAumByAmcId: Record<number, AverageAumRange>;
+  currentAvgAumByAmcId?: Record<number, AverageAumRange>;
   minSnapshotDate: string | null;
   maxSnapshotDate: string | null;
   // The Overview table's "Hist. Live AUM" toggle mode -- each AMC's live
@@ -41,11 +69,35 @@ export interface OverviewAdjustments {
   // prevQuarter used for the "Avg AUM" window default above) -- so it only
   // advances at quarter boundaries, not every month.
   histLiveDate: string;
-  histLiveAumByAmcId: Record<number, number>;
+  histLiveAumByAmcId?: Record<number, number>;
   // Same three windows/date above, applied to the Overview table's Nifty
   // 50/Nifty 500 benchmark rows instead of AMCs -- kept in lockstep with
   // the AMC figures (same avgFrom/avgTo/currentAvgFrom/currentAvgTo/
   // histLiveDate) so picking a custom window updates both together.
+  indexAvgLevelByKey?: Record<IndexKey, number | null>;
+  indexCurrentAvgLevelByKey?: Record<IndexKey, number | null>;
+  indexHistLiveLevelByKey?: Record<IndexKey, number | null>;
+}
+
+// The full, every-field-present shape every existing consumer
+// (amc-grid.tsx) was already written against -- what `useOverviewAdjustments`
+// merges 4 field-scoped slices into once all 4 have resolved. Unchanged
+// from before `OverviewAdjustmentsSlice` existed.
+export interface OverviewAdjustments
+  extends Omit<
+    OverviewAdjustmentsSlice,
+    | "reportedAumByAmcId"
+    | "avgAumByAmcId"
+    | "currentAvgAumByAmcId"
+    | "histLiveAumByAmcId"
+    | "indexAvgLevelByKey"
+    | "indexCurrentAvgLevelByKey"
+    | "indexHistLiveLevelByKey"
+  > {
+  reportedAumByAmcId: Record<number, number>;
+  avgAumByAmcId: Record<number, AverageAumRange>;
+  currentAvgAumByAmcId: Record<number, AverageAumRange>;
+  histLiveAumByAmcId: Record<number, number>;
   indexAvgLevelByKey: Record<IndexKey, number | null>;
   indexCurrentAvgLevelByKey: Record<IndexKey, number | null>;
   indexHistLiveLevelByKey: Record<IndexKey, number | null>;
@@ -70,7 +122,9 @@ export async function getOverviewAdjustments(options?: {
   currentAvgTo?: string;
   histLiveDate?: string;
   blendGoldSilverAmcIds?: number[];
-}): Promise<OverviewAdjustments> {
+  fields?: OverviewAdjustmentsField[];
+}): Promise<OverviewAdjustmentsSlice> {
+  const fieldSet = new Set(options?.fields ?? ALL_OVERVIEW_ADJUSTMENTS_FIELDS);
   const [currentReportPeriod, availableReportPeriods, bounds] = await Promise.all([
     getCurrentReportPeriod(),
     getAvailableReportPeriods(),
@@ -105,35 +159,42 @@ export async function getOverviewAdjustments(options?: {
   // overridden `reportPeriod` above (picking an older "Reported AUM" month
   // from that picker shouldn't change what "today's still-open period"
   // means for flow adjustment) -- see the flow-estimate averages audit.
-  const flowCtx = await getFlowAdjustmentContext(currentReportPeriod);
+  // Only needed by avgAum/currentAvgAum, so only fetched when at least one
+  // of those was actually requested.
+  const flowCtx =
+    fieldSet.has("avgAum") || fieldSet.has("currentAvgAum") ? await getFlowAdjustmentContext(currentReportPeriod) : null;
 
   const [reportedAumMap, avgAumMap, currentAvgAumMap, histLiveAumMap, indexAvgLevelByKey, indexCurrentAvgLevelByKey, indexHistLiveLevelByKey] =
     await Promise.all([
-      getReportedAumForPeriod(reportPeriod),
-      getAverageAumForRange(avgFrom, avgTo, flowCtx, options?.blendGoldSilverAmcIds),
-      getAverageAumForRange(currentAvgFrom, currentAvgTo, flowCtx, options?.blendGoldSilverAmcIds),
-      getAllAmcsLiveAumAsOf(histLiveDate, options?.blendGoldSilverAmcIds),
-      getAverageIndexLevelForRange(avgFrom, avgTo),
-      getAverageIndexLevelForRange(currentAvgFrom, currentAvgTo),
-      getIndexLevelsAsOf(histLiveDate),
+      fieldSet.has("reportedAum") ? getReportedAumForPeriod(reportPeriod) : Promise.resolve(null),
+      fieldSet.has("avgAum") ? getAverageAumForRange(avgFrom, avgTo, flowCtx!, options?.blendGoldSilverAmcIds) : Promise.resolve(null),
+      fieldSet.has("currentAvgAum")
+        ? getAverageAumForRange(currentAvgFrom, currentAvgTo, flowCtx!, options?.blendGoldSilverAmcIds)
+        : Promise.resolve(null),
+      fieldSet.has("histLiveAum") ? getAllAmcsLiveAumAsOf(histLiveDate, options?.blendGoldSilverAmcIds) : Promise.resolve(null),
+      fieldSet.has("indexAvg") ? getAverageIndexLevelForRange(avgFrom, avgTo) : Promise.resolve(null),
+      fieldSet.has("indexCurrentAvg") ? getAverageIndexLevelForRange(currentAvgFrom, currentAvgTo) : Promise.resolve(null),
+      fieldSet.has("indexHistLive") ? getIndexLevelsAsOf(histLiveDate) : Promise.resolve(null),
     ]);
 
   return {
     reportPeriod,
     availableReportPeriods,
-    reportedAumByAmcId: Object.fromEntries(reportedAumMap),
+    reportedAumByAmcId: reportedAumMap ? Object.fromEntries(reportedAumMap) : undefined,
     avgFrom,
     avgTo,
-    avgAumByAmcId: Object.fromEntries(avgAumMap),
+    avgAumByAmcId: avgAumMap ? Object.fromEntries(avgAumMap) : undefined,
     currentAvgFrom,
     currentAvgTo,
-    currentAvgAumByAmcId: Object.fromEntries(currentAvgAumMap),
+    currentAvgAumByAmcId: currentAvgAumMap ? Object.fromEntries(currentAvgAumMap) : undefined,
     minSnapshotDate: minDate,
     maxSnapshotDate: maxDate,
     histLiveDate,
-    histLiveAumByAmcId: Object.fromEntries([...histLiveAumMap].map(([amcId, v]) => [amcId, v.liveAumCr])),
-    indexAvgLevelByKey,
-    indexCurrentAvgLevelByKey,
-    indexHistLiveLevelByKey,
+    histLiveAumByAmcId: histLiveAumMap
+      ? Object.fromEntries([...histLiveAumMap].map(([amcId, v]) => [amcId, v.liveAumCr]))
+      : undefined,
+    indexAvgLevelByKey: indexAvgLevelByKey ?? undefined,
+    indexCurrentAvgLevelByKey: indexCurrentAvgLevelByKey ?? undefined,
+    indexHistLiveLevelByKey: indexHistLiveLevelByKey ?? undefined,
   };
 }

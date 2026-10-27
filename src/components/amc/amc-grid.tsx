@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { mutate as globalMutate } from "swr";
 import { useLiveAum } from "@/hooks/use-live-aum";
 import { useOverviewAdjustments } from "@/hooks/use-overview-adjustments";
 import { useEtfAumTotals } from "@/hooks/use-etf-aum-totals";
@@ -901,7 +902,22 @@ export function AmcGrid({
         </Card>
       )}
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as string)}>
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => {
+          const next = value as string;
+          setActiveTab(next);
+          // Stock Correlation/Regression stay mounted once visited (see their
+          // `keepMounted` TabsContent below), so they no longer get an SWR
+          // remount-triggered revalidation for free on every revisit --
+          // explicitly revalidate their shared (once-a-day cron-updated)
+          // data here instead, so "come back and see anything new" keeps
+          // working exactly as it did before.
+          if (next === "amc-stock-correlation" || next === "amc-regression") {
+            globalMutate((key) => typeof key === "string" && key.startsWith("/api/amc-stock-correlations"));
+          }
+        }}
+      >
         <div className="rounded-xl border bg-card p-3 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2.5">
             <TabsList variant="line">
@@ -1281,10 +1297,10 @@ export function AmcGrid({
         <TabsContent value="gold-silver-etfs">
           <EtfTabContent />
         </TabsContent>
-        <TabsContent value="amc-stock-correlation">
+        <TabsContent value="amc-stock-correlation" keepMounted>
           <StockCorrelationTable />
         </TabsContent>
-        <TabsContent value="amc-regression">
+        <TabsContent value="amc-regression" keepMounted>
           <RegressionPanel />
         </TabsContent>
         <TabsContent value="fortnightly-update">

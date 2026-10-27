@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOverviewAdjustments } from "@/lib/aum/overview-adjustments";
+import { getOverviewAdjustments, ALL_OVERVIEW_ADJUSTMENTS_FIELDS, type OverviewAdjustmentsField } from "@/lib/aum/overview-adjustments";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -22,6 +22,13 @@ export async function GET(request: Request) {
         .map((s) => Number(s))
         .filter((n) => Number.isFinite(n))
     : undefined;
+  // Omitting `fields` entirely (the common case: internal scripts, or any
+  // caller not yet updated) computes every field, exactly as before this
+  // param existed.
+  const fieldsRaw = url.searchParams.get("fields");
+  const fields = fieldsRaw
+    ? (fieldsRaw.split(",").filter((f) => (ALL_OVERVIEW_ADJUSTMENTS_FIELDS as string[]).includes(f)) as OverviewAdjustmentsField[])
+    : undefined;
 
   try {
     const result = await getOverviewAdjustments({
@@ -32,6 +39,7 @@ export async function GET(request: Request) {
       currentAvgTo,
       histLiveDate,
       blendGoldSilverAmcIds,
+      fields,
     });
     return NextResponse.json(result);
   } catch (err) {

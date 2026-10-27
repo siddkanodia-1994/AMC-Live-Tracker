@@ -611,7 +611,17 @@ function zScoreClass(z: number): string {
 export function StockCorrelationTable() {
   const { data, error, isLoading } = useAmcStockCorrelations();
   const [maDaysInput, setMaDaysInput] = useState("");
-  const maDays = Math.max(1, Math.min(250, parseInt(maDaysInput, 10) || 1));
+  // The text box itself always echoes maDaysInput instantly (below). The
+  // clamped numeric value that actually drives computation is debounced
+  // ~300ms behind it, so typing a multi-digit window (e.g. "45") doesn't
+  // fire a full recompute (8 AMCs' worth of regression fits + a chart
+  // redraw) after every single digit -- only once, after you pause.
+  const maDaysImmediate = Math.max(1, Math.min(250, parseInt(maDaysInput, 10) || 1));
+  const [maDays, setMaDays] = useState(maDaysImmediate);
+  useEffect(() => {
+    const timer = setTimeout(() => setMaDays(maDaysImmediate), 300);
+    return () => clearTimeout(timer);
+  }, [maDaysImmediate]);
   const [ratioBasis, setRatioBasis] = useState<RatioBasis>("mean");
   const activeBasis = RATIO_BASIS_OPTIONS.find((o) => o.value === ratioBasis) ?? RATIO_BASIS_OPTIONS[0];
   // Shared with the chart section below (and the walkthrough) -- this is
