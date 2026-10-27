@@ -897,7 +897,7 @@ export function StockCorrelationTable() {
                   : `Avg (${maDays > 1 ? `${maDays}D avg` : "Latest"})`}
               </TableHead>
               <TableHead colSpan={2} className={groupHeadClass}>
-                Actual (returns)
+                Correlation
               </TableHead>
               <TableHead colSpan={3} className={groupHeadClass}>
                 Ratio model
