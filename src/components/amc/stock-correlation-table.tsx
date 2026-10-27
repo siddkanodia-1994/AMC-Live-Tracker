@@ -14,17 +14,25 @@ import {
   priceToAumRatioStats,
   ratioAtBasis,
   alignSeriesByDate,
+  lagSeriesForward,
   RATIO_BASIS_OPTIONS,
   type RatioBasis,
 } from "@/lib/aum/series-math";
 import { RANGE_OPTIONS, computeRangeCutoffDate, filterByCutoff, type RangeOption } from "@/lib/aum/date-range";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
+import { EXTRA_LAG_OPTIONS, computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
 import { FairValueExplainer } from "./fair-value-explainer";
+import { RegressionDeepDive } from "./regression-deep-dive";
 import { AumTrendChart } from "./aum-trend-chart";
 
 // The AMC used as the worked example below the table -- HDFC specifically
 // requested, not user-selectable (yet).
 const EXPLAINER_AMC_SLUG = "hdfc-mutual-fund";
+
+// Quick-select buttons for "Moving avg (days)", matching the Regression
+// tab's own MA Window presets exactly -- the input stays free-text too
+// (clicking a preset just fills it), so any custom value still works.
+const MA_DAYS_PRESETS = [10, 20, 45];
 
 interface ComputedRow {
   slug: string;
@@ -64,6 +72,14 @@ interface ComputedRow {
   // one whose stock listed months after the others -- doesn't get silently
   // averaged away into a shared caption that's wrong for every other row.
   truncatedFromDate: string | null;
+  // Regression-based fair value (Price = slope × AumMA[window][t-lag] +
+  // intercept) and its own upside % -- a second, independent fair-value
+  // method alongside the ratio-based one above, shown side by side rather
+  // than replacing it. null whenever this AMC doesn't have enough aligned
+  // history for a fit at the current settings (same as every other
+  // nullable cell here -- no special-casing for thin AMCs).
+  modelFairValuePriceInr: number | null;
+  modelUpsidePct: number | null;
 }
 
 // Mirrors aum-trend-chart.tsx's own per-AMC computation exactly (same
@@ -83,7 +99,8 @@ function computeRow(
   ratioBasis: RatioBasis,
   range: RangeOption,
   aumOnlyAveraging: boolean,
-  levelsCorrelation: boolean
+  levelsCorrelation: boolean,
+  extraLagDays: ExtraLagDays
 ): ComputedRow {
   const data = trimToLastContinuousRun(entry.aumHistory);
   // Moving average computed over the FULL history first, then the period
@@ -112,7 +129,17 @@ function computeRow(
   // filter (unlike toDatedValues, which would drop them immediately) so
   // truncation below can tell "gap falls before the period" (invisible)
   // apart from "gap extends into the period" (needs a caption).
-  const aumWithGapsFull = data.map((d, i) => ({ date: d.date, value: aumDisplay[i] }));
+  const aumWithGapsFullRaw = data.map((d, i) => ({ date: d.date, value: aumDisplay[i] }));
+  // "Extra Lag" shifts the AUM side forward by exactly this many trading
+  // days -- a TRUE no-op at extraLagDays === 0 (lagSeriesForward's own
+  // guarantee), which is what keeps every ratio-based column below
+  // byte-for-byte identical to its pre-Extra-Lag behavior at the default
+  // "None" setting. Applied BEFORE the range cutoff (mirrors
+  // regression-engine.ts's own convention) so the shift pulls in real
+  // pre-range history instead of leaving an artificial gap at the range
+  // boundary; lagSeriesForward also preserves the series' own latest date
+  // unchanged, so the cutoff computed from it below is unaffected by lag.
+  const aumWithGapsFull = lagSeriesForward(aumWithGapsFullRaw, extraLagDays);
   const priceWithGapsFull = entry.stockPriceSeries.map((p, i) => ({ date: p.date, value: priceDisplay[i] }));
   // ONE cutoff, anchored to the AUM series' own latest date (the same
   // reference aum-trend-chart.tsx implicitly uses, since its merged
@@ -150,8 +177,13 @@ function computeRow(
     entry.stockPriceSeries.length > 0 ? entry.stockPriceSeries[entry.stockPriceSeries.length - 1].priceInr : null;
   // The N-day moving average ending today -- period-independent (see
   // ComputedRow comment). Equals latestAumCr/latestPriceInr exactly when
-  // maDays <= 1.
-  const avgAumCr = aumDisplay.length > 0 ? aumDisplay[aumDisplay.length - 1] ?? null : null;
+  // maDays <= 1 AND extraLagDays === 0. Read off the LAGGED (not the raw
+  // aumDisplay) series so a non-zero Extra Lag shifts this the same way
+  // it shifts the regression model's own "most recently known AUM" --
+  // lagSeriesForward preserves the series' own latest date, so this is
+  // still "today's row", just paired with AUM from extraLagDays sessions
+  // ago when Extra Lag is set.
+  const avgAumCr = aumWithGapsFull.length > 0 ? aumWithGapsFull[aumWithGapsFull.length - 1].value ?? null : null;
   const avgPriceInr = priceDisplay.length > 0 ? priceDisplay[priceDisplay.length - 1] ?? null : null;
   const selectedRatio = ratioStats ? ratioAtBasis(ratioStats, ratioBasis) : null;
   // Fair value uses the AVERAGED AUM (the "revised ratio") -- confirmed:
@@ -186,6 +218,19 @@ function computeRow(
   const aumTruncatedFromDate = aumFirstIdx > 0 ? aumWithGaps[aumFirstIdx].date : null;
   const priceTruncatedFromDate = priceFirstIdx > 0 ? priceWithGaps[priceFirstIdx].date : null;
 
+  // Regression-based Model Fair Value / Model Upside % -- a second,
+  // independent fair-value method shown alongside the ratio-based one
+  // above. computeRegressionResult adds its OWN +1 session floor on top
+  // of extraLagDays regardless (BASE_LAG_SESSIONS in regression-engine.ts)
+  // -- that floor is regression-only, by design (see the Extra Lag
+  // comment at the top of this file).
+  const regressionResult = computeRegressionResult(entry.aumHistory, entry.stockPriceSeries, { maWindow: maDays, extraLagDays, range });
+  const modelFairValuePriceInr = regressionResult?.fairValueAtLatest ?? null;
+  const modelUpsidePct =
+    regressionResult && regressionResult.latestPrice !== 0
+      ? (regressionResult.fairValueAtLatest - regressionResult.latestPrice) / regressionResult.latestPrice
+      : null;
+
   return {
     slug: entry.slug,
     overviewName: entry.overviewName,
@@ -205,6 +250,8 @@ function computeRow(
           ? aumTruncatedFromDate
           : priceTruncatedFromDate
         : aumTruncatedFromDate ?? priceTruncatedFromDate,
+    modelFairValuePriceInr,
+    modelUpsidePct,
   };
 }
 
@@ -437,7 +484,12 @@ function buildAmcWorksheet(
   // Whole-period summary (Corr/R²/Fair value/Upside %) -- reuses
   // computeRow's own authoritative numbers as the cache, so these can
   // never drift from what the table shows on screen for this AMC.
-  const summary = computeRow(entry, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation);
+  // Extra Lag isn't wired into this export's own day-by-day live formulas
+  // (B/D/F/P columns below) -- always 0 here so the cached summary values
+  // stay internally consistent with those formulas even if Excel ever
+  // recalculates them. Out of scope for this change (the user didn't ask
+  // for the export to reflect Extra Lag); revisit together if wanted.
+  const summary = computeRow(entry, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation, 0);
   const basisCol = ratioBasisColumnLetter(ratioBasis);
   const corrFormula = levelsCorrelation ? `IFERROR(CORREL(D:D,E:E),"")` : `IFERROR(CORREL(P:P,Q:Q),"")`;
   setExportCell(ws, "S2", { f: corrFormula, value: summary.corr ?? "" });
@@ -498,6 +550,10 @@ export function StockCorrelationTable() {
   // When on, Corr/R² correlate the two series' raw LEVELS directly instead
   // of their day-over-day % change -- see computeLevelCorrelationStats.
   const [levelsCorrelation, setLevelsCorrelation] = useState(false);
+  // Trading-day lag applied to the AUM side before alignment -- shared by
+  // the ratio-based columns AND the Model columns (see computeRow). 0
+  // ("None") is a true no-op for the ratio columns.
+  const [extraLagDays, setExtraLagDays] = useState<ExtraLagDays>(0);
   const [isSaving, setIsSaving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
 
@@ -514,6 +570,7 @@ export function StockCorrelationTable() {
     setRatioBasis(data.defaults.ratioBasis);
     setAumOnlyAveraging(data.defaults.aumOnlyAveraging);
     setLevelsCorrelation(data.defaults.levelsCorrelation);
+    setExtraLagDays(data.defaults.extraLagDays as ExtraLagDays);
   }, [data]);
 
   async function handleSaveDefaults() {
@@ -528,6 +585,7 @@ export function StockCorrelationTable() {
           ratioBasis,
           aumOnlyAveraging,
           levelsCorrelation,
+          extraLagDays,
         }),
       });
       if (!res.ok) {
@@ -581,13 +639,20 @@ export function StockCorrelationTable() {
 
   const rows = useMemo(() => {
     if (!data) return [];
-    return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation));
-  }, [data, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation]);
+    return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation, extraLagDays));
+  }, [data, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation, extraLagDays]);
 
   const explainerEntry = useMemo(() => data?.amcs.find((a) => a.slug === EXPLAINER_AMC_SLUG) ?? null, [data]);
 
   const [chartAmcSlug, setChartAmcSlug] = useState(EXPLAINER_AMC_SLUG);
   const chartEntry = useMemo(() => data?.amcs.find((a) => a.slug === chartAmcSlug) ?? null, [data, chartAmcSlug]);
+  // The regression deep-dive section below follows this same AMC + the
+  // table's own shared Moving avg (days)/Extra Lag/Range -- no separate
+  // controls or AMC selector of its own.
+  const chartRegressionResult = useMemo(
+    () => (chartEntry ? computeRegressionResult(chartEntry.aumHistory, chartEntry.stockPriceSeries, { maWindow: maDays, extraLagDays, range }) : null),
+    [chartEntry, maDays, extraLagDays, range]
+  );
 
   // Groups rows by their own truncatedFromDate and picks the date shared by
   // the MOST rows as the one general caption, calling out any row whose
@@ -688,6 +753,22 @@ export function StockCorrelationTable() {
             <label htmlFor="summary-ma-days" className="text-xs text-muted-foreground">
               Moving avg (days)
             </label>
+            <div className="flex items-center gap-1" role="group" aria-label="Moving avg (days) presets">
+              {MA_DAYS_PRESETS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setMaDaysInput(String(n))}
+                  className={
+                    maDaysInput === String(n)
+                      ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
+                      : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                  }
+                >
+                  {n}D
+                </button>
+              ))}
+            </div>
             <input
               id="summary-ma-days"
               type="number"
@@ -697,7 +778,25 @@ export function StockCorrelationTable() {
               onChange={(e) => setMaDaysInput(e.target.value)}
               placeholder="0"
               className={maInputClass}
+              title="Click a preset above, or type any custom number of days"
             />
+          </div>
+          <div className="flex items-center gap-1" role="group" aria-label="Extra Lag" title="Trading-day lag applied to AUM before alignment, shared by every column below">
+            <span className="text-xs text-muted-foreground">Extra Lag</span>
+            {EXTRA_LAG_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setExtraLagDays(o.value)}
+                className={
+                  o.value === extraLagDays
+                    ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
+                    : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                }
+              >
+                {o.label}
+              </button>
+            ))}
           </div>
           <label
             htmlFor="summary-aum-only-avg"
@@ -781,6 +880,9 @@ export function StockCorrelationTable() {
               <TableHead colSpan={3} className={groupHeadClass}>
                 Fair value
               </TableHead>
+              <TableHead colSpan={2} className={groupHeadClass}>
+                Regression model
+              </TableHead>
             </TableRow>
             <TableRow>
               <TableHead className="align-bottom">AMC</TableHead>
@@ -795,6 +897,8 @@ export function StockCorrelationTable() {
               </TableHead>
               <TableHead className="text-right align-bottom">Upside %</TableHead>
               <TableHead className="text-right align-bottom">Z-score</TableHead>
+              <TableHead className="border-l text-right align-bottom">Model fair value</TableHead>
+              <TableHead className="text-right align-bottom">Model upside %</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -857,6 +961,18 @@ export function StockCorrelationTable() {
                     "—"
                   )}
                 </TableCell>
+                <TableCell className="border-l text-right tabular-nums">
+                  {row.modelFairValuePriceInr !== null ? formatPriceInr(row.modelFairValuePriceInr) : "—"}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {row.modelUpsidePct !== null ? (
+                    <span className={row.modelUpsidePct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
+                      {formatPct(row.modelUpsidePct, { alwaysSign: true })}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -899,6 +1015,19 @@ export function StockCorrelationTable() {
           />
         )}
       </div>
+
+      {chartEntry && (
+        <details open className="space-y-3 rounded-lg border bg-card p-4">
+          <summary className="cursor-pointer font-medium text-foreground">
+            Regression model: how is {chartEntry.overviewName}&apos;s fair value calculated?
+          </summary>
+          <p className="text-xs text-muted-foreground">
+            Follows the AMC selected above (AUM vs. Share Price) and this tab&apos;s own Moving avg (days)/Extra
+            Lag/Range — not a separate selector or settings.
+          </p>
+          <RegressionDeepDive result={chartRegressionResult} tradingSymbol={chartEntry.tradingSymbol} maWindow={maDays} extraLagDays={extraLagDays} />
+        </details>
+      )}
 
       {explainerEntry && (
         <FairValueExplainer

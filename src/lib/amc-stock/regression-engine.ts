@@ -9,6 +9,7 @@ import {
   alignSeriesByDate,
   trimToLastContinuousRun,
   priceToAumRatioStats,
+  lagSeriesForward,
   type DatedValue,
 } from "../aum/series-math";
 import { computeRangeCutoffDate, filterByCutoff, type RangeOption } from "../aum/date-range";
@@ -19,7 +20,10 @@ export const MA_WINDOW_OPTIONS = [
   { value: 20, label: "20D" },
   { value: 45, label: "45D" },
 ] as const;
-export type MaWindow = (typeof MA_WINDOW_OPTIONS)[number]["value"];
+// A plain number, not a literal union of the 3 presets above -- the Stock
+// Correlation tab's "Moving avg (days)" control also accepts a free-typed
+// custom value, not just these quick-select buttons.
+export type MaWindow = number;
 
 export const EXTRA_LAG_OPTIONS = [
   { value: 0, label: "None" },
@@ -32,22 +36,12 @@ export type ExtraLagDays = (typeof EXTRA_LAG_OPTIONS)[number]["value"];
 // The driver is ALWAYS at least 1 trading day stale relative to price --
 // you can't trade on today's AUM print before it exists -- with
 // extraLagDays on top of that base, never instead of it. Matches the
-// reference page's own "revenue lagged one session" baseline.
+// reference page's own "revenue lagged one session" baseline. This floor
+// is regression-specific -- the Stock Correlation tab's ratio-based
+// columns apply extraLagDays directly with NO floor, so "Extra Lag: None"
+// stays genuinely zero-lag for them (see lagSeriesForward's own callers
+// in stock-correlation-table.tsx).
 const BASE_LAG_SESSIONS = 1;
-
-// Shifts a DatedValue[] FORWARD in time by `lagDays` trading-day array
-// positions: output[i] pairs input[i]'s value with input[i+lagDays]'s
-// date -- "pair today's date with the driver value from lagDays trading
-// days ago". Both AUM and price only have rows on real trading days, so
-// a trading-day lag is a plain index shift, not a calendar-day one.
-export function lagSeriesForward<T extends { date: string; value: unknown }>(dated: T[], lagDays: number): T[] {
-  if (lagDays <= 0) return dated;
-  const result: T[] = [];
-  for (let i = 0; i + lagDays < dated.length; i++) {
-    result.push({ ...dated[i], date: dated[i + lagDays].date } as T);
-  }
-  return result;
-}
 
 export interface RegressionConfig {
   maWindow: MaWindow;

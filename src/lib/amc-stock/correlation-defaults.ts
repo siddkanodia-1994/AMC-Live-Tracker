@@ -3,6 +3,7 @@ import { db } from "../db/client";
 import { appSettings } from "../db/schema";
 import { RANGE_OPTIONS, type RangeOption } from "../aum/date-range";
 import { RATIO_BASIS_OPTIONS, type RatioBasis } from "../aum/series-math";
+import { EXTRA_LAG_OPTIONS } from "./regression-engine";
 
 const SETTINGS_KEY = "stock_correlation_defaults";
 
@@ -17,6 +18,13 @@ export interface StockCorrelationDefaults {
   // When true, Corr/R² correlate the two series' raw LEVELS directly
   // instead of their day-over-day % change. See computeLevelCorrelationStats.
   levelsCorrelation: boolean;
+  // Trading-day lag applied to the AUM side before it's aligned with
+  // price -- shared by the ratio-based columns (Corr/R²/Fair Value/
+  // Z-score) AND the regression-based Model columns. 0 ("None") is a
+  // true no-op for the ratio columns (today's same-day behavior,
+  // unchanged); the regression columns always add their own +1 session
+  // floor on top of this regardless. See stock-correlation-table.tsx.
+  extraLagDays: number;
 }
 
 const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
@@ -25,6 +33,7 @@ const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
   ratioBasis: "mean",
   aumOnlyAveraging: false,
   levelsCorrelation: false,
+  extraLagDays: 0,
 };
 
 function isRangeOption(value: unknown): value is RangeOption {
@@ -33,6 +42,10 @@ function isRangeOption(value: unknown): value is RangeOption {
 
 function isRatioBasis(value: unknown): value is RatioBasis {
   return typeof value === "string" && RATIO_BASIS_OPTIONS.some((o) => o.value === value);
+}
+
+function isExtraLagDays(value: unknown): value is number {
+  return typeof value === "number" && EXTRA_LAG_OPTIONS.some((o) => o.value === value);
 }
 
 /**
@@ -54,6 +67,7 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
       ratioBasis: isRatioBasis(parsed.ratioBasis) ? parsed.ratioBasis : FALLBACK_DEFAULTS.ratioBasis,
       aumOnlyAveraging: typeof parsed.aumOnlyAveraging === "boolean" ? parsed.aumOnlyAveraging : FALLBACK_DEFAULTS.aumOnlyAveraging,
       levelsCorrelation: typeof parsed.levelsCorrelation === "boolean" ? parsed.levelsCorrelation : FALLBACK_DEFAULTS.levelsCorrelation,
+      extraLagDays: isExtraLagDays(parsed.extraLagDays) ? parsed.extraLagDays : FALLBACK_DEFAULTS.extraLagDays,
     };
   } catch {
     return FALLBACK_DEFAULTS;

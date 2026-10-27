@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getStockCorrelationDefaults, setStockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
 import { RANGE_OPTIONS } from "@/lib/aum/date-range";
 import { RATIO_BASIS_OPTIONS } from "@/lib/aum/series-math";
+import { EXTRA_LAG_OPTIONS } from "@/lib/amc-stock/regression-engine";
 
 // Deliberately NOT wrapped in withAdminAuth -- unlike every other global
 // app-wide setting in this codebase, saving the Stock Correlation tab's
@@ -37,8 +38,12 @@ export async function POST(request: Request) {
   if (typeof levelsCorrelation !== "boolean") {
     return NextResponse.json({ error: "levelsCorrelation must be a boolean" }, { status: 400 });
   }
+  const extraLagDays = Number(body?.extraLagDays);
+  if (!EXTRA_LAG_OPTIONS.some((o) => o.value === extraLagDays)) {
+    return NextResponse.json({ error: `extraLagDays must be one of ${EXTRA_LAG_OPTIONS.map((o) => o.value).join(", ")}` }, { status: 400 });
+  }
 
-  const defaults = { range, maDays, ratioBasis, aumOnlyAveraging, levelsCorrelation };
+  const defaults = { range, maDays, ratioBasis, aumOnlyAveraging, levelsCorrelation, extraLagDays };
   await setStockCorrelationDefaults(defaults);
   return NextResponse.json(defaults);
 }

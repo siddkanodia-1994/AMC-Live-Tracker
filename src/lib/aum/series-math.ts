@@ -74,6 +74,23 @@ export function toDatedValues(dates: string[], values: (number | undefined)[]): 
   return result;
 }
 
+// Shifts a DatedValue[] FORWARD in time by `lagDays` trading-day array
+// positions: output[i] pairs input[i]'s value with input[i+lagDays]'s
+// date -- "pair today's date with the driver value from lagDays trading
+// days ago". Both AUM and price only have rows on real trading days, so
+// a trading-day lag is a plain index shift, not a calendar-day one.
+// `lagDays <= 0` is a no-op (returns the input unchanged) -- this is what
+// keeps the Stock Correlation tab's ratio-based columns byte-for-byte
+// identical to their pre-lag behavior when "Extra Lag" is left at "None".
+export function lagSeriesForward<T extends { date: string; value: unknown }>(dated: T[], lagDays: number): T[] {
+  if (lagDays <= 0) return dated;
+  const result: T[] = [];
+  for (let i = 0; i + lagDays < dated.length; i++) {
+    result.push({ ...dated[i], date: dated[i + lagDays].date } as T);
+  }
+  return result;
+}
+
 // Left-joins two DatedValue[] series by date, keeping only dates present in
 // BOTH -- the general "align two possibly-gappy series" building block for
 // both level-based regression (this file's linearRegression) and,
