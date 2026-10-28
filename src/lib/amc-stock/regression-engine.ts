@@ -53,6 +53,13 @@ export interface RegressionChartPoint {
   date: string;
   close: number;
   model: number;
+  // Optional AUM overlay series for the chart's Exit AUM/Avg AUM toggles --
+  // Exit AUM is that date's raw, unsmoothed liveAumCr; Avg AUM is the same
+  // UNLAGGED moving average the "Avg AUM" table column shows (not the
+  // lagged driver that actually feeds `model` above). null before a
+  // scheme's own moving-average window has fully warmed up.
+  exitAumCr: number | null;
+  avgAumCr: number | null;
 }
 
 export interface RegressionResult {
@@ -170,6 +177,13 @@ export function computeRegressionResult(
   // that was never actually part of the fit.
   const priceRangedByDate = new Map(priceRanged.map((p) => [p.date, p.value]));
   const flagByDate = new Map(laggedEstimateFlag.map((p) => [p.date, p.value]));
+  // For the chart's optional Exit AUM/Avg AUM overlays -- both read off the
+  // UNLAGGED series (raw daily value / pre-lag moving average), keyed by
+  // the same "today" date label the lagged driver's own date was relabeled
+  // to by lagSeriesForward, so they line up with whatever date each chart
+  // point is actually plotted at.
+  const rawAumByDate = new Map(trimmed.map((d) => [d.date, d.liveAumCr]));
+  const unlaggedAvgAumByDate = new Map(aumDated.map((d) => [d.date, d.value]));
   const chartPoints: RegressionChartPoint[] = [];
   const alignedDates: string[] = [];
   let estimatedSessionCount = 0;
@@ -177,7 +191,13 @@ export function computeRegressionResult(
     const close = priceRangedByDate.get(point.date);
     if (close === undefined) continue;
     alignedDates.push(point.date);
-    chartPoints.push({ date: point.date, close, model: fit.slope * point.value + fit.intercept });
+    chartPoints.push({
+      date: point.date,
+      close,
+      model: fit.slope * point.value + fit.intercept,
+      exitAumCr: rawAumByDate.get(point.date) ?? null,
+      avgAumCr: unlaggedAvgAumByDate.get(point.date) ?? null,
+    });
     if (flagByDate.get(point.date) === 1) estimatedSessionCount++;
   }
 
