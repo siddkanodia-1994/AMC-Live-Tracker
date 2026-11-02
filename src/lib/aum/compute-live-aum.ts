@@ -6,7 +6,8 @@ import { fetchLtpsWithLease } from "./dhan-lease";
 import { INDEX_KEYS, INDEX_SECURITY_IDS, type IndexKey } from "../dhan/indices";
 import type { ExchangeSegment, LtpRequestItem } from "../dhan/types";
 import { isBankDebtOrRepo, isCashEquivalent, isUsListedEquityIsin } from "../excel/instrument-classification";
-import { getAllForeignPrices, getCachedUsdInrRate } from "./foreign-pricing";
+import { getAllForeignPrices, getCachedUsdInrRate, type CachedForeignPrice } from "./foreign-pricing";
+import { calendarDaysBetween, classifyForeignPriceAge, worseTier } from "./foreign-price-age";
 import { getIndexLevelsAsOf, getPreviousIndexLevels } from "./index-benchmarks";
 import { writeIndexDailyLevelRows } from "./index-level-store";
 import { writeIsinDailyPriceRows } from "./isin-price-store";
@@ -313,7 +314,7 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
   }
   const [foreignPrices, usdInrRate, previousIsinPrices, todayIsinPrices, shareAdjustmentsByIsin, previousIndexLevels, fallbackIndexLevels] =
     await Promise.all([
-      getAllForeignPrices().catch(() => new Map<string, number>()),
+      getAllForeignPrices().catch(() => new Map<string, CachedForeignPrice>()),
       getCachedUsdInrRate().catch(() => null),
       getPreviousDayIsinPrices().catch(() => new Map<string, number>()),
       getTodayIsinPrices().catch(() => new Map<string, number>()),
@@ -476,10 +477,19 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       } else if (h.isin && isUsListedEquityIsin(h.isin)) {
         // US-listed equity: priced via Finnhub (daily-cached, see foreign-pricing.ts)
         // + USD/INR conversion, independent of DHAN's health.
-        const priceUsd = foreignPrices.get(h.isin);
-        if (priceUsd !== undefined && usdInrRate !== null) {
-          const priceInr = priceUsd * usdInrRate;
-          priceSource = "foreign_live";
+        // Tiered by how long ago the refresh job last ran (see
+        // foreign-price-age.ts): a stale quote is still used but labelled,
+        // an expired one (or expired FX) falls back to the reported value.
+        const cached = foreignPrices.get(h.isin);
+        const ageTier = cached
+          ? worseTier(
+              classifyForeignPriceAge(calendarDaysBetween(cached.asOfDate, todayDateStr)),
+              usdInrRate?.asOfDate ? classifyForeignPriceAge(calendarDaysBetween(usdInrRate.asOfDate, todayDateStr)) : "fresh"
+            )
+          : "expired";
+        if (cached && usdInrRate !== null && ageTier !== "expired") {
+          const priceInr = cached.priceUsd * usdInrRate.rate;
+          priceSource = ageTier === "stale" ? "foreign_stale" : "foreign_live";
           livePriceInr = priceInr;
           liveMarketValueCr = (priceInr * effectiveShares) / CRORE;
           livePricedCount++;
@@ -497,7 +507,8 @@ async function runComputation(forceRefresh: boolean): Promise<ComputedLiveAum> {
       if (isCashEquivalent(h.companyName)) cashEquivalentCr += liveMarketValueCr;
 
       if (h.isin) {
-        const isLive = priceSource === "live" || priceSource === "foreign_live" || priceSource === "last_close";
+        const isLive =
+          priceSource === "live" || priceSource === "foreign_live" || priceSource === "foreign_stale" || priceSource === "last_close";
         amcHoldingIsins.add(h.isin);
         if (isLive) amcLivePricedIsins.add(h.isin);
         // leaseSkipped: this run never actually asked DHAN (another

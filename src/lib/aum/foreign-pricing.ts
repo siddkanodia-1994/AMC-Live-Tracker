@@ -1,4 +1,4 @@
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "../db/client";
 import { appSettings, foreignInstrumentMap, foreignPriceCache, holdings } from "../db/schema";
 import { getQuote, searchByIsin, throttledForEach } from "../finnhub/client";
@@ -138,14 +138,32 @@ export async function refreshForeignPrices(
   return { updated, failed, usdInrRate };
 }
 
-export async function getCachedUsdInrRate(): Promise<number | null> {
-  const [row] = await db.select().from(appSettings).where(eq(appSettings.key, USD_INR_RATE_KEY));
-  if (!row) return null;
-  const rate = Number(row.value);
-  return Number.isFinite(rate) && rate > 0 ? rate : null;
+export interface CachedUsdInrRate {
+  rate: number;
+  /** IST date the rate was fetched; null for rows written before it was tracked. */
+  asOfDate: string | null;
 }
 
-export async function getAllForeignPrices(): Promise<Map<string, number>> {
-  const rows = await db.select({ isin: foreignPriceCache.isin, priceUsd: foreignPriceCache.priceUsd }).from(foreignPriceCache);
-  return new Map(rows.map((r) => [r.isin, Number(r.priceUsd)]));
+export async function getCachedUsdInrRate(): Promise<CachedUsdInrRate | null> {
+  const rows = await db
+    .select()
+    .from(appSettings)
+    .where(inArray(appSettings.key, [USD_INR_RATE_KEY, USD_INR_RATE_AS_OF_KEY]));
+  const byKey = new Map(rows.map((r) => [r.key, r.value]));
+  const rate = Number(byKey.get(USD_INR_RATE_KEY));
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+  return { rate, asOfDate: byKey.get(USD_INR_RATE_AS_OF_KEY) ?? null };
+}
+
+export interface CachedForeignPrice {
+  priceUsd: number;
+  /** IST date the quote was fetched (see refreshForeignPrices), not the US trading date. */
+  asOfDate: string;
+}
+
+export async function getAllForeignPrices(): Promise<Map<string, CachedForeignPrice>> {
+  const rows = await db
+    .select({ isin: foreignPriceCache.isin, priceUsd: foreignPriceCache.priceUsd, asOfDate: foreignPriceCache.asOfDate })
+    .from(foreignPriceCache);
+  return new Map(rows.map((r) => [r.isin, { priceUsd: Number(r.priceUsd), asOfDate: r.asOfDate }]));
 }

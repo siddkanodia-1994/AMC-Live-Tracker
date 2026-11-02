@@ -4,7 +4,7 @@ import type { IndexKey } from "../dhan/indices";
 // token, rate limit, ...) but we have a known good price from the most
 // recent successful pricing of this ISIN, so it's used instead of falling
 // all the way back to the stale reported value.
-export type PriceSource = "live" | "foreign_live" | "last_close" | "not_priceable" | "stale_fallback";
+export type PriceSource = "live" | "foreign_live" | "foreign_stale" | "last_close" | "not_priceable" | "stale_fallback";
 
 export interface HoldingLiveView {
   id: number;
