@@ -2,29 +2,43 @@ const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const MARKET_OPEN_MINUTES = 9 * 60 + 15; // 9:15 AM
 const MARKET_CLOSE_MINUTES = 15 * 60 + 30; // 3:30 PM
 
-// NSE/BSE equity trading holidays, 2026 (excludes weekends, handled
-// separately). Cross-checked against zerodha.com/marketintel/holiday-calendar
-// and groww.in/p/nse-holidays. There's no API for this — update by hand every
-// December for the following year. Muhurat trading (Sun 8 Nov 2026, Diwali)
-// is a brief ceremonial session, deliberately NOT treated as a trading day.
-const NSE_TRADING_HOLIDAYS_2026 = new Set([
-  "2026-01-15", // Maharashtra municipal corporation election
-  "2026-01-26", // Republic Day
-  "2026-03-03", // Holi
-  "2026-03-26", // Shri Ram Navami
-  "2026-03-31", // Shri Mahavir Jayanti
-  "2026-04-03", // Good Friday
-  "2026-04-14", // Dr. Baba Saheb Ambedkar Jayanti
-  "2026-05-01", // Maharashtra Day
-  "2026-05-28", // Bakri Id
-  "2026-06-26", // Muharram
-  "2026-09-14", // Ganesh Chaturthi
-  "2026-10-02", // Mahatma Gandhi Jayanti
-  "2026-10-20", // Dussehra
-  "2026-11-10", // Diwali-Balipratipada
-  "2026-11-24", // Prakash Gurpurb Sri Guru Nanak Dev
-  "2026-12-25", // Christmas
-]);
+// NSE/BSE equity trading holidays by calendar year (excludes weekends,
+// handled separately). Cross-checked against zerodha.com/marketintel/holiday-calendar
+// and groww.in/p/nse-holidays. There's no API for this — add the next year's
+// list by hand once NSE publishes it (usually mid-December); the ops probe
+// flags a missing next year from 1 Dec (see hasNseHolidayCalendar). A year
+// with no entry simply has no holidays here (weekdays count as trading days)
+// rather than throwing. Muhurat trading (Sun 8 Nov 2026, Diwali) is a brief
+// ceremonial session, deliberately NOT treated as a trading day.
+const NSE_TRADING_HOLIDAYS_BY_YEAR: Record<number, readonly string[]> = {
+  2026: [
+    "2026-01-15", // Maharashtra municipal corporation election
+    "2026-01-26", // Republic Day
+    "2026-03-03", // Holi
+    "2026-03-26", // Shri Ram Navami
+    "2026-03-31", // Shri Mahavir Jayanti
+    "2026-04-03", // Good Friday
+    "2026-04-14", // Dr. Baba Saheb Ambedkar Jayanti
+    "2026-05-01", // Maharashtra Day
+    "2026-05-28", // Bakri Id
+    "2026-06-26", // Muharram
+    "2026-09-14", // Ganesh Chaturthi
+    "2026-10-02", // Mahatma Gandhi Jayanti
+    "2026-10-20", // Dussehra
+    "2026-11-10", // Diwali-Balipratipada
+    "2026-11-24", // Prakash Gurpurb Sri Guru Nanak Dev
+    "2026-12-25", // Christmas
+  ],
+};
+
+// One flat set across all years, since the trading-day lookbacks below walk
+// across year boundaries (e.g. 2 Jan looking back into December).
+const NSE_TRADING_HOLIDAYS = new Set(Object.values(NSE_TRADING_HOLIDAYS_BY_YEAR).flat());
+
+/** Whether a holiday list has been entered for this calendar year. */
+export function hasNseHolidayCalendar(year: number): boolean {
+  return (NSE_TRADING_HOLIDAYS_BY_YEAR[year]?.length ?? 0) > 0;
+}
 
 export function toIstDateString(now: Date): string {
   const ist = new Date(now.getTime() + IST_OFFSET_MS);
@@ -40,7 +54,7 @@ export function isTradingDay(now: Date = new Date()): boolean {
   const ist = new Date(now.getTime() + IST_OFFSET_MS);
   const day = ist.getUTCDay(); // 0 = Sunday, 6 = Saturday (UTC getters on a shifted date = IST wall-clock fields)
   if (day === 0 || day === 6) return false;
-  return !NSE_TRADING_HOLIDAYS_2026.has(toIstDateString(now));
+  return !NSE_TRADING_HOLIDAYS.has(toIstDateString(now));
 }
 
 /**
