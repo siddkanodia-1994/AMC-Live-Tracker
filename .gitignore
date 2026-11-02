@@ -47,5 +47,16 @@ next-env.d.ts
 
 .env*.local
 
-# Claude Code local session state
-/.claude/
+# Claude Code local session state (shared agent config below is committed)
+/.claude/*
+!/.claude/settings.json
+!/.claude/agents/
+!/.claude/workflows/
+!/.claude/hooks/
+
+# credential notes kept locally -- never commit
+/AMC Score Supabase link/
+*supabase*.txt
+*credentials*
+*.secret
+*.secrets
