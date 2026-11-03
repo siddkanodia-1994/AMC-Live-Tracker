@@ -26,7 +26,7 @@ import { DailyDataTable } from "./daily-data-table";
 import { CorrectionsLog } from "./corrections-log";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
-import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
+import { useActiveGoldSilverBlendAmcIds, useGoldSilverBlend } from "@/components/layout/gold-silver-blend-context";
 import { SearchBar } from "@/components/layout/search-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -276,6 +276,23 @@ export function AmcGrid({
   // Silver gets double-counted when both toggles are on at once.
   const activeBlendAmcIds = useActiveGoldSilverBlendAmcIds();
   const blendedAmcIds = useMemo(() => new Set(activeBlendAmcIds), [activeBlendAmcIds]);
+  const { selectionResolved: blendSelectionResolved } = useGoldSilverBlend();
+  // The blend is applied server-side by a separate, blend-keyed
+  // /api/live-aum fetch. Until it lands, SWR serves the server-rendered
+  // EQUITY-ONLY snapshot (fallbackData) under that key, so every figure the
+  // blend changes -- headline total, cash %, daily change, the blended
+  // AMCs' table rows and totals -- would paint unblended and jump ~1s later.
+  // Those figures render as skeletons while this is true instead.
+  // `data === initialData` is the "still on the fallback" check (a fetched
+  // response is always a new object); an error ends the wait, falling back
+  // to the equity-only figures rather than a permanent skeleton. The 90-day
+  // card isn't gated: the blend never touches avgLiveAumCr90d.
+  const liveBlendPending =
+    !asOfDate && (!blendSelectionResolved || (activeBlendAmcIds.length > 0 && data === initialData && !error));
+  // Same for the table's Avg/Avg Live/Hist. Live columns, which come from the
+  // blend-keyed adjustments slices (held back until the selection is known,
+  // see use-overview-adjustments.ts, so `undefined` here means "not yet").
+  const adjustmentsBlendPending = !asOfDate && activeBlendAmcIds.length > 0 && !adjustments.data && !adjustments.error;
 
   // Overlays the Reported AUM month / Avg AUM range / Avg Live AUM range
   // adjustments onto the live snapshot's AMC rows, recomputing Live vs
@@ -595,15 +612,19 @@ export function AmcGrid({
           </CardHeader>
           <CardContent className="space-y-1">
             <div className="flex items-center gap-2">
-              <div className="text-3xl font-bold tabular-nums">
-                {formatCr(includeFlowEstimate && totalFlowAdjustedLiveAumCr !== null ? totalFlowAdjustedLiveAumCr : data.totalLiveAumCr)}
-              </div>
-              {industryTotals.liveDeltaCr !== null && industryTotals.liveDeltaPct !== null && (
+              {liveBlendPending ? (
+                <Skeleton className="h-9 w-48" />
+              ) : (
+                <div className="text-3xl font-bold tabular-nums">
+                  {formatCr(includeFlowEstimate && totalFlowAdjustedLiveAumCr !== null ? totalFlowAdjustedLiveAumCr : data.totalLiveAumCr)}
+                </div>
+              )}
+              {!liveBlendPending && industryTotals.liveDeltaCr !== null && industryTotals.liveDeltaPct !== null && (
                 <AumDeltaBadge deltaCr={industryTotals.liveDeltaCr} deltaPct={industryTotals.liveDeltaPct} />
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              {lastQuarterEndDate !== null && lastQuarterEndLiveAumCr !== null && (
+              {!liveBlendPending && lastQuarterEndDate !== null && lastQuarterEndLiveAumCr !== null && (
                 <>
                   vs {formatShortDate(lastQuarterEndDate)}: {formatCr(lastQuarterEndLiveAumCr)} ·{" "}
                 </>
@@ -702,9 +723,13 @@ export function AmcGrid({
           </CardHeader>
           <CardContent className="space-y-1">
             <div className="flex items-center gap-2">
-              <div className="text-3xl font-bold tabular-nums">
-                {data.totalLiveAumCr !== 0 ? formatPct(data.industryCashDebtCr / data.totalLiveAumCr) : "—"}
-              </div>
+              {liveBlendPending ? (
+                <Skeleton className="h-9 w-20" />
+              ) : (
+                <div className="text-3xl font-bold tabular-nums">
+                  {data.totalLiveAumCr !== 0 ? formatPct(data.industryCashDebtCr / data.totalLiveAumCr) : "—"}
+                </div>
+              )}
               <span className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground">
                 {formatCr(data.industryCashDebtCr)}
               </span>
@@ -718,7 +743,12 @@ export function AmcGrid({
             <CardTitle className="text-sm font-normal text-muted-foreground">Industry Equity AUM Daily Change</CardTitle>
           </CardHeader>
           <CardContent className="space-y-1">
-            {industryTotals.oneDayChangePct !== null ? (
+            {liveBlendPending ? (
+              <>
+                <Skeleton className="h-9 w-24" />
+                <Skeleton className="h-4 w-56" />
+              </>
+            ) : industryTotals.oneDayChangePct !== null ? (
               <>
                 <div className={`text-3xl font-bold tabular-nums ${oneDayChangeColorClass}`}>
                   {formatPct(industryTotals.oneDayChangePct, { alwaysSign: true })}
@@ -1289,6 +1319,7 @@ export function AmcGrid({
             blendedAmcIds={blendedAmcIds}
             showGoldSilver={showGoldSilver}
             onToggleGoldSilver={() => setShowGoldSilver((v) => !v)}
+            isBlendPending={liveBlendPending || adjustmentsBlendPending}
           />
           {filteredAmcs.length === 0 && (
             <p className="mt-4 text-center text-sm text-muted-foreground">No AMCs match &quot;{query}&quot;.</p>

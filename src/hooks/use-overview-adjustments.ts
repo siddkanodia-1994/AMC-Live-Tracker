@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import useSWR from "swr";
 import type { OverviewAdjustments, OverviewAdjustmentsSlice, OverviewAdjustmentsField } from "@/lib/aum/overview-adjustments";
-import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
+import { useActiveGoldSilverBlendAmcIds, useGoldSilverBlend } from "@/components/layout/gold-silver-blend-context";
 
 async function fetcher(url: string): Promise<OverviewAdjustmentsSlice> {
   const res = await fetch(url);
@@ -47,21 +47,29 @@ export function useOverviewAdjustments(
   histLiveDate?: string
 ) {
   const blendGoldSilverAmcIds = useActiveGoldSilverBlendAmcIds();
+  const { selectionResolved } = useGoldSilverBlend();
   const blend = blendGoldSilverAmcIds.length > 0 ? blendGoldSilverAmcIds.join(",") : undefined;
   const swrOptions = { revalidateOnFocus: false, keepPreviousData: true } as const;
+  // The 3 blend-dependent slices wait (null key) until the blend selection
+  // is known. Otherwise the first fetch goes out unblended (before the
+  // listed-AMC list resolves the Nippon default), and keepPreviousData
+  // keeps serving that unblended result while the blended one loads -- a
+  // flash of wrong figures on first paint. reportedAum doesn't take the
+  // blend, so it isn't held back.
+  const blendKey = (url: string) => (selectionResolved ? url : null);
 
   const avgWindow = useSWR<OverviewAdjustmentsSlice>(
-    buildUrl(["avgAum", "indexAvg"], { avgFrom, avgTo, blendGoldSilverAmcIds: blend }),
+    blendKey(buildUrl(["avgAum", "indexAvg"], { avgFrom, avgTo, blendGoldSilverAmcIds: blend })),
     fetcher,
     swrOptions
   );
   const currentAvgWindow = useSWR<OverviewAdjustmentsSlice>(
-    buildUrl(["currentAvgAum", "indexCurrentAvg"], { currentAvgFrom, currentAvgTo, blendGoldSilverAmcIds: blend }),
+    blendKey(buildUrl(["currentAvgAum", "indexCurrentAvg"], { currentAvgFrom, currentAvgTo, blendGoldSilverAmcIds: blend })),
     fetcher,
     swrOptions
   );
   const histLive = useSWR<OverviewAdjustmentsSlice>(
-    buildUrl(["histLiveAum", "indexHistLive"], { histLiveDate, blendGoldSilverAmcIds: blend }),
+    blendKey(buildUrl(["histLiveAum", "indexHistLive"], { histLiveDate, blendGoldSilverAmcIds: blend })),
     fetcher,
     swrOptions
   );

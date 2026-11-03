@@ -19,6 +19,12 @@ interface GoldSilverBlendContextValue {
   selectedAmcIds: number[];
   toggleAmcId: (id: number) => void;
   listedAmcs: ListedAmc[];
+  // False until the AMC ids to blend are actually known: the mount-time
+  // localStorage restore below hasn't run yet, or (with the blend on and no
+  // saved selection) the listed-AMC list that resolves the Nippon default
+  // hasn't loaded. Until then consumers can't tell whether the figures they
+  // hold are the final blended ones (see amc-grid.tsx's liveBlendPending).
+  selectionResolved: boolean;
 }
 
 const GoldSilverBlendContext = createContext<GoldSilverBlendContextValue | null>(null);
@@ -42,7 +48,8 @@ export function GoldSilverBlendProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabledState] = useState(true);
   // null = nothing restored from localStorage or picked yet.
   const [storedSelectedAmcIds, setSelectedAmcIds] = useState<number[] | null>(null);
-  const { data } = useSWR("/api/listed-amcs", fetchListedAmcs, { revalidateOnFocus: false });
+  const [restored, setRestored] = useState(false);
+  const { data, error } = useSWR("/api/listed-amcs", fetchListedAmcs, { revalidateOnFocus: false });
   const listedAmcs = useMemo(() => data?.amcs ?? [], [data]);
 
   useEffect(() => {
@@ -55,6 +62,7 @@ export function GoldSilverBlendProvider({ children }: { children: ReactNode }) {
     } catch {
       // localStorage unavailable -- fall back to defaults below.
     }
+    setRestored(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -67,6 +75,10 @@ export function GoldSilverBlendProvider({ children }: { children: ReactNode }) {
     return nippon ? [nippon.id] : [];
   }, [listedAmcs]);
   const selectedAmcIds = storedSelectedAmcIds ?? defaultSelectedAmcIds;
+  // A failed list fetch also counts as resolved (to "no default"), so a
+  // consumer waiting on this never waits forever.
+  const selectionResolved =
+    restored && (!enabled || storedSelectedAmcIds !== null || data !== undefined || error !== undefined);
 
   function setEnabled(value: boolean) {
     setEnabledState(value);
@@ -91,8 +103,8 @@ export function GoldSilverBlendProvider({ children }: { children: ReactNode }) {
   }, [defaultSelectedAmcIds]);
 
   const value = useMemo(
-    () => ({ enabled, setEnabled, selectedAmcIds, toggleAmcId, listedAmcs }),
-    [enabled, selectedAmcIds, toggleAmcId, listedAmcs]
+    () => ({ enabled, setEnabled, selectedAmcIds, toggleAmcId, listedAmcs, selectionResolved }),
+    [enabled, selectedAmcIds, toggleAmcId, listedAmcs, selectionResolved]
   );
   return <GoldSilverBlendContext.Provider value={value}>{children}</GoldSilverBlendContext.Provider>;
 }
@@ -100,7 +112,14 @@ export function GoldSilverBlendProvider({ children }: { children: ReactNode }) {
 export function useGoldSilverBlend(): GoldSilverBlendContextValue {
   const ctx = useContext(GoldSilverBlendContext);
   if (!ctx) {
-    return { enabled: false, setEnabled: () => {}, selectedAmcIds: [], toggleAmcId: () => {}, listedAmcs: [] };
+    return {
+      enabled: false,
+      setEnabled: () => {},
+      selectedAmcIds: [],
+      toggleAmcId: () => {},
+      listedAmcs: [],
+      selectionResolved: true,
+    };
   }
   return ctx;
 }
