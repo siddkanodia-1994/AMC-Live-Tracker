@@ -121,8 +121,13 @@ Re-run this weekly, or after each monthly import, to pick up newly listed/relist
 
 ### 4. Run locally
 
+**Local dev uses the same Neon database as production** — any page that computes live AUM during
+market hours writes that day's snapshot, and every script writes production rows.
+
 ```bash
 npm run dev
+npm test                # unit tests (pure logic, no DB)
+npm run import:dry-run -- "<tracker.xlsx>"   # parse + diff a vendor file, zero writes
 ```
 
 Visit `http://localhost:3000` for the dashboard and `http://localhost:3000/admin` for settings.
@@ -137,13 +142,39 @@ from scratch on a new project:
    `SETTINGS_ENCRYPTION_KEY`, `DHAN_CLIENT_ID`, `CRON_SECRET`) in the Vercel project settings.
    `DATABASE_URL` is set automatically if you provision Postgres via Vercel's Neon marketplace
    integration.
-3. Deploy. `vercel.json` configures the daily-snapshot cron (`/api/cron/daily-snapshot`) to run twice
-   — 4:00 PM and 6:00 PM IST, both after the 3:30 PM market close — so a DHAN blip on the first run
-   (rate limit, transient error) gets corrected by the second instead of freezing that day's chart
-   point until the next manual audit. The route's overwrite-on-conflict write means either run can
-   safely follow the other. Vercel automatically sends `CRON_SECRET` as a bearer token to authenticate it.
+3. Deploy. `vercel.json` configures the daily-snapshot cron (`/api/cron/daily-snapshot`) at 4:05 PM IST
+   on weekdays, plus a retry-only run at 6:05 PM IST (`?mode=retry`) that does nothing if the first run
+   completed and otherwise re-runs the full pipeline — e.g. when the DHAN token had expired at 4:05 and
+   was refreshed since. Every step is idempotent for a same-day re-run, and each run's per-step results
+   are recorded in `ops_run_log`. Vercel automatically sends `CRON_SECRET` as a bearer token to
+   authenticate it.
 4. After the first deploy, run the import script locally against your production `DATABASE_URL` (or
    use the `/admin` upload button once deployed) to seed data, then run the instrument sync.
+
+## Operations: probe, ledger and agent loops
+
+- **Ledger** — `ops_run_log` records every cron step (status, timing, warnings that used to be
+  discarded), every probe check, and every agent outcome. The **Agent Ops** card on `/admin` shows the
+  latest probe, the latest cron run, and agent repairs/proposals awaiting you. Nothing is sent outside
+  the app.
+- **Probe** — `scripts/ops/probe.ts` runs 13 deterministic checks (cron completion, snapshot and price
+  coverage, DHAN token age, pending outage days, long-unresolved mappings, US quote/FX age, ETF/MCX/
+  listed-AMC freshness, the Supabase AMC Score loader, the next vendor file, next year's NSE holidays).
+  GitHub Actions runs it at 5:00 PM IST on weekdays (`.github/workflows/ops-probe.yml`);
+  `npm run ops:probe -- --dry-run` prints without writing.
+- **Agent loops** (Claude Code, `.claude/workflows/`, roles in `.claude/agents/`):
+  - `data-ops` — probe → triage → read-only diagnosis → allowlisted repair → re-probe (≤3) → ledger
+  - `ingest` — dry-run validation of a new vendor file ⇄ independent challenge → proposal (never imports)
+  - `analyst` — per-AMC Fortnightly summary draft → every number re-checked → draft in `.claude/agent-drafts/`
+  - `dev-loop` — plan → implement in a worktree → tsc/lint/test/build → adversarial review → your push
+- **Gates** — agents touch data only via `scripts/ops/agent-cli.ts` (read-only SQL in a Postgres READ ONLY
+  transaction, the probe, five allowlisted idempotent repairs, ledger rows).
+  `.claude/hooks/agent-gate.py` blocks everything else for agent tool calls in code: push, deletes,
+  history rewrites, migrations, imports, data scripts, secrets/.env access, admin-API writes, forced
+  recomputes, and edits to the gates themselves. Your own sessions are unaffected.
+  `.claude/hooks/guard-secrets.sh` blocks any commit whose diff contains a credential, and
+  `.github/workflows/secret-scan.yml` runs gitleaks on every push.
+- **One-off investigation scripts** live in the gitignored `scratch/` folder.
 
 ## Architecture
 

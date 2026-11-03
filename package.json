@@ -19,7 +19,8 @@
     "sync-foreign-instruments": "dotenv -e .env.local -- tsx scripts/sync-foreign-instruments.ts",
     "refresh-foreign-prices": "dotenv -e .env.local -- tsx scripts/refresh-foreign-prices.ts",
     "ops:probe": "dotenv -e .env.local -- tsx scripts/ops/probe.ts",
-    "ops:agent": "dotenv -e .env.local -- tsx scripts/ops/agent-cli.ts"
+    "ops:agent": "dotenv -e .env.local -- tsx scripts/ops/agent-cli.ts",
+    "ingest-etf-exit-aum": "dotenv -e .env.local -- tsx scripts/ingest-etf-crisil-exit-aum.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

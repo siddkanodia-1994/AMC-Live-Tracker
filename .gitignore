@@ -60,3 +60,6 @@ next-env.d.ts
 *credentials*
 *.secret
 *.secrets
+
+# one-off investigation scripts (run from repo root: npx dotenv -e .env.local -- npx tsx scratch/<file>.ts)
+/scratch/
