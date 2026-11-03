@@ -10,6 +10,7 @@ import { runMcxIngestion } from "@/lib/mcx/ingest";
 import { runAmcStockIngestion } from "@/lib/amc-stock/ingest";
 import { createDailyFortnightlySnapshots } from "@/lib/aum/fortnightly-update";
 import { getIstDateString } from "@/lib/utils/date";
+import { flushOpsRun, hasCompletedRunSince, runOpsStep, startOpsRun } from "@/lib/ops/run-log";
 
 // Bumped from 30 -> 180: the outage-reclaim step below can fetch DHAN
 // historical closes for up to a few hundred ISINs (paced ~500ms each) when
@@ -38,8 +39,33 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // ?mode=retry is the later (18:05 IST) safety-net invocation: it does
+  // nothing if today's earlier run already completed (ok/warn in
+  // ops_run_log), and otherwise runs the exact same pipeline. Every step
+  // below is idempotent for a same-day re-run (see the pre-mortem notes in
+  // runEtfIngestion's split check).
+  const mode = new URL(request.url).searchParams.get("mode") === "retry" ? "retry" : "primary";
+  const run = startOpsRun("cron", "daily-snapshot");
+  const runStarted = Date.now();
+  if (mode === "retry") {
+    const istMidnightUtc = new Date(`${getIstDateString()}T00:00:00+05:30`).toISOString();
+    if (await hasCompletedRunSince("daily-snapshot", istMidnightUtc).catch(() => false)) {
+      run.rows.push({ node: "run-complete", status: "skipped", summary: "mode=retry; earlier run already completed today" });
+      await flushOpsRun(run);
+      return NextResponse.json({ ok: true, skipped: true });
+    }
+  }
+
   try {
+    const computeStarted = Date.now();
     const snapshot = await computeLiveAum({ forceRefresh: true });
+    run.rows.push({
+      node: "computeLiveAum",
+      status: snapshot.dhanStatus === "ok" ? "ok" : snapshot.dhanStatus === "degraded" ? "warn" : "fail",
+      summary: `${snapshot.amcs.length} AMCs snapshotted, DHAN ${snapshot.dhanStatus}, ${snapshot.lastCloseStocks.length} on last close`,
+      details: { dhanStatus: snapshot.dhanStatus, priceAsOfDate: snapshot.priceAsOfDate, amcs: snapshot.amcs.length },
+      durationMs: Date.now() - computeStarted,
+    });
 
     // Best-effort: today's per-ISIN last-close log (feeds the Overview
     // banner's 5-day auto-mute) and clearing any manual mutes for ISINs
@@ -47,13 +73,12 @@ export async function GET(request: Request) {
     // upsertDailyDataQuality below -- that step reads today's
     // isin_last_close_log row to compute today's coverage %, so it would
     // be blind to today's own outage signal if it ran first.
-    try {
+    await runOpsStep(run, "lastCloseBookkeeping", async () => {
       const lastCloseIsins = snapshot.lastCloseStocks.map((s) => s.isin);
       await recordLastCloseLog(getIstDateString(), lastCloseIsins);
       await clearRecoveredManualMutes(lastCloseIsins);
-    } catch (err) {
-      console.error("Failed to update last-close mute bookkeeping:", err);
-    }
+      return { lastCloseCount: lastCloseIsins.length };
+    }, (r) => ({ summary: `${r.lastCloseCount} ISINs on last close`, details: r }));
 
     // Best-effort, same isolation as above: today's DHAN price-coverage
     // stats for the Daily Data tab, computed right after the close capture
@@ -61,22 +86,14 @@ export async function GET(request: Request) {
     // there). A failure here shouldn't fail the whole cron response -- the
     // snapshot itself is the primary job, this is a secondary
     // regression-guard signal.
-    try {
-      await upsertDailyDataQuality(getIstDateString());
-    } catch (err) {
-      console.error("Failed to upsert daily data quality:", err);
-    }
+    await runOpsStep(run, "upsertDailyDataQuality", () => upsertDailyDataQuality(getIstDateString()), (r) => ({ details: r ? { ...r } : { row: null } }));
 
     // Best-effort, same isolation as above: detect any stock split/bonus
     // that happened today (a clean-ratio overnight price jump) so live AUM
     // stops using a stale pre-split share count against a post-split price.
     // A close-to-close comparison is the only reliable signal for this, so
     // it belongs here (once daily) rather than the 45s organic poll.
-    try {
-      await detectShareAdjustments(getIstDateString());
-    } catch (err) {
-      console.error("Failed to detect share adjustments:", err);
-    }
+    await runOpsStep(run, "detectShareAdjustments", () => detectShareAdjustments(getIstDateString()), (r) => ({ summary: `${r.detectedCount} split/bonus adjustments detected`, details: { ...r } }));
 
     // Best-effort, same isolation as above: auto-create the Fortnightly AMC
     // Update snapshot row for every eligible AMC (carrying forward manual
@@ -89,12 +106,11 @@ export async function GET(request: Request) {
     // firing on a market-closed Tuesday) re-resolves to the already-
     // existing last-trading-day row instead of stamping a bogus new date
     // -- a no-op thanks to onConflictDoNothing, not a phantom snapshot.
-    try {
+    await runOpsStep(run, "createDailyFortnightlySnapshots", async () => {
       const count = await createDailyFortnightlySnapshots(snapshot.priceAsOfDate);
       console.log(`Auto-created fortnightly snapshots for ${count} AMCs (as of ${snapshot.priceAsOfDate})`);
-    } catch (err) {
-      console.error("Failed to auto-create fortnightly snapshots:", err);
-    }
+      return count;
+    }, (count) => ({ summary: `${count} AMCs (as of ${snapshot.priceAsOfDate})`, details: { count, asOfDate: snapshot.priceAsOfDate } }));
 
     // Nifty 50/500 levels: no separate step needed here -- computeLiveAum
     // above already fetched and persisted today's index_daily_level rows
@@ -105,11 +121,7 @@ export async function GET(request: Request) {
     // fallback silently stamped in as canonical) -- only proceeds if
     // TODAY's own DHAN fetch just succeeded, so it never wastes a retry
     // while still broken. See outage-reclaim.ts.
-    try {
-      await reclaimDhanOutages({ todayDhanStatus: snapshot.dhanStatus });
-    } catch (err) {
-      console.error("Failed to reclaim DHAN outages:", err);
-    }
+    await runOpsStep(run, "reclaimDhanOutages", () => reclaimDhanOutages({ todayDhanStatus: snapshot.dhanStatus }), (r) => ({ summary: `AMC dates ${r.amc.datesProcessed.length}, index dates ${r.index.datesProcessed.length}`, details: { ...r } }));
 
     // Best-effort, same isolation as above: a single ISIN stuck on
     // last_close for the auto-mute threshold's worth of trading days
@@ -127,25 +139,20 @@ export async function GET(request: Request) {
     // log-based mute streak and left a genuine ID drift undetected for
     // days. daysUnchanged has no such gap, so this is a strictly additive
     // safety net -- every ISIN that qualified via autoMuted still does.
-    try {
+    await runOpsStep(run, "reclaimStaleInstrumentMappings", async () => {
       const thresholdDays = await getAutoMuteThresholdDays();
       const staleMappingCandidates = snapshot.lastCloseStocks
         .filter((s) => s.muteReason === null && (s.autoMuted || (s.daysUnchanged ?? 0) >= thresholdDays))
         .map((s) => ({ isin: s.isin, companyName: s.companyName }));
-      await reclaimStaleInstrumentMappings(staleMappingCandidates);
-    } catch (err) {
-      console.error("Failed to reclaim stale instrument mappings:", err);
-    }
+      const corrections = await reclaimStaleInstrumentMappings(staleMappingCandidates);
+      return { candidates: staleMappingCandidates.length, corrected: corrections.length };
+    }, (r) => ({ summary: `${r.corrected} of ${r.candidates} candidates corrected`, details: r }));
 
     // Best-effort, fully isolated from the equity pipeline above: the Gold/
     // Silver ETF tab's own daily NAV pull + quarterly AUM-baseline rollover
     // check. Entirely independent data source (TigZig/AMFI, not DHAN), so a
     // failure here can never affect equity computation, and vice versa.
-    try {
-      await runEtfIngestion();
-    } catch (err) {
-      console.error("Failed to run ETF ingestion:", err);
-    }
+    await runOpsStep(run, "runEtfIngestion", () => runEtfIngestion());
 
     // Best-effort, fully isolated from both the equity pipeline above and
     // runEtfIngestion: the MCX Gold/Silver reference rows' own daily price
@@ -153,24 +160,33 @@ export async function GET(request: Request) {
     // deliberately DHAN-free) -- if DHAN is unavailable, this just leaves
     // today's mcx_daily_price row unwritten and the reference rows show
     // "—" for that day, with zero effect on ETF NAV/AAUM ingestion.
-    try {
-      await runMcxIngestion();
-    } catch (err) {
-      console.error("Failed to run MCX ingestion:", err);
-    }
+    await runOpsStep(run, "runMcxIngestion", () => runMcxIngestion());
 
     // Best-effort, fully isolated: the AMC detail page's own listed-stock
     // share-price overlay (see amc_listed_stock). These ISINs are never
     // anyone's holding, so a failure here has zero effect on the equity/
     // ETF/MCX pipelines above, and vice versa.
-    try {
-      await runAmcStockIngestion();
-    } catch (err) {
-      console.error("Failed to run AMC listed-stock ingestion:", err);
-    }
+    await runOpsStep(run, "runAmcStockIngestion", () => runAmcStockIngestion());
 
+    // Final marker the retry-only run checks: "fail" when DHAN was fully
+    // unavailable (e.g. expired token at 16:05) so a later retry -- after the
+    // token is refreshed -- re-captures the real close.
+    run.rows.push({
+      node: "run-complete",
+      status: snapshot.dhanStatus === "unavailable" ? "fail" : run.rows.some((r) => r.status !== "ok") ? "warn" : "ok",
+      summary: `mode=${mode}; ${run.rows.filter((r) => r.status === "fail").length} failed, ${run.rows.filter((r) => r.status === "warn").length} warned`,
+      durationMs: Date.now() - runStarted,
+    });
+    await flushOpsRun(run);
     return NextResponse.json({ ok: true, amcsSnapshotted: snapshot.amcs.length });
   } catch (err) {
+    run.rows.push({
+      node: "run-complete",
+      status: "fail",
+      summary: err instanceof Error ? err.message : String(err),
+      durationMs: Date.now() - runStarted,
+    });
+    await flushOpsRun(run);
     if (err instanceof NoDataImportedError) {
       return NextResponse.json({ ok: false, error: err.message }, { status: 200 });
     }

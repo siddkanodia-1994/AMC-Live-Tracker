@@ -929,3 +929,33 @@ export const amcHistoricalAumEstimate = pgTable(
   },
   (t) => [uniqueIndex("amc_historical_aum_estimate_amc_date_idx").on(t.amcId, t.snapshotDate)]
 );
+
+// Shared run ledger for the daily cron, the GitHub Actions ops probe and the
+// Claude Code agent loops (data-ops / ingest / analyst / dev). One row per
+// node outcome -- e.g. one row per cron step with its timing and warnings
+// (which were previously discarded), one per probe check, one per agent
+// diagnosis/repair/proposal. Read by the /admin Agent Ops panel and by the
+// 18:05 retry cron (which only acts if the 16:05 run is missing or failed).
+// Append-only by design; nothing updates rows after insert.
+export const opsRunLog = pgTable(
+  "ops_run_log",
+  {
+    id: serial("id").primaryKey(),
+    // Groups the rows written by one run (e.g. one cron invocation).
+    runId: text("run_id").notNull(),
+    source: text("source").$type<"cron" | "probe" | "agent">().notNull(),
+    // Which loop/job, e.g. "daily-snapshot", "ops-probe", "data-ops".
+    loop: text("loop").notNull(),
+    // The step/check/agent node within it, e.g. "runEtfIngestion".
+    node: text("node").notNull(),
+    status: text("status").$type<"ok" | "warn" | "fail" | "proposal" | "fixed" | "skipped">().notNull(),
+    summary: text("summary").notNull(),
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    durationMs: integer("duration_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ops_run_log_created_at_idx").on(t.createdAt),
+    index("ops_run_log_loop_created_at_idx").on(t.loop, t.createdAt),
+  ]
+);

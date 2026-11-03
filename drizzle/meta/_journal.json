@@ -232,6 +232,13 @@
       "when": 1792442075073,
       "tag": "0032_light_the_renegades",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793618222562,
+      "tag": "0033_ops_run_log",
+      "breakpoints": true
     }
   ]
 }
