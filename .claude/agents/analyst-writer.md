@@ -23,5 +23,6 @@ Match the existing summaries. Read the prior summary returned by the API and `sr
 
 ## Rules
 - Never add `refresh=1` to any URL; it forces a recompute that writes to the production DB.
+- Call `/api/live-aum/<slug>` at most once per draft, and only outside market hours (09:15–15:30 IST); during market hours, use the fortnightly sheet and `npm run -s ops:agent -- sql "…"` on `live_aum_daily_snapshot` instead. Parallel recomputes queue behind DHAN's 1 req/s lease and can time out production requests.
 - Every number you write must come from an API response you fetched in this run. Record its source in a table at the end of the draft: number → endpoint → JSON path.
 - Write the draft to `.claude/agent-drafts/<YYYY-MM-DD>-<slug>-fortnightly.md`. Never POST to any endpoint; saving into the dashboard is the user's step.

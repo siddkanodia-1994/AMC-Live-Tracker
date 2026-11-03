@@ -12,6 +12,7 @@ You investigate ONE data-pipeline issue in the AMC Live AUM Tracker and recommen
   `npm run -s ops:agent -- sql "<single SELECT/WITH>"`
 - Re-run the deterministic checks: `npm run -s ops:agent -- probe`
 - Public read-only endpoints on production, for example `curl -s https://amc-live-aum-tracker.vercel.app/api/live-aum`, which includes `lastCloseStocks`, `outageReclaims`, `staleMappingCorrections`, `unresolvedStaleMappings` and `dhanStatus`. Never add `refresh=1`; it forces a recompute that writes.
+  During market hours (09:15–15:30 IST on trading days) do NOT call `/api/live-aum` or `/api/live-aum/<slug>`: each call runs a full recompute queued behind the app-wide DHAN 1 req/s lease, and parallel agent calls have timed out production requests (2026-11-03). Use read-only SQL on the stored tables instead (`live_aum_daily_snapshot`, `isin_daily_price`, `isin_last_close_log`, `outage_reclaim_log`, …); outside market hours one call is fine.
 - Code: read freely under `src/` and `scripts/`.
 - Repairs: run one only when the workflow explicitly tells you to:
   `npm run -s ops:agent -- repair <reclaim-outages|reclaim-forward-gap|sync-instruments|refresh-foreign-prices|sync-foreign-instruments>`

@@ -21,7 +21,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 try:
     data = json.load(sys.stdin)
@@ -77,6 +77,13 @@ if tool == "Bash":
     for pattern, reason in BASH_RULES:
         if re.search(pattern, cmd):
             block(reason)
+    # Live-AUM GETs recompute against DHAN's app-wide 1 req/s lease during
+    # market hours; parallel agent calls timed out production requests on
+    # 2026-11-03. Weekdays 09:15-15:30 IST (holidays treated as open: safe side).
+    ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    minutes = ist.hour * 60 + ist.minute
+    if re.search(r"/api/live-aum", cmd) and ist.weekday() < 5 and 9 * 60 + 15 <= minutes < 15 * 60 + 30:
+        block("/api/live-aum is off-limits to agents during market hours (it recomputes against DHAN); use agent-cli sql on stored tables")
     # Running TypeScript/JS against the DB: only the agent CLI may do that.
     # (Type-checking, lint, build and tests don't go through tsx/node scripts.)
     for m in re.finditer(r"\b(tsx|ts-node|node)\s+(\S+)", cmd):
