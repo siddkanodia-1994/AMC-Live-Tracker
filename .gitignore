@@ -63,3 +63,9 @@ next-env.d.ts
 
 # one-off investigation scripts (run from repo root: npx dotenv -e .env.local -- npx tsx scratch/<file>.ts)
 /scratch/
+
+# Local-only data and analysis projects (kept on this machine, never published)
+/3 Year AMFI Data/
+/backtesting/
+/crosscheck/
+/gold-silver-exit-aum-template.csv
