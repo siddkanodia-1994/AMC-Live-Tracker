@@ -1,0 +1,56 @@
+[
+  {
+    "isin": "US8740391003",
+    "symbol": "TSM",
+    "companyName": "Taiwan Semiconductor Manufacturing Co (ADR)",
+    "note": "ADR; Finnhub ISIN search returns no match"
+  },
+  {
+    "isin": "US9047677045",
+    "symbol": "UL",
+    "companyName": "Unilever PLC (ADR)",
+    "note": "ADR; Finnhub ISIN search returns no match"
+  },
+  {
+    "isin": "US0404131064",
+    "symbol": "ANET",
+    "companyName": "Arista Networks Inc",
+    "note": "Finnhub ISIN search returns no match"
+  },
+  {
+    "isin": "US02079K1079",
+    "symbol": "GOOG",
+    "companyName": "Alphabet Inc (Class C)",
+    "note": "Class C; Finnhub ISIN search returns no match (Class A US02079K3059 resolves to GOOGL)"
+  },
+  {
+    "isin": "US6701002056",
+    "symbol": "NVO",
+    "companyName": "Novo Nordisk A/S (ADR)",
+    "note": "ADR; Finnhub ISIN search returns no match"
+  },
+  {
+    "isin": "US5128071082",
+    "symbol": "LRCX",
+    "companyName": "Lam Research Corp",
+    "note": "Pre-2024-split ISIN still used by the vendor file; share counts are on the post-split basis (implied price checked against LRCX, 2026-11-03)"
+  },
+  {
+    "isin": "USN070592100",
+    "symbol": "ASML",
+    "companyName": "ASML Holding NV (NY registry shares)",
+    "note": "Finnhub ISIN search returns no match"
+  },
+  {
+    "isin": "US04016X1019",
+    "symbol": "ARGX",
+    "companyName": "argenx SE (ADR)",
+    "note": "ADR; Finnhub ISIN search returns no match"
+  },
+  {
+    "isin": "US69368G1058",
+    "symbol": "PBCRY",
+    "companyName": "PT Bank Central Asia Tbk (ADR, OTC)",
+    "note": "OTC ADR; Finnhub ISIN search returns no match"
+  }
+]

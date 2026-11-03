@@ -6,6 +6,17 @@ import { getUsdInrRate } from "../fx/client";
 import { isUsListedEquityIsin } from "../excel/instrument-classification";
 import { writeIsinDailyPriceRows, type IsinDailyPriceRow } from "./isin-price-store";
 import { lastTradingDayIstString } from "../utils/market-hours";
+import foreignSymbolOverridesJson from "../../../data/foreign-symbol-overrides.json";
+
+// Hand-verified ISIN -> Finnhub symbol pairs for holdings whose ISIN
+// Finnhub's search can't resolve (mostly ADRs/GDRs and a share class or
+// two). Each was checked by quoting the symbol and comparing it with the
+// holding's own implied price (reported value / shares) against the
+// distribution for already-mapped holdings. Consulted before the search,
+// so a re-sync never drops them.
+const FOREIGN_SYMBOL_OVERRIDES = new Map(
+  (foreignSymbolOverridesJson as { isin: string; symbol: string; companyName: string }[]).map((o) => [o.isin, o])
+);
 
 const USD_INR_RATE_KEY = "usd_inr_rate";
 const USD_INR_RATE_AS_OF_KEY = "usd_inr_rate_as_of";
@@ -40,7 +51,8 @@ export async function syncForeignInstrumentMap(
   await throttledForEach(
     isins,
     async (isin) => {
-      const match = await searchByIsin(isin);
+      const override = FOREIGN_SYMBOL_OVERRIDES.get(isin);
+      const match = override ? { symbol: override.symbol, companyName: override.companyName } : await searchByIsin(isin);
       if (!match) {
         unmatchedIsins.push(isin);
         return;
