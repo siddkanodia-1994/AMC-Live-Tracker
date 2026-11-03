@@ -1,6 +1,8 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { isinShareAdjustment } from "../db/schema";
+import { holdings, isinShareAdjustment } from "../db/schema";
+import { CRORE } from "../utils/constants";
+import { firstDayOfNextMonth } from "./report-period";
 import type { HistoricalClose } from "../dhan/historical-client";
 
 export interface ShareAdjustment {
@@ -13,22 +15,12 @@ export interface ShareAdjustment {
 /**
  * Every currently-active (non-dismissed) share adjustment for a report
  * period, keyed by ISIN -- read side consumed by compute-live-aum.ts to
- * correct holdings.shares (never mutated) at live-compute time. Naturally
- * scoped/invalidated by reportPeriod: once current_report_period advances to
- * a period whose holdings.shares is presumably already correct/post-split,
- * this query simply stops returning the old period's rows.
+ * correct holdings.shares (never mutated) at live-compute time. Includes
+ * splits recorded under an EARLIER period that still apply to this one (see
+ * getActiveShareMultipliersByPeriod).
  */
 export async function getActiveShareMultipliers(reportPeriod: string): Promise<Map<string, ShareAdjustment>> {
-  const rows = await db
-    .select()
-    .from(isinShareAdjustment)
-    .where(and(eq(isinShareAdjustment.reportPeriod, reportPeriod), isNull(isinShareAdjustment.dismissedAt)));
-
-  const map = new Map<string, ShareAdjustment>();
-  for (const r of rows) {
-    map.set(r.isin, toShareAdjustment(r));
-  }
-  return map;
+  return (await getActiveShareMultipliersByPeriod([reportPeriod])).get(reportPeriod) ?? new Map();
 }
 
 function toShareAdjustment(r: typeof isinShareAdjustment.$inferSelect): ShareAdjustment {
@@ -41,24 +33,89 @@ function toShareAdjustment(r: typeof isinShareAdjustment.$inferSelect): ShareAdj
 }
 
 /**
- * Same as getActiveShareMultipliers, but for several report periods in one
- * query -- reportPeriod -> isin -> adjustment. For the historical
- * recomputation paths (backfill.ts, outage-reclaim.ts), which can price
- * holdings from more than one period for the same date.
+ * Whether a period's holdings are still on the PRE-split share basis for
+ * `adj`, judged from that period's own implied price (Σ market value ÷ Σ
+ * shares): closer, in log terms, to the last pre-split close than to the
+ * first post-split one. Needed because vendor files differ -- e.g. the
+ * Sep-26 tracker reported Mold-Tek's shares already doubled for its 9 Oct
+ * 2:1 split (implied ₹330 vs ₹652 before / ₹326 after), but Bansal Wire's
+ * still pre-split for its 16 Oct 5:1 (implied ₹323 vs ₹316 / ₹62).
+ */
+export function isOnPreSplitBasis(impliedPriceInr: number, adj: ShareAdjustment): boolean {
+  if (!(impliedPriceInr > 0) || !(adj.lastPriceBeforeInr > 0) || !(adj.lastPriceAfterInr > 0)) return false;
+  return Math.abs(Math.log(impliedPriceInr / adj.lastPriceBeforeInr)) < Math.abs(Math.log(impliedPriceInr / adj.lastPriceAfterInr));
+}
+
+/**
+ * Active adjustments for several report periods in one pass -- reportPeriod
+ * -> isin -> adjustment. Used directly by the historical recomputation paths
+ * (backfill.ts, outage-reclaim.ts), which can price holdings from more than
+ * one period for the same date, and via getActiveShareMultipliers by the
+ * live path.
+ *
+ * A split is detected (split-detection.ts) under whichever period is
+ * current on the day the price jumps. If the NEXT period's file is imported
+ * afterwards but its holdings date (month end) precedes the split, those
+ * holdings are still pre-split too -- yet a lookup keyed on its own period
+ * alone would never see the adjustment (Bansal Wire, 16 Oct 2026: recorded
+ * under 2026-08, so the 2026-09 holdings were valued at a fifth of their
+ * worth). So an earlier period's adjustment is carried forward to period P
+ * when it was first detected after P's month end AND P's own holdings are
+ * still on the pre-split basis (isOnPreSplitBasis). P's own rows win.
  */
 export async function getActiveShareMultipliersByPeriod(
   reportPeriods: string[]
 ): Promise<Map<string, Map<string, ShareAdjustment>>> {
   const byPeriod = new Map<string, Map<string, ShareAdjustment>>();
   if (reportPeriods.length === 0) return byPeriod;
+  const latestPeriod = [...reportPeriods].sort().at(-1)!;
+  // Small table (one row per detected split), so one unfiltered-by-period
+  // read covers both own-period rows and carry-forward candidates.
   const rows = await db
     .select()
     .from(isinShareAdjustment)
-    .where(and(inArray(isinShareAdjustment.reportPeriod, reportPeriods), isNull(isinShareAdjustment.dismissedAt)));
+    .where(and(lte(isinShareAdjustment.reportPeriod, latestPeriod), isNull(isinShareAdjustment.dismissedAt)));
   for (const r of rows) {
+    if (!reportPeriods.includes(r.reportPeriod)) continue;
     const map = byPeriod.get(r.reportPeriod) ?? new Map<string, ShareAdjustment>();
     map.set(r.isin, toShareAdjustment(r));
     byPeriod.set(r.reportPeriod, map);
+  }
+
+  for (const period of reportPeriods) {
+    const holdingsDateEnd = firstDayOfNextMonth(period);
+    const own = byPeriod.get(period);
+    const candidates = rows.filter(
+      (r) => r.reportPeriod < period && r.firstDetectedOn >= holdingsDateEnd && !own?.has(r.isin)
+    );
+    if (candidates.length === 0) continue;
+    const isins = [...new Set(candidates.map((c) => c.isin))];
+    const implied = await db
+      .select({
+        isin: holdings.isin,
+        mv: sql<string>`sum(${holdings.marketValueCr})`,
+        shares: sql<string>`sum(${holdings.shares})`,
+      })
+      .from(holdings)
+      .where(and(eq(holdings.reportPeriod, period), inArray(holdings.isin, isins)))
+      .groupBy(holdings.isin);
+    const impliedPriceByIsin = new Map(
+      implied.map((r) => [r.isin, Number(r.shares) > 0 ? (Number(r.mv) * CRORE) / Number(r.shares) : 0])
+    );
+    for (const isin of isins) {
+      // If one ISIN somehow has several later splits, the most recent one
+      // still on the pre-split basis is what this period's shares need.
+      const adjs = candidates
+        .filter((c) => c.isin === isin)
+        .map(toShareAdjustment)
+        .sort((a, b) => b.firstDetectedOn.localeCompare(a.firstDetectedOn));
+      const price = impliedPriceByIsin.get(isin) ?? 0;
+      const applicable = adjs.find((a) => isOnPreSplitBasis(price, a));
+      if (!applicable) continue;
+      const map = byPeriod.get(period) ?? new Map<string, ShareAdjustment>();
+      map.set(isin, applicable);
+      byPeriod.set(period, map);
+    }
   }
   return byPeriod;
 }
