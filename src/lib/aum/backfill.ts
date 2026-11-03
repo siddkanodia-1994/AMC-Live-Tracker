@@ -4,10 +4,18 @@ import { amcPeriods, amcs, appSettings, holdings, instrumentMap, isinDailyPrice,
 import { fetchHistoricalClosesForMany } from "../dhan/historical-client";
 import type { HistoricalClose } from "../dhan/historical-client";
 import type { ExchangeSegment } from "../dhan/types";
+import { isUsListedEquityIsin } from "../excel/instrument-classification";
 import { CRORE } from "../utils/constants";
 import { getIstDateString } from "../utils/date";
 import { writeIsinDailyPriceRows, type IsinDailyPriceRow } from "./isin-price-store";
 import { firstDayOfNextMonth } from "./report-period";
+import {
+  effectiveSharesForDate,
+  getActiveShareAdjustmentEventsByIsin,
+  getActiveShareMultipliers,
+  toAsTradedCloses,
+  type ShareAdjustment,
+} from "./share-adjustments";
 
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -30,23 +38,39 @@ export function yesterdayIst(): string {
 }
 
 // Extracted so outage-reclaim.ts's corrective UPDATE path can reuse the
-// exact same AUM math instead of re-deriving it -- identical logic to what
-// backfillDailySnapshots always inlined here.
+// exact same AUM math instead of re-deriving it. Mirrors compute-live-aum.ts's
+// per-holding valuation for a past date: `pricesByIsinAndDate` must hold
+// as-traded INR prices (see toAsTradedCloses), and `shareAdjustmentsByIsin`
+// is the active split/bonus set for these holdings' own report period,
+// date-gated per holding exactly like amc-as-of.ts -- without it, a
+// post-split close gets multiplied against the stale pre-split share count
+// (JSW Dulux 10:1: HDFC's stake valued ~10x too low).
 export function computeAmcLiveAumCrForDate(
   amcHoldingRows: (typeof holdings.$inferSelect)[],
-  closesByIsinAndDate: Map<string, Map<string, number>>,
+  pricesByIsinAndDate: Map<string, Map<string, number>>,
   date: string,
-  residualPlugCr: number
+  residualPlugCr: number,
+  shareAdjustmentsByIsin: Map<string, ShareAdjustment> | undefined
 ): number {
   let liveSumCr = 0;
   for (const h of amcHoldingRows) {
     const reportedMarketValueCr = Number(h.marketValueCr);
-    if (!h.isPriceable || !h.isin) {
+    // US-listed equities are never DHAN-priceable; the live path prices them
+    // via Finnhub x USD/INR and stores that INR price in isin_daily_price
+    // for the day, so a stored row here is that same cached price. No row
+    // falls back to reported value, same as the live path's stale_fallback.
+    const isin = h.isin;
+    if (!isin || !(h.isPriceable || isUsListedEquityIsin(isin))) {
       liveSumCr += reportedMarketValueCr;
       continue;
     }
-    const close = closesByIsinAndDate.get(h.isin)?.get(date);
-    liveSumCr += close !== undefined ? (close * Number(h.shares)) / CRORE : reportedMarketValueCr;
+    const price = pricesByIsinAndDate.get(isin)?.get(date);
+    if (price === undefined) {
+      liveSumCr += reportedMarketValueCr;
+      continue;
+    }
+    const effectiveShares = effectiveSharesForDate(Number(h.shares), shareAdjustmentsByIsin?.get(isin), date);
+    liveSumCr += (price * effectiveShares) / CRORE;
   }
   return liveSumCr + residualPlugCr;
 }
@@ -175,6 +199,11 @@ export async function backfillDailySnapshots(options?: {
     requests.push({ securityId: mapping.securityId, exchangeSegment: mapping.exchangeSegment as ExchangeSegment });
   }
 
+  const [shareAdjustmentsByIsin, splitEventsByIsin] = await Promise.all([
+    getActiveShareMultipliers(reportPeriod),
+    getActiveShareAdjustmentEventsByIsin(),
+  ]);
+
   const historicalBySecurityKey =
     requests.length > 0
       ? await fetchHistoricalClosesForMany(requests, fromDate, toDate, (done, total) => {
@@ -189,15 +218,21 @@ export async function backfillDailySnapshots(options?: {
   const allTradingDates = new Set<string>();
   let unmatchedIsinCount = 0;
   for (const isin of priceableIsins) {
+    // Both sources normalized to as-traded prices: DHAN's historical closes
+    // come back split-adjusted for pre-split days, and they're written back
+    // into isin_daily_price below -- un-normalized, they'd also overwrite
+    // the as-traded closes the live path captured on those days. A no-op
+    // for already-as-traded stored rows.
     if (fullyCoveredIsins.has(isin)) {
-      const byDate = existingByIsin.get(isin)!;
+      const stored = [...existingByIsin.get(isin)!].map(([date, close]) => ({ date, close }));
+      const byDate = new Map(toAsTradedCloses(stored, splitEventsByIsin.get(isin)).map((c) => [c.date, c.close]));
       closesByIsinAndDate.set(isin, byDate);
       for (const date of byDate.keys()) allTradingDates.add(date);
       continue;
     }
     const key = isinToSegmentKey.get(isin);
     if (!key) continue;
-    const closes = historicalBySecurityKey.get(key) ?? [];
+    const closes = toAsTradedCloses(historicalBySecurityKey.get(key) ?? [], splitEventsByIsin.get(isin));
     if (closes.length === 0) {
       unmatchedIsinCount++;
       continue;
@@ -235,6 +270,17 @@ export async function backfillDailySnapshots(options?: {
   }
   await writeIsinDailyPriceRows(isinPriceRows);
 
+  // US-listed holdings' stored Finnhub x USD/INR prices (see
+  // computeAmcLiveAumCrForDate) -- read-only here: kept out of
+  // closesByIsinAndDate so they neither define trading dates nor get
+  // re-written above.
+  const pricesByIsinAndDate = new Map(closesByIsinAndDate);
+  for (const h of holdingRows) {
+    if (h.isPriceable || !h.isin || !isUsListedEquityIsin(h.isin) || pricesByIsinAndDate.has(h.isin)) continue;
+    const stored = existingByIsin.get(h.isin);
+    if (stored) pricesByIsinAndDate.set(h.isin, stored);
+  }
+
   const holdingsByAmcId = new Map<number, typeof holdingRows>();
   for (const h of holdingRows) {
     const list = holdingsByAmcId.get(h.amcId) ?? [];
@@ -271,7 +317,7 @@ export async function backfillDailySnapshots(options?: {
       const amcHoldings = holdingsByAmcId.get(period.amcId) ?? [];
       const residualPlugCr = Number(period.residualPlugCr);
       const reportedAumCr = Number(period.reportedAumCr);
-      const liveAumCr = computeAmcLiveAumCrForDate(amcHoldings, closesByIsinAndDate, date, residualPlugCr);
+      const liveAumCr = computeAmcLiveAumCrForDate(amcHoldings, pricesByIsinAndDate, date, residualPlugCr, shareAdjustmentsByIsin);
       const deltaCr = liveAumCr - reportedAumCr;
       const deltaPct = reportedAumCr !== 0 ? deltaCr / reportedAumCr : 0;
 

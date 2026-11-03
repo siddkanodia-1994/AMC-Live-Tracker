@@ -5,6 +5,7 @@ import { invalidateLiveAumCache } from "./cache";
 import { lastNTradingDatesBefore } from "./last-close-mute";
 import { writeIsinDailyPriceRows } from "./isin-price-store";
 import { recomputeCanonicalSnapshotsForDate } from "./outage-reclaim";
+import { getActiveShareAdjustmentEventsByIsin, toAsTradedCloses } from "./share-adjustments";
 
 // Generous margin over the worst observed stuck streak so far (Inox
 // Green Energy Services, ~8 trading days) -- over-fetching is harmless
@@ -36,7 +37,13 @@ export async function backfillIsinPriceHistory(
   const fromDate = tradingDates[tradingDates.length - 1];
   const toDateInclusive = tradingDates[0];
 
-  const closes = await fetchHistoricalCloses(securityId, exchangeSegment, fromDate, toDateInclusive);
+  // DHAN returns pre-split days split-adjusted -- stored as-traded instead,
+  // like every other isin_daily_price row (see toAsTradedCloses).
+  const splitEventsByIsin = await getActiveShareAdjustmentEventsByIsin();
+  const closes = toAsTradedCloses(
+    await fetchHistoricalCloses(securityId, exchangeSegment, fromDate, toDateInclusive),
+    splitEventsByIsin.get(isin)
+  );
   if (closes.length === 0) return { datesUpdated: [] };
 
   await writeIsinDailyPriceRows(closes.map((c) => ({ isin, snapshotDate: c.date, priceInr: c.close })));

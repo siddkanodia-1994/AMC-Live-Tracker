@@ -9,6 +9,7 @@ import { invalidateLiveAumCache } from "./cache";
 import { upsertDailyDataQuality } from "./daily-data-quality";
 import { writeIndexDailyLevelRows } from "./index-level-store";
 import { writeIsinDailyPriceRows } from "./isin-price-store";
+import { getActiveShareAdjustmentEventsByIsin, getActiveShareMultipliersByPeriod, toAsTradedCloses } from "./share-adjustments";
 import { getIstDateString } from "../utils/date";
 import type { DhanStatus } from "./types";
 import { detectAmcOutageDates, detectIndexGapDates, getOutageLookbackDays, getOutageMaxIsinsPerRun } from "./outage-detection";
@@ -66,6 +67,8 @@ export async function recomputeCanonicalSnapshotsForDate(date: string): Promise<
     .from(amcPeriods)
     .where(inArray(amcPeriods.reportPeriod, distinctPeriods));
   const residualByPeriodAmc = new Map(amcPeriodRows.map((r) => [`${r.reportPeriod}|${r.amcId}`, Number(r.residualPlugCr)]));
+  // Per period, since this date's canonical rows can come from more than one.
+  const shareAdjustmentsByPeriod = await getActiveShareMultipliersByPeriod(distinctPeriods);
 
   const allPriceRowsForDate = await db
     .select({ isin: isinDailyPrice.isin, priceInr: isinDailyPrice.priceInr })
@@ -79,7 +82,13 @@ export async function recomputeCanonicalSnapshotsForDate(date: string): Promise<
     const amcHoldings = holdingsByPeriodAmc.get(key) ?? [];
     const residualPlugCr = residualByPeriodAmc.get(key) ?? 0;
     const reportedAumCr = Number(row.reportedAumCr);
-    const liveAumCr = computeAmcLiveAumCrForDate(amcHoldings, closesByIsinAndDate, date, residualPlugCr);
+    const liveAumCr = computeAmcLiveAumCrForDate(
+      amcHoldings,
+      closesByIsinAndDate,
+      date,
+      residualPlugCr,
+      shareAdjustmentsByPeriod.get(row.reportPeriod)
+    );
     const deltaCr = liveAumCr - reportedAumCr;
     const deltaPct = reportedAumCr !== 0 ? deltaCr / reportedAumCr : 0;
     await db
@@ -156,11 +165,16 @@ async function reclaimAmcOutages(): Promise<{ datesProcessed: string[]; isinsCor
 
       const historicalBySecurityKey: Map<string, HistoricalClose[]> =
         requests.length > 0 ? await fetchHistoricalClosesForMany(requests, date, date) : new Map();
+      // DHAN returns pre-split days split-adjusted -- stored as-traded instead,
+      // like every other isin_daily_price row (see toAsTradedCloses).
+      const splitEventsByIsin = await getActiveShareAdjustmentEventsByIsin();
 
       const isinPriceRows: { isin: string; snapshotDate: string; priceInr: number }[] = [];
       for (const isin of chunk) {
         const mapping = instrumentByIsin.get(isin);
-        const closes = mapping ? (historicalBySecurityKey.get(`${mapping.exchangeSegment}:${mapping.securityId}`) ?? []) : [];
+        const closes = mapping
+          ? toAsTradedCloses(historicalBySecurityKey.get(`${mapping.exchangeSegment}:${mapping.securityId}`) ?? [], splitEventsByIsin.get(isin))
+          : [];
         const closeForDate = closes.find((c) => c.date === date);
         if (closeForDate) {
           isinPriceRows.push({ isin, snapshotDate: date, priceInr: closeForDate.close });
