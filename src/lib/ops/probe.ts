@@ -10,6 +10,7 @@ import {
   holdings,
   instrumentMap,
   isinDailyPrice,
+  isinManualMute,
   liveAumDailySnapshot,
   mcxDailyPrice,
   opsRunLog,
@@ -178,11 +179,16 @@ export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
   });
 
   await check("unresolved-stale-mappings", async () => {
+    // Muted ISINs are a decided case (the user accepted a reason, e.g. a
+    // redeemed preference share at 0 shares) -- the stale-mapping reclaim
+    // already skips them, so they don't count as open here either.
     const open = await db
       .select({ isin: staleMappingUnresolvedLog.isin, companyName: staleMappingUnresolvedLog.companyName, firstCheckedAt: staleMappingUnresolvedLog.firstCheckedAt })
       .from(staleMappingUnresolvedLog)
+      .leftJoin(isinManualMute, eq(isinManualMute.isin, staleMappingUnresolvedLog.isin))
+      .where(isNull(isinManualMute.isin))
       .limit(50);
-    if (open.length === 0) return { status: "ok", summary: "none" };
+    if (open.length === 0) return { status: "ok", summary: "none open (muted ISINs excluded)" };
     const oldestDays = Math.max(...open.map((o) => Math.floor((now.getTime() - o.firstCheckedAt.getTime()) / DAY_MS)));
     return {
       status: oldestDays >= 14 ? "warn" : "ok",

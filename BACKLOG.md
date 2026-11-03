@@ -11,10 +11,11 @@ merged.
 
 ## In progress
 
-- Overview headline first-render flash (session `headline-flash`, branch `claude/headline-flash-*`)
-- Classify unpriced Indian instruments + `instrument-map-gaps` probe check (session `instrument-gaps`)
+<!-- nothing in flight -->
 
 ## Blocked / needs you
+
+- **HEG Graphite (₹616 cr, 7 AMCs):** demerged from HEG and not yet listed, so it sits at reported value. It maps automatically on its first trading day; the `instrument-map-gaps` probe check warns until then. See `docs/instrument-gaps-2026-11.md`.
 
 - **2027 NSE holiday list:** add to `src/lib/utils/market-hours.ts` once NSE publishes it (usually mid-December). The probe warns from 1 Dec.
 - **Oct-26 Mirae tracker:** run the `ingest` workflow on it after the 15th of November, then import via /admin.
@@ -27,3 +28,4 @@ merged.
 - Secrets guard, 2027-safe holiday map, US price staleness tiers, cron ledger + 18:05 retry, ops probe, Agent Ops panel
 - ETF split idempotency, import dry-run, backfill split/US parity, Bansal Wire split carry-forward, Oct history recompute
 - 9 unpriced US holdings mapped (162/163 priced), lint debt cleared, anon Supabase key in production
+- Parallel agent graph (backlog lanes, DHAN ∥ Finnhub repair lanes, tiered roles), Overview first-render flash fixed, instrument-gap audit and probe check, 2 stuck mappings muted
