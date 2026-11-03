@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { useRegisterExport } from "@/components/layout/export-context";
@@ -382,6 +383,7 @@ export function AmcTable({
   showGoldSilver,
   onToggleGoldSilver,
   blendedAmcIds,
+  isBlendPending,
 }: {
   amcs: AmcLiveAum[];
   allAmcs: AmcLiveAum[];
@@ -429,6 +431,10 @@ export function AmcTable({
   // table itself.
   showGoldSilver: boolean;
   onToggleGoldSilver: () => void;
+  // True while the Gold/Silver blend's figures haven't landed yet (see
+  // amc-grid.tsx's liveBlendPending) -- a skeleton shows in place of the
+  // table instead of unblended rows.
+  isBlendPending: boolean;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("liveAumCr");
   const [sortDesc, setSortDesc] = useState(true);
@@ -611,7 +617,8 @@ export function AmcTable({
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border bg-card">
+      {isBlendPending && <Skeleton className="h-96 w-full rounded-lg" />}
+      <div className={`overflow-x-auto rounded-lg border bg-card ${isBlendPending ? "hidden" : ""}`}>
         <Table className={showNetFlow ? "text-sm" : "text-base"}>
           <TableHeader>
             <TableRow>
