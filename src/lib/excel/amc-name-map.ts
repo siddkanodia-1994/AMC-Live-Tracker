@@ -12,12 +12,18 @@ export function getMapEntryByOverviewName(overviewName: string): AmcNameMapEntry
   return AMC_NAME_MAP.find((e) => e.overviewName === overviewName);
 }
 
+export interface MapCoverageGaps {
+  // Overview names with no entry in data/amc-name-map.json.
+  missingFromMap: string[];
+  // Mapped AMCs whose sheet isn't in the workbook, as `Overview name -> "sheet"`.
+  missingSheets: string[];
+}
+
 /**
- * Hard-fails the import if any Overview row or workbook sheet name can't be
- * mapped, rather than silently dropping an AMC — a silently-missing AMC would
- * understate total industry AUM with no visible signal.
+ * The non-throwing half of assertMapCoversWorkbook(), so a dry run can list
+ * every gap instead of stopping at the first error.
  */
-export function assertMapCoversWorkbook(wb: WorkBook, overviewRows: OverviewRow[]): void {
+export function findMapCoverageGaps(wb: WorkBook, overviewRows: OverviewRow[]): MapCoverageGaps {
   const missingFromMap: string[] = [];
   const missingSheets: string[] = [];
 
@@ -31,6 +37,17 @@ export function assertMapCoversWorkbook(wb: WorkBook, overviewRows: OverviewRow[
       missingSheets.push(`${entry.overviewName} -> "${entry.sheetName}"`);
     }
   }
+
+  return { missingFromMap, missingSheets };
+}
+
+/**
+ * Hard-fails the import if any Overview row or workbook sheet name can't be
+ * mapped, rather than silently dropping an AMC — a silently-missing AMC would
+ * understate total industry AUM with no visible signal.
+ */
+export function assertMapCoversWorkbook(wb: WorkBook, overviewRows: OverviewRow[]): void {
+  const { missingFromMap, missingSheets } = findMapCoverageGaps(wb, overviewRows);
 
   if (missingFromMap.length > 0 || missingSheets.length > 0) {
     const parts: string[] = [];

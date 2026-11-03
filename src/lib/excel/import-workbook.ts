@@ -1,12 +1,7 @@
-import { read, type WorkBook } from "xlsx";
 import { and, eq, sql } from "drizzle-orm";
 import { transactionalDb } from "../db/transactional-client";
 import { amcPeriods, amcs, appSettings, holdings, importLog, officialCceHistory } from "../db/schema";
-import { getAmcMap } from "./amc-name-map";
-import { assertMapCoversWorkbook } from "./amc-name-map";
-import { deriveReportPeriod, parseOverviewSheet } from "./parse-overview";
-import { parseAmcSheet } from "./parse-amc-sheet";
-import { parseCashHoldingsSheet } from "./parse-cash-holdings";
+import { parseWorkbook } from "./parse-workbook";
 import type { ImportResult } from "./types";
 
 const CCE_BATCH_SIZE = 500;
@@ -14,52 +9,20 @@ const CCE_BATCH_SIZE = 500;
 const CURRENT_REPORT_PERIOD_KEY = "current_report_period";
 
 export async function importWorkbook(fileBuffer: Buffer, fileName: string): Promise<ImportResult> {
-  const wb: WorkBook = read(fileBuffer, { type: "buffer", cellDates: false });
+  // Parse (and hard-fail on a bad file) before the transaction ever opens.
+  const parsed = parseWorkbook(fileBuffer);
+  const { reportPeriod, cashHoldings } = parsed;
 
-  const overviewRows = parseOverviewSheet(wb);
-  const reportPeriod = deriveReportPeriod(wb);
-  assertMapCoversWorkbook(wb, overviewRows);
-
-  const overviewByName = new Map(overviewRows.map((r) => [r.overviewName, r]));
-  const allWarnings: string[] = [];
+  const allWarnings: string[] = [...parsed.warnings];
   let holdingsImported = 0;
   let amcsImported = 0;
   let cceRowsImported = 0;
-  const cashHoldings = parseCashHoldingsSheet(wb);
-  allWarnings.push(...cashHoldings.warnings);
 
   let importLogId = 0;
   let advancedToNewPeriod = false;
 
   await transactionalDb.transaction(async (tx) => {
-    for (const entry of getAmcMap()) {
-      const overviewRow = overviewByName.get(entry.overviewName);
-      if (!overviewRow) {
-        // A mapped AMC with no Overview row in THIS workbook -- expected for
-        // a historical (older) import, since a fund that launched later
-        // simply didn't exist yet in an earlier month. assertMapCoversWorkbook
-        // already guarantees the reverse (every row IN the workbook has a map
-        // entry), so this is a legitimate skip, not a data-integrity problem.
-        allWarnings.push(`[${entry.overviewName}] Not present in this workbook -- skipped (likely didn't exist yet as of this period).`);
-        continue;
-      }
-
-      const parsedSheet = parseAmcSheet(wb, entry.sheetName);
-      for (const w of parsedSheet.warnings) {
-        allWarnings.push(`[${entry.overviewName}] ${w}`);
-      }
-
-      if (
-        parsedSheet.equityAumHeaderCr != null &&
-        Math.abs(parsedSheet.equityAumHeaderCr - overviewRow.reportedAumCr) > 1
-      ) {
-        allWarnings.push(
-          `[${entry.overviewName}] Sheet's equity-AUM header (${parsedSheet.equityAumHeaderCr}) disagrees with Overview's reported AUM (${overviewRow.reportedAumCr}) by more than 1 cr.`
-        );
-      }
-
-      const residualPlugCr = overviewRow.reportedAumCr - parsedSheet.sheetTotalHoldingsValueCr;
-
+    for (const { entry, overviewRow, sheet: parsedSheet, residualPlugCr } of parsed.amcs) {
       const incomeDebtAumCr = parsedSheet.incomeDebtAumCr != null ? String(parsedSheet.incomeDebtAumCr) : null;
       const prevIncomeDebtAumCr = parsedSheet.prevIncomeDebtAumCr != null ? String(parsedSheet.prevIncomeDebtAumCr) : null;
       const otherFundsAumCr = parsedSheet.otherFundsAumCr != null ? String(parsedSheet.otherFundsAumCr) : null;

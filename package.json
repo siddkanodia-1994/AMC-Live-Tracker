@@ -11,6 +11,7 @@
     "db:migrate": "dotenv -e .env.local -- drizzle-kit migrate",
     "db:push": "dotenv -e .env.local -- drizzle-kit push",
     "import": "dotenv -e .env.local -- tsx scripts/import-excel.ts",
+    "import:dry-run": "dotenv -e .env.local -- tsx scripts/import-excel.ts --dry-run",
     "sync-instruments": "dotenv -e .env.local -- tsx scripts/sync-instruments.ts",
     "backfill-history": "dotenv -e .env.local -- tsx scripts/backfill-history.ts",
     "backfill-index-levels": "dotenv -e .env.local -- tsx scripts/backfill-index-levels.ts",
