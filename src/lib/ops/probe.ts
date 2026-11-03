@@ -76,15 +76,16 @@ export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
   const currentPeriod = periodRow?.value ?? null;
 
   await check("daily-cron-ran", async () => {
-    if (!isTradingDay(now)) return { status: "skipped", summary: "not a trading day" };
-    const since = new Date(`${today}T00:00:00+05:30`);
+    // The run for the most recent close we should have (today after ~16:30
+    // IST on a trading day, otherwise the last trading day).
+    const since = new Date(`${closeDate}T00:00:00+05:30`);
     const [r] = await db
       .select({ status: opsRunLog.status, summary: opsRunLog.summary })
       .from(opsRunLog)
       .where(and(eq(opsRunLog.loop, "daily-snapshot"), eq(opsRunLog.node, "run-complete"), gte(opsRunLog.createdAt, since)))
       .orderBy(sql`${opsRunLog.createdAt} desc`)
       .limit(1);
-    if (!r) return { status: "fail", summary: "no daily-snapshot run recorded today" };
+    if (!r) return { status: "fail", summary: `no daily-snapshot run recorded for ${closeDate}` };
     return { status: r.status === "ok" || r.status === "warn" ? r.status : "fail", summary: r.summary };
   });
 

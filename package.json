@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
     "db:generate": "dotenv -e .env.local -- drizzle-kit generate",
     "db:migrate": "dotenv -e .env.local -- drizzle-kit migrate",
     "db:push": "dotenv -e .env.local -- drizzle-kit push",
@@ -16,7 +17,8 @@
     "backfill-index-levels": "dotenv -e .env.local -- tsx scripts/backfill-index-levels.ts",
     "sync-foreign-instruments": "dotenv -e .env.local -- tsx scripts/sync-foreign-instruments.ts",
     "refresh-foreign-prices": "dotenv -e .env.local -- tsx scripts/refresh-foreign-prices.ts",
-    "ops:probe": "dotenv -e .env.local -- tsx scripts/ops/probe.ts"
+    "ops:probe": "dotenv -e .env.local -- tsx scripts/ops/probe.ts",
+    "ops:agent": "dotenv -e .env.local -- tsx scripts/ops/agent-cli.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -54,6 +56,7 @@
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "3.2.4"
   }
 }
