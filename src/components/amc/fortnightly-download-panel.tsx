@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import type { jsPDF } from "jspdf";
+import type { CellHookData, autoTable as autoTableFn } from "jspdf-autotable";
 import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
 import { useFontScale } from "@/components/layout/font-scale-context";
 import { useFortnightlyEligibleAmcs } from "@/hooks/use-fortnightly-update";
@@ -132,6 +134,10 @@ const VERDICT_NEUTRAL_RGB: { fill: [number, number, number]; text: [number, numb
   fill: [226, 232, 240],
   text: [51, 65, 85],
 };
+// jspdf-autotable sets `lastAutoTable` on the doc after each table, but
+// its own types don't declare it on jsPDF.
+type JsPdfWithAutoTable = jsPDF & { lastAutoTable: { finalY: number } };
+
 const addSelectClass =
   "min-w-0 max-w-[240px] rounded-md border border-dashed bg-background px-2 py-1 text-sm text-muted-foreground hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40";
 
@@ -139,16 +145,14 @@ const addSelectClass =
 // autoTable "Overview" section -- a solid navy banner (jsPDF has no
 // gradient fill) approximating the live dashboard's own Option-B Overview
 // card header, absorbing the title line entirely (no separate "AMC Name —
-// as of ..." text above it, matching the live card's own layout). `doc`
-// is typed loosely (consistent with this function's other jsPDF usage,
-// e.g. `(doc as any).lastAutoTable`) since jsPDF's own types are imported
-// dynamically inside handleDownloadPdf, not available at module scope.
+// as of ..." text above it, matching the live card's own layout). jsPDF
+// and autoTable themselves are imported dynamically inside
+// handleDownloadPdf; only their types are imported at module scope.
 // Returns the Y position to continue drawing from. `fontScale` (from the
 // dashboard's A-/A+ toggle) scales every font size and the spacing tied to
 // it, so the banner stays proportioned at any text size instead of bigger
 // text floating in the same fixed-height box.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function drawOverviewBanner(doc: any, autoTable: any, sheet: FortnightlySheet, pageWidth: number, startY: number, fontScale: number): number {
+function drawOverviewBanner(doc: jsPDF, autoTable: typeof autoTableFn, sheet: FortnightlySheet, pageWidth: number, startY: number, fontScale: number): number {
   const bannerHeight = 26 * fontScale;
   const leftX = 18;
   const rightX = pageWidth - 18;
@@ -274,8 +278,7 @@ function drawOverviewBanner(doc: any, autoTable: any, sheet: FortnightlySheet, p
     // but visibly misplaces a short overlay landing on top of it. Drawing
     // every segment from a single running cursor keeps any such drift
     // self-consistent instead of compounding into a visible seam.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    didDrawCell: (data: any) => {
+    didDrawCell: (data: CellHookData) => {
       if (data.section !== "body" || data.column.index !== 1) return;
       const cell = data.cell;
       const lines: string[] = cell.text ?? [];
@@ -287,9 +290,9 @@ function drawOverviewBanner(doc: any, autoTable: any, sheet: FortnightlySheet, p
       // in points (cell.styles.fontSize) or getTextWidth returns bogus,
       // tiny widths.
       const fontSizePt = cell.styles.fontSize;
-      const k = (doc as any).internal.scaleFactor;
-      const fontSizeMm = (doc as any).internal.getFontSize() / k;
-      const lineHeightFactor = (doc as any).getLineHeightFactor ? (doc as any).getLineHeightFactor() : 1.15;
+      const k = doc.internal.scaleFactor;
+      const fontSizeMm = doc.getFontSize() / k;
+      const lineHeightFactor = doc.getLineHeightFactor ? doc.getLineHeightFactor() : 1.15;
       const lineHeight = fontSizeMm * lineHeightFactor;
       const textPos = cell.getTextPos();
       const baseY = textPos.y + fontSizeMm * (2 - 1.15);
@@ -346,7 +349,7 @@ function drawOverviewBanner(doc: any, autoTable: any, sheet: FortnightlySheet, p
     margin: { left: 14, right: 14 },
   });
   doc.setTextColor(0, 0, 0);
-  cursorY = (doc as any).lastAutoTable.finalY + 8 * fontScale;
+  cursorY = (doc as JsPdfWithAutoTable).lastAutoTable.finalY + 8 * fontScale;
   return cursorY;
 }
 
@@ -486,8 +489,7 @@ export function FortnightlyDownloadPanel() {
             },
             margin: { left: 14, right: 14 },
           });
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          cursorY = (doc as any).lastAutoTable.finalY + 10 * fontScale;
+          cursorY = (doc as JsPdfWithAutoTable).lastAutoTable.finalY + 10 * fontScale;
         }
       }
       const dateStamp = new Date().toISOString().slice(0, 10);

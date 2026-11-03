@@ -1,9 +1,7 @@
 name: CI
 
-# Type-check and unit tests on every push/PR, plus lint on the files the
-# push/PR changed. (main carries some pre-existing lint errors in older UI
-# files; linting only changed files keeps new code clean without making
-# every run red until that debt is paid down.) No step touches a database.
+# Type-check, unit tests and lint on every push/PR. No step touches a
+# database.
 on:
   push:
   pull_request:
@@ -22,13 +20,4 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
-      - name: Lint changed files
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base="${{ github.event.pull_request.base.sha }}"
-          else
-            base="${{ github.event.before }}"
-          fi
-          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then base="HEAD~1"; fi
-          files=$(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.ts' '*.tsx' '*.mjs' '*.mts' | grep -v '^\.claude/' || true)
-          if [ -n "$files" ]; then echo "$files"; npx eslint $files; else echo "No lintable files changed."; fi
+      - run: npm run lint
