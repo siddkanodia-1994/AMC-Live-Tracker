@@ -189,8 +189,16 @@ export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
   });
 
   await check("mcx-freshness", async () => {
+    // MCX trades until ~23:30 IST, so the 16:05 cron can only ever capture
+    // the session BEFORE the close date (found by the data-ops loop's first
+    // run, 2026-11-03) -- expect one trading day of lag, not zero.
+    const expected = lastTradingDayIstString(new Date(`${closeDate}T12:00:00+05:30`));
     const [r] = await db.select({ latest: max(mcxDailyPrice.snapshotDate) }).from(mcxDailyPrice);
-    return { status: r.latest !== null && r.latest >= lastTradingDayIstString(now) ? "ok" : "warn", summary: `latest MCX price ${r.latest ?? "none"}`, details: { latest: r.latest } };
+    return {
+      status: r.latest !== null && r.latest >= expected ? "ok" : "warn",
+      summary: `latest MCX price ${r.latest ?? "none"} (expected ≥ ${expected})`,
+      details: { latest: r.latest, expected },
+    };
   });
 
   await check("listed-amc-share-prices", async () => {
