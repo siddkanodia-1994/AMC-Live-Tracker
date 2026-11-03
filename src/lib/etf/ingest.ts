@@ -1,6 +1,7 @@
-import { inArray, eq, desc } from "drizzle-orm";
+import { inArray, eq, desc, and, gte } from "drizzle-orm";
 import { db } from "../db/client";
 import { etfSchemes, etfDailyNav, etfPeriodAum } from "../db/schema";
+import { addDaysToDateString, getIstDateString } from "../utils/date";
 import { fetchLatestNav, fetchLatestAaumSnapshot, fetchNavAsOf } from "./tigzig-client";
 
 export interface EtfIngestResult {
@@ -37,6 +38,29 @@ function findCleanSplitRatio(previousNav: number, currentNav: number): number | 
   }
   if (best === null) return null;
   return rawRatio >= 1 ? best : 1 / best; // back to "previousNav / currentNav" direction
+}
+
+// How far back runEtfIngestion reads stored NAVs for the split check --
+// enough to bridge a long weekend plus a holiday or two (or a few missed
+// cron runs), without reading the table's whole history every day. A
+// scheme whose fresh NAV date is older than this just gets no split check
+// that run, never a wrong one.
+const PRIOR_NAV_LOOKBACK_DAYS = 10;
+// Same 500-per-inArray ceiling as isin-price-store.ts -- the Neon HTTP
+// driver times out on much larger parameter lists.
+const PRIOR_NAV_SCHEME_BATCH = 500;
+
+/**
+ * Whether a scheme's freshly fetched NAV should be checked for a split at
+ * all. TigZig keeps reporting the last trading day's NAV until a new one is
+ * published, so a run after a holiday (or a second run the same day) gets
+ * the same date again. If that date is already stored, this run isn't
+ * seeing a new day-over-day move -- any split on it was already detected
+ * and applied to navAtPeriodEnd the first time, and re-checking against the
+ * still-pre-split prior row would divide the baseline by the ratio again.
+ */
+export function shouldCheckSplit(storedDates: ReadonlySet<string> | undefined, freshDate: string): boolean {
+  return !storedDates?.has(freshDate);
 }
 
 /**
@@ -90,16 +114,32 @@ export async function runEtfIngestion(): Promise<EtfIngestResult> {
   // Prior-day NAV per scheme, for the split check below -- the most recent
   // stored row strictly before whatever date each scheme's fresh fetch
   // reports (usually "yesterday", but tolerates a gap if ingestion missed a
-  // day). One bounded query for every scheme's whole recent history is
-  // simpler than per-scheme queries and this table is small.
+  // day or two). Only the last PRIOR_NAV_LOOKBACK_DAYS of history is read
+  // (one query per PRIOR_NAV_SCHEME_BATCH schemes, i.e. one query in
+  // practice) -- never the table's whole history, which grows every day.
+  // The same rows also say which dates are already stored per scheme, so
+  // a repeat of an already-ingested date skips the split check below.
   const schemeById = new Map(schemes.map((s) => [s.id, s]));
-  const priorNavRows = await db
-    .select()
-    .from(etfDailyNav)
-    .where(inArray(etfDailyNav.schemeId, schemes.map((s) => s.id)))
-    .orderBy(desc(etfDailyNav.snapshotDate));
+  const priorNavCutoff = addDaysToDateString(getIstDateString(), -PRIOR_NAV_LOOKBACK_DAYS);
+  const schemeIds = schemes.map((s) => s.id);
+  const priorNavRows: (typeof etfDailyNav.$inferSelect)[] = [];
+  for (let i = 0; i < schemeIds.length; i += PRIOR_NAV_SCHEME_BATCH) {
+    const batch = schemeIds.slice(i, i + PRIOR_NAV_SCHEME_BATCH);
+    priorNavRows.push(
+      ...(await db
+        .select()
+        .from(etfDailyNav)
+        .where(and(inArray(etfDailyNav.schemeId, batch), gte(etfDailyNav.snapshotDate, priorNavCutoff)))
+        .orderBy(desc(etfDailyNav.snapshotDate)))
+    );
+  }
   const mostRecentPriorNavBySchemeId = new Map<number, number>();
+  const storedDatesBySchemeId = new Map<number, Set<string>>();
   for (const row of priorNavRows) {
+    let storedDates = storedDatesBySchemeId.get(row.schemeId);
+    if (!storedDates) storedDatesBySchemeId.set(row.schemeId, (storedDates = new Set()));
+    storedDates.add(row.snapshotDate);
+
     if (mostRecentPriorNavBySchemeId.has(row.schemeId)) continue;
     const fresh = navMap.get(schemeById.get(row.schemeId)?.schemeCode ?? -1);
     if (fresh && row.snapshotDate >= fresh.date) continue; // same day as today's fetch, not a "prior" day
@@ -117,7 +157,7 @@ export async function runEtfIngestion(): Promise<EtfIngestResult> {
 
     const priorNav = mostRecentPriorNavBySchemeId.get(scheme.id);
     const currentPeriod = periodBySchemeId.get(scheme.id);
-    if (priorNav !== undefined && currentPeriod) {
+    if (priorNav !== undefined && currentPeriod && shouldCheckSplit(storedDatesBySchemeId.get(scheme.id), row.date)) {
       const ratio = findCleanSplitRatio(priorNav, row.nav);
       if (ratio !== null) {
         // Scale the current baseline's navAtPeriodEnd by the same ratio so
