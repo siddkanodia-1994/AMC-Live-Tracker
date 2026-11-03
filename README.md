@@ -167,6 +167,13 @@ from scratch on a new project:
   - `ingest` — dry-run validation of a new vendor file ⇄ independent challenge → proposal (never imports)
   - `analyst` — per-AMC Fortnightly summary draft → every number re-checked → draft in `.claude/agent-drafts/`
   - `dev-loop` — plan → implement in a worktree → tsc/lint/test/build → adversarial review → your push
+  - `backlog` — splits the **Ready** items in `BACKLOG.md` into lanes touching disjoint files and runs
+    `dev-loop` on every lane in parallel worktrees; one branch per lane for you to merge
+- **Parallelism and cost** — independent work fans out (data-ops diagnoses, analyst drafts per AMC,
+  backlog lanes, and data-ops repairs in a DHAN lane ∥ Finnhub lane); anything sharing a rate limit or a
+  file stays sequential. Roles are tiered: opus only for adversarial review, sonnet for triage, diagnosis,
+  drafting and implementation, haiku for mechanical checks and ledger writes. Every role has an effort
+  level and a turn cap (`.claude/agents/*.md` frontmatter).
 - **Gates** — agents touch data only via `scripts/ops/agent-cli.ts` (read-only SQL in a Postgres READ ONLY
   transaction, the probe, five allowlisted idempotent repairs, ledger rows).
   `.claude/hooks/agent-gate.py` blocks everything else for agent tool calls in code: push, deletes,

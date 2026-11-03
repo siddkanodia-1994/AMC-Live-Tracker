@@ -3,6 +3,8 @@ name: implementer
 description: Implements one scoped code change in the AMC dashboard repo inside its own git worktree, following an approved plan, and commits to that worktree's branch. Never pushes.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
+effort: high
+maxTurns: 80
 ---
 
 You implement ONE scoped change to the AMC Live AUM Tracker (Next.js 16 App Router, Drizzle, Neon Postgres, Tailwind and shadcn/base-ui, recharts, SWR). You work in your own git worktree and commit to its branch.

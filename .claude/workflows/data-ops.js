@@ -6,7 +6,7 @@ export const meta = {
     { title: 'Sense', detail: 'run the deterministic probe' },
     { title: 'Triage', detail: 'route each non-ok check' },
     { title: 'Diagnose', detail: 'read-only root cause per issue' },
-    { title: 'Repair', detail: 'allowlisted repairs, one at a time, re-probed' },
+    { title: 'Repair', detail: 'allowlisted repairs, deduped, DHAN and Finnhub lanes in parallel' },
     { title: 'Ledger', detail: 'write outcomes to ops_run_log' },
   ],
 }
@@ -15,7 +15,7 @@ export const meta = {
 // session started after those files existed); otherwise falls back to a
 // general-purpose agent told to adopt that role file, on the same model
 // tier. The agent gate hook applies identically either way.
-const ROLE_MODELS = { 'ops-orchestrator': 'opus', reviewer: 'opus', 'ops-diagnoser': 'sonnet', 'ingest-validator': 'sonnet', 'analyst-writer': 'sonnet', implementer: 'sonnet', verifier: 'sonnet', 'number-checker': 'haiku' }
+const ROLE_MODELS = { 'ops-orchestrator': 'sonnet', reviewer: 'opus', 'ops-diagnoser': 'sonnet', 'ingest-validator': 'sonnet', 'analyst-writer': 'sonnet', implementer: 'sonnet', verifier: 'sonnet', 'number-checker': 'haiku' }
 async function role(name, prompt, opts = {}) {
   try {
     return await agent(prompt, { ...opts, agentType: name })
@@ -30,7 +30,8 @@ async function role(name, prompt, opts = {}) {
 
 // Graph:  Sense ──all ok──► Ledger(ok)
 //           └─issues─► Triage ─► {repair | diagnose | user-action | known-ok}
-//                         diagnose ─► Diagnose ─► repair? ─► Repair ⟲ (≤ MAX_ATTEMPTS, re-probe each time)
+//                         diagnose ─► Diagnose (parallel) ─► repair? ─► Repair ⟲ (≤ MAX_ATTEMPTS, re-probe each time;
+//                                                        DHAN lane ∥ Finnhub lane, one run per action)
 //                                                    └─ otherwise ─► proposal
 //         every terminal node ─► Ledger
 // Hard gates (push, migrations, deletes, non-allowlisted writes) are enforced
@@ -147,24 +148,41 @@ if (issues.length === 0) {
       })
   }
 
-  // ── Repair (sequential: DHAN allows ~1 req/s across the whole app) ──
+  // ── Repair ─────────────────────────────────────────────────────────
+  // One run per distinct action (two checks needing the same repair share
+  // it), in two lanes that run in parallel because they hit different rate
+  // limits: DHAN (~1 req/s app-wide, so its repairs stay strictly
+  // sequential) and Finnhub (60/min). Within a lane, dependency order:
+  // re-map symbols before repricing / reclaiming.
   phase('Repair')
+  const LANES = {
+    dhan: ['sync-instruments', 'reclaim-forward-gap', 'reclaim-outages'],
+    finnhub: ['sync-foreign-instruments', 'refresh-foreign-prices'],
+  }
+  const byAction = new Map()
   for (const item of repairQueue) {
+    const g = byAction.get(item.action) || { action: item.action, nodes: [], why: [] }
+    if (!g.nodes.includes(item.node)) g.nodes.push(item.node)
+    g.why.push(`${item.node}: ${item.why}`)
+    byAction.set(item.action, g)
+  }
+
+  const runRepairGroup = async (group) => {
     let attempt = 0
-    let action = item.action
+    let action = group.action
     let last = null
     while (attempt < MAX_ATTEMPTS) {
       attempt++
-      last = await role('ops-diagnoser', 
-        `The workflow authorises exactly one repair: run \`${CLI} repair ${action}\` once. Then run \`${CLI} probe\` and report the re-probed status of the "${item.node}" check. Context: ${item.why}`,
+      last = await role('ops-diagnoser',
+        `The workflow authorises exactly one repair: run \`${CLI} repair ${action}\` once. Then run \`${CLI} probe\` and report the re-probed status of these checks: ${group.nodes.join(', ')} (worst status across them). Context: ${group.why.join(' | ')}`,
         { label: `repair:${action}#${attempt}`, phase: 'Repair', schema: REPAIR_SCHEMA }
       )
       if (last && last.repairOk && (last.recheckStatus === 'ok' || last.recheckStatus === 'skipped')) break
       if (attempt >= MAX_ATTEMPTS) break
       // Not fixed yet: re-diagnose with what the repair returned before trying again.
-      const again = await role('ops-diagnoser', 
-        `A repair (${action}) for check "${item.node}" did not resolve it. Result: ${JSON.stringify(last)}. Investigate read-only and recommend the next action (another allowlisted repair, or a proposal). Allowed: ${ALLOWED_REPAIRS.join(', ')}. Do NOT run a repair yourself.`,
-        { label: `rediagnose:${item.node}#${attempt}`, phase: 'Repair', schema: DIAG_SCHEMA }
+      const again = await role('ops-diagnoser',
+        `A repair (${action}) for checks ${group.nodes.join(', ')} did not resolve them. Result: ${JSON.stringify(last)}. Investigate read-only and recommend the next action (another allowlisted repair in the same lane, or a proposal). Allowed: ${ALLOWED_REPAIRS.join(', ')}. Do NOT run a repair yourself.`,
+        { label: `rediagnose:${action}#${attempt}`, phase: 'Repair', schema: DIAG_SCHEMA }
       )
       const next = repairActionOf(again?.action)
       if (!next) {
@@ -174,15 +192,26 @@ if (issues.length === 0) {
       action = next
     }
     const fixed = last && last.repairOk && (last.recheckStatus === 'ok' || last.recheckStatus === 'skipped')
-    outcomes.push({
-      node: item.node,
-      status: fixed ? 'fixed' : 'proposal',
-      summary: fixed
-        ? `Repaired via ${action} (attempt ${attempt}): ${last.recheckSummary}`
-        : `Still ${last?.recheckStatus || 'unknown'} after ${attempt} attempt(s) of allowlisted repairs — ${last?.notes || last?.recheckSummary || 'needs you'}`,
-      details: last || null,
-    })
+    for (const node of group.nodes) {
+      outcomes.push({
+        node,
+        status: fixed ? 'fixed' : 'proposal',
+        summary: fixed
+          ? `Repaired via ${action} (attempt ${attempt}): ${last.recheckSummary}`
+          : `Still ${last?.recheckStatus || 'unknown'} after ${attempt} attempt(s) of allowlisted repairs — ${last?.notes || last?.recheckSummary || 'needs you'}`,
+        details: last || null,
+      })
+    }
   }
+
+  const laneOf = (action) => (LANES.finnhub.includes(action) ? 'finnhub' : 'dhan')
+  const groups = [...byAction.values()]
+  await parallel(
+    Object.entries(LANES).map(([lane, order]) => async () => {
+      const mine = groups.filter((g) => laneOf(g.action) === lane).sort((a, b) => order.indexOf(a.action) - order.indexOf(b.action))
+      for (const g of mine) await runRepairGroup(g)
+    })
+  )
 }
 
 // ── Ledger ─────────────────────────────────────────────────────────────

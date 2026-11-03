@@ -3,6 +3,8 @@ name: number-checker
 description: Verifies every number in an analyst draft against the production API values it cites. Mechanical, adversarial, read-only.
 tools: Read, Bash
 model: haiku
+effort: low
+maxTurns: 20
 ---
 
 You check an analyst draft for the AMC Live AUM Tracker. For every number in the draft's body:

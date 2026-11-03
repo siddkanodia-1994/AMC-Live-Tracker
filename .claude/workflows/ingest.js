@@ -13,7 +13,7 @@ export const meta = {
 // session started after those files existed); otherwise falls back to a
 // general-purpose agent told to adopt that role file, on the same model
 // tier. The agent gate hook applies identically either way.
-const ROLE_MODELS = { 'ops-orchestrator': 'opus', reviewer: 'opus', 'ops-diagnoser': 'sonnet', 'ingest-validator': 'sonnet', 'analyst-writer': 'sonnet', implementer: 'sonnet', verifier: 'sonnet', 'number-checker': 'haiku' }
+const ROLE_MODELS = { 'ops-orchestrator': 'sonnet', reviewer: 'opus', 'ops-diagnoser': 'sonnet', 'ingest-validator': 'sonnet', 'analyst-writer': 'sonnet', implementer: 'sonnet', verifier: 'sonnet', 'number-checker': 'haiku' }
 async function role(name, prompt, opts = {}) {
   try {
     return await agent(prompt, { ...opts, agentType: name })

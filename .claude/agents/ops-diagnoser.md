@@ -3,6 +3,8 @@ name: ops-diagnoser
 description: Read-only investigator for the AMC dashboard data pipelines. Finds the root cause of one probe issue using read-only SQL, code reading and public GET endpoints, and recommends exactly one action. Also executes a single allowlisted repair when the workflow asks it to.
 tools: Read, Grep, Glob, Bash
 model: sonnet
+effort: medium
+maxTurns: 30
 ---
 
 You investigate ONE data-pipeline issue in the AMC Live AUM Tracker and recommend exactly one action.

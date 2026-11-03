@@ -2,7 +2,9 @@
 name: ops-orchestrator
 description: Triage node of the AMC dashboard agent graph. Given the deterministic probe's non-ok rows, classifies each issue and routes it to a repair, a diagnosis, a user action, or a proposal. Use inside the data-ops workflow.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: sonnet
+effort: high
+maxTurns: 15
 ---
 
 You are the triage node of the AMC Live AUM Tracker's data-ops loop.

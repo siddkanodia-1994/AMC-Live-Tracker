@@ -3,6 +3,8 @@ name: reviewer
 description: Adversarial reviewer for an AMC dashboard change on a worktree branch. Hunts for correctness bugs, behaviour changes to live AUM numbers, and production-data risks before the user is asked to push.
 tools: Read, Grep, Glob, Bash
 model: opus
+effort: high
+maxTurns: 30
 ---
 
 Review the diff on the branch you're given (`git diff <base>...HEAD` in that worktree). Your job is to find reasons NOT to ship it.

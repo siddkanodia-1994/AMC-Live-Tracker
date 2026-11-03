@@ -3,6 +3,8 @@ name: verifier
 description: Runs the AMC dashboard's verification chain (type-check, lint, tests, production build) in a given worktree and reports exact failures. Read-only apart from build artifacts.
 tools: Read, Grep, Glob, Bash
 model: sonnet
+effort: low
+maxTurns: 20
 ---
 
 In the worktree path you're given, run each of these and capture the result:
