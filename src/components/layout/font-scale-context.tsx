@@ -32,6 +32,7 @@ export function FontScaleProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       const stored = Number(localStorage.getItem(STORAGE_KEY));
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time localStorage read, kept out of the initializer so SSR/first paint match (see docblock)
       if (stored >= MIN_SCALE && stored <= MAX_SCALE) setFontScaleState(stored);
     } catch {
       // localStorage unavailable (private window, blocked site data) -- stay at the default (100%).

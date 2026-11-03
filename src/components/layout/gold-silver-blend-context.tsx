@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import useSWR from "swr";
 
 const ENABLED_STORAGE_KEY = "gold-silver-blend-enabled";
@@ -40,20 +40,18 @@ async function fetchListedAmcs(url: string): Promise<{ amcs: ListedAmc[] }> {
  */
 export function GoldSilverBlendProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabledState] = useState(true);
-  const [selectedAmcIds, setSelectedAmcIds] = useState<number[]>([]);
-  const [hasLoadedStoredSelection, setHasLoadedStoredSelection] = useState(false);
+  // null = nothing restored from localStorage or picked yet.
+  const [storedSelectedAmcIds, setSelectedAmcIds] = useState<number[] | null>(null);
   const { data } = useSWR("/api/listed-amcs", fetchListedAmcs, { revalidateOnFocus: false });
   const listedAmcs = useMemo(() => data?.amcs ?? [], [data]);
 
   useEffect(() => {
     try {
       const storedEnabled = localStorage.getItem(ENABLED_STORAGE_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time localStorage read, kept out of the initializer so SSR/first paint match (see docblock)
       if (storedEnabled !== null) setEnabledState(storedEnabled === "true");
       const storedSelected = localStorage.getItem(SELECTED_STORAGE_KEY);
-      if (storedSelected !== null) {
-        setSelectedAmcIds(JSON.parse(storedSelected));
-        setHasLoadedStoredSelection(true);
-      }
+      if (storedSelected !== null) setSelectedAmcIds(JSON.parse(storedSelected));
     } catch {
       // localStorage unavailable -- fall back to defaults below.
     }
@@ -61,15 +59,14 @@ export function GoldSilverBlendProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Default selection (Nippon) can only be resolved once the AMC list has
-  // loaded -- applied exactly once, and only if nothing was already
-  // restored from localStorage above (an explicit saved selection,
-  // including an intentionally-empty one, always wins).
-  useEffect(() => {
-    if (hasLoadedStoredSelection || listedAmcs.length === 0) return;
+  // loaded -- used only while nothing was restored from localStorage above
+  // or picked since (an explicit saved selection, including an
+  // intentionally-empty one, always wins).
+  const defaultSelectedAmcIds = useMemo(() => {
     const nippon = listedAmcs.find((a) => a.overviewName === DEFAULT_SELECTED_AMC_NAME);
-    if (nippon) setSelectedAmcIds([nippon.id]);
-    setHasLoadedStoredSelection(true);
-  }, [listedAmcs, hasLoadedStoredSelection]);
+    return nippon ? [nippon.id] : [];
+  }, [listedAmcs]);
+  const selectedAmcIds = storedSelectedAmcIds ?? defaultSelectedAmcIds;
 
   function setEnabled(value: boolean) {
     setEnabledState(value);
@@ -80,8 +77,9 @@ export function GoldSilverBlendProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  function toggleAmcId(id: number) {
-    setSelectedAmcIds((prev) => {
+  const toggleAmcId = useCallback((id: number) => {
+    setSelectedAmcIds((stored) => {
+      const prev = stored ?? defaultSelectedAmcIds;
       const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
       try {
         localStorage.setItem(SELECTED_STORAGE_KEY, JSON.stringify(next));
@@ -90,11 +88,11 @@ export function GoldSilverBlendProvider({ children }: { children: ReactNode }) {
       }
       return next;
     });
-  }
+  }, [defaultSelectedAmcIds]);
 
   const value = useMemo(
     () => ({ enabled, setEnabled, selectedAmcIds, toggleAmcId, listedAmcs }),
-    [enabled, selectedAmcIds, listedAmcs]
+    [enabled, selectedAmcIds, toggleAmcId, listedAmcs]
   );
   return <GoldSilverBlendContext.Provider value={value}>{children}</GoldSilverBlendContext.Provider>;
 }

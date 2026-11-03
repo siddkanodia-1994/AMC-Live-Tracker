@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { mutate } from "swr";
 import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
@@ -281,16 +281,12 @@ export function FortnightlyUpdatePanel() {
 
 function FortnightlyUpdatePanelInner() {
   const { data: amcsData, isLoading: amcsLoading } = useFortnightlyEligibleAmcs();
-  const [amcId, setAmcId] = useState<number | null>(null);
+  // null = nothing picked yet, which falls back to the first eligible AMC.
+  const [selectedAmcId, setAmcId] = useState<number | null>(null);
+  const amcId = selectedAmcId ?? amcsData?.amcs[0]?.amcId ?? null;
   const [asOfDate, setAsOfDate] = useState<string | null>(null); // null = latest
   const [creating, setCreating] = useState(false);
   const [newDateInput, setNewDateInput] = useState("");
-
-  useEffect(() => {
-    if (amcId === null && amcsData && amcsData.amcs.length > 0) {
-      setAmcId(amcsData.amcs[0].amcId);
-    }
-  }, [amcId, amcsData]);
 
   const { includeFlowEstimate } = useFlowEstimateDisplay();
   const { data: sheet, error, isLoading, mutate } = useFortnightlySheet(amcId, asOfDate, includeFlowEstimate);

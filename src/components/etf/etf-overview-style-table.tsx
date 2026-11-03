@@ -78,6 +78,32 @@ function dashCell(className = "") {
   );
 }
 
+function SortHead({
+  label,
+  sk,
+  sortKey,
+  sortDesc,
+  onSort,
+  className = "",
+}: {
+  label: string;
+  sk: SortKey;
+  sortKey: SortKey;
+  sortDesc: boolean;
+  onSort: (key: SortKey) => void;
+  className?: string;
+}) {
+  const active = sk === sortKey;
+  return (
+    <TableHead className={`text-right align-bottom ${className}`}>
+      <button type="button" onClick={() => onSort(sk)} className="hover:text-foreground">
+        {label}
+        {active ? (sortDesc ? " ↓" : " ↑") : ""}
+      </button>
+    </TableHead>
+  );
+}
+
 export function EtfOverviewStyleTable() {
   const { data: liveData } = useEtfLiveAum();
   const { data: mcxData } = useMcxReference();
@@ -209,18 +235,6 @@ export function EtfOverviewStyleTable() {
   const tsPrice = weightedAvg(rows.map((r) => [r.s1, r.sPrice]));
   const ttPrice = weightedAvg(rows.map((r) => [r.t1, r.tPrice]));
 
-  function SortHead({ label, sk, className = "" }: { label: string; sk: SortKey; className?: string }) {
-    const active = sk === sortKey;
-    return (
-      <TableHead className={`text-right align-bottom ${className}`}>
-        <button type="button" onClick={() => toggleSort(sk)} className="hover:text-foreground">
-          {label}
-          {active ? (sortDesc ? " ↓" : " ↑") : ""}
-        </button>
-      </TableHead>
-    );
-  }
-
   if (error) return <p className="text-sm text-destructive">Failed to load ETF comparison: {error.message}</p>;
   if (isLoading && !comparisonData) return <Skeleton className="h-96 w-full rounded-xl" />;
 
@@ -302,18 +316,18 @@ export function EtfOverviewStyleTable() {
                   AMC{sortKey === "amc" ? (sortDesc ? " ↓" : " ↑") : ""}
                 </button>
               </TableHead>
-              <SortHead label={COLUMN_LABELS.gPrice} sk="gPrice" />
-              <SortHead label={quarterOptions.find((q) => q.key === w1QuarterKey)?.label ?? "Window 1"} sk="g1" />
-              <SortHead label={quarterOptions.find((q) => q.key === w2QuarterKey)?.label ?? "Window 2"} sk="g2" />
-              <SortHead label={COLUMN_LABELS.gTotal} sk="gTotal" className={GROUP_DIVIDER_CLASS} />
-              <SortHead label={COLUMN_LABELS.sPrice} sk="sPrice" />
-              <SortHead label={quarterOptions.find((q) => q.key === w1QuarterKey)?.label ?? "Window 1"} sk="s1" />
-              <SortHead label={quarterOptions.find((q) => q.key === w2QuarterKey)?.label ?? "Window 2"} sk="s2" />
-              <SortHead label={COLUMN_LABELS.sTotal} sk="sTotal" className={GROUP_DIVIDER_CLASS} />
-              <SortHead label={COLUMN_LABELS.tPrice} sk="tPrice" />
-              <SortHead label={quarterOptions.find((q) => q.key === w1QuarterKey)?.label ?? "Window 1"} sk="t1" />
-              <SortHead label={quarterOptions.find((q) => q.key === w2QuarterKey)?.label ?? "Window 2"} sk="t2" />
-              <SortHead label={COLUMN_LABELS.tTotal} sk="tTotal" />
+              <SortHead label={COLUMN_LABELS.gPrice} sk="gPrice" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} />
+              <SortHead label={quarterOptions.find((q) => q.key === w1QuarterKey)?.label ?? "Window 1"} sk="g1" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} />
+              <SortHead label={quarterOptions.find((q) => q.key === w2QuarterKey)?.label ?? "Window 2"} sk="g2" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} />
+              <SortHead label={COLUMN_LABELS.gTotal} sk="gTotal" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} className={GROUP_DIVIDER_CLASS} />
+              <SortHead label={COLUMN_LABELS.sPrice} sk="sPrice" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} />
+              <SortHead label={quarterOptions.find((q) => q.key === w1QuarterKey)?.label ?? "Window 1"} sk="s1" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} />
+              <SortHead label={quarterOptions.find((q) => q.key === w2QuarterKey)?.label ?? "Window 2"} sk="s2" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} />
+              <SortHead label={COLUMN_LABELS.sTotal} sk="sTotal" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} className={GROUP_DIVIDER_CLASS} />
+              <SortHead label={COLUMN_LABELS.tPrice} sk="tPrice" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} />
+              <SortHead label={quarterOptions.find((q) => q.key === w1QuarterKey)?.label ?? "Window 1"} sk="t1" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} />
+              <SortHead label={quarterOptions.find((q) => q.key === w2QuarterKey)?.label ?? "Window 2"} sk="t2" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} />
+              <SortHead label={COLUMN_LABELS.tTotal} sk="tTotal" sortKey={sortKey} sortDesc={sortDesc} onSort={toggleSort} />
             </TableRow>
           </TableHeader>
           <TableBody>
