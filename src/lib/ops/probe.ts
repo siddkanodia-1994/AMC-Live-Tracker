@@ -1,4 +1,4 @@
-import { and, count, eq, gte, inArray, max, min, sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNotNull, isNull, max, min, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   amcListedStock,
@@ -8,6 +8,7 @@ import {
   etfDailyNav,
   foreignPriceCache,
   holdings,
+  instrumentMap,
   isinDailyPrice,
   liveAumDailySnapshot,
   mcxDailyPrice,
@@ -56,6 +57,40 @@ export function expectedReportPeriod(today: string): { period: string; graceOver
   const monthsBack = d > 15 ? 1 : 2;
   const dt = new Date(Date.UTC(y, m - 1 - monthsBack, 1));
   return { period: dt.toISOString().slice(0, 7), graceOver: d >= 25 };
+}
+
+export interface InstrumentMapGap {
+  isin: string;
+  name: string;
+  valueCr: number;
+}
+
+// Unmapped priceable holdings stay at their reported value in live AUM, so
+// the risk is the value that silently stops moving with the market. A
+// handful of long-delisted names reported at ₹0 is permanent background;
+// a demerged stock awaiting listing (HEG Graphite, ~₹616 cr in 2026-09) is
+// the case worth a nudge to run "Sync Instruments" once it lists.
+export const INSTRUMENT_GAP_TOTAL_WARN_CR = 500;
+export const INSTRUMENT_GAP_SINGLE_WARN_CR = 200;
+
+/** Status + summary for the instrument-map-gaps check; `top` is the largest gaps, biggest first. */
+export function classifyInstrumentMapGaps(gapCount: number, totalCr: number, top: InstrumentMapGap[]): { status: "ok" | "warn"; summary: string } {
+  if (gapCount === 0) return { status: "ok", summary: "every priceable current-period holding has a DHAN mapping" };
+  const largestCr = Math.max(0, ...top.map((g) => g.valueCr));
+  const overTotal = totalCr > INSTRUMENT_GAP_TOTAL_WARN_CR;
+  const overSingle = largestCr > INSTRUMENT_GAP_SINGLE_WARN_CR;
+  const cr = (v: number) => (v >= 10 ? v.toFixed(0) : v.toFixed(2));
+  const breaches = [
+    overTotal ? `total > ₹${INSTRUMENT_GAP_TOTAL_WARN_CR} cr` : null,
+    overSingle ? `one ISIN > ₹${INSTRUMENT_GAP_SINGLE_WARN_CR} cr` : null,
+  ].filter((b) => b !== null);
+  return {
+    status: overTotal || overSingle ? "warn" : "ok",
+    summary:
+      `${gapCount} priceable ISIN(s) unmapped, ₹${cr(totalCr)} cr held at reported value` +
+      (breaches.length > 0 ? ` (${breaches.join(", ")})` : "") +
+      `; top: ${top.slice(0, 3).map((g) => `${g.name} ₹${cr(g.valueCr)} cr`).join("; ")}`,
+  };
 }
 
 export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
@@ -153,6 +188,39 @@ export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
       status: oldestDays >= 14 ? "warn" : "ok",
       summary: `${open.length} unresolved; oldest ${oldestDays} days (${open.map((o) => o.companyName).join("; ").slice(0, 300)})`,
       details: { open: open.map((o) => ({ ...o, firstCheckedAt: o.firstCheckedAt.toISOString() })) },
+    };
+  });
+
+  await check("instrument-map-gaps", async () => {
+    // Priceable current-period holdings with no instrument_map row (live AUM
+    // keeps them at reported value). One round trip: the grouped subquery
+    // ranks ISINs by value so the outer aggregate returns count, total and
+    // only the top 3 -- never the full list.
+    if (!currentPeriod) return { status: "skipped", summary: "no current period" };
+    const gaps = db
+      .select({
+        isin: holdings.isin,
+        name: sql<string>`min(${holdings.companyName})`.as("name"),
+        valueCr: sql<string>`sum(${holdings.marketValueCr})`.as("value_cr"),
+        rank: sql<number>`row_number() over (order by sum(${holdings.marketValueCr}) desc)`.as("rank"),
+      })
+      .from(holdings)
+      .leftJoin(instrumentMap, eq(instrumentMap.isin, holdings.isin))
+      .where(and(eq(holdings.reportPeriod, currentPeriod), eq(holdings.isPriceable, true), isNotNull(holdings.isin), isNull(instrumentMap.isin)))
+      .groupBy(holdings.isin)
+      .as("gaps");
+    const [agg] = await db
+      .select({
+        n: count(),
+        totalCr: sql<string>`coalesce(sum(${gaps.valueCr}), 0)`,
+        top: sql<InstrumentMapGap[] | null>`json_agg(json_build_object('isin', ${gaps.isin}, 'name', ${gaps.name}, 'valueCr', ${gaps.valueCr}) order by ${gaps.valueCr} desc) filter (where ${gaps.rank} <= 3)`,
+      })
+      .from(gaps);
+    const top = (agg.top ?? []).map((g) => ({ ...g, valueCr: Number(g.valueCr) }));
+    const totalCr = Number(agg.totalCr);
+    return {
+      ...classifyInstrumentMapGaps(agg.n, totalCr, top),
+      details: { currentPeriod, unmapped: agg.n, totalCr: Math.round(totalCr * 100) / 100, top },
     };
   });
 
