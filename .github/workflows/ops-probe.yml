@@ -1,0 +1,25 @@
+name: Ops probe
+
+# Deterministic pipeline health checks (no LLM) written to ops_run_log for the
+# /admin Agent Ops panel and the Claude Code data-ops loop. 11:30 UTC = 17:00
+# IST on weekdays, ~55 min after the 16:05 IST daily-snapshot cron.
+on:
+  schedule:
+    - cron: "30 11 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx tsx scripts/ops/probe.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Optional: without these the Supabase AMC Score check is skipped.
+          AMC_SCORE_SUPABASE_URL: ${{ secrets.AMC_SCORE_SUPABASE_URL }}
+          AMC_SCORE_SUPABASE_KEY: ${{ secrets.AMC_SCORE_SUPABASE_KEY }}
