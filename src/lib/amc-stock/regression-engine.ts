@@ -53,6 +53,10 @@ export interface RegressionChartPoint {
   date: string;
   close: number;
   model: number;
+  // The regression's own x for this session: the LAGGED AUM moving average
+  // that `model` is computed from (model = slope * driver + intercept).
+  // Plotted directly by the Stock Correlation tab's driver -> price scatter.
+  driver: number;
   // Optional AUM overlay series for the chart's Exit AUM/Avg AUM toggles --
   // Exit AUM is that date's raw, unsmoothed liveAumCr; Avg AUM is the same
   // UNLAGGED moving average the "Avg AUM" table column shows (not the
@@ -195,6 +199,7 @@ export function computeRegressionResult(
       date: point.date,
       close,
       model: fit.slope * point.value + fit.intercept,
+      driver: point.value,
       exitAumCr: rawAumByDate.get(point.date) ?? null,
       avgAumCr: unlaggedAvgAumByDate.get(point.date) ?? null,
     });

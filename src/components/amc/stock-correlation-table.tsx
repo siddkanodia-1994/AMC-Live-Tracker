@@ -1086,7 +1086,7 @@ export function StockCorrelationTable() {
               </span>
             )}
           </div>
-          <RegressionDeepDive result={chartRegressionResult} tradingSymbol={chartEntry.tradingSymbol} maWindow={maDays} extraLagDays={extraLagDays} />
+          <RegressionDeepDive result={chartRegressionResult} tradingSymbol={chartEntry.tradingSymbol} maWindow={maDays} extraLagDays={extraLagDays} showScatter />
         </details>
       )}
 

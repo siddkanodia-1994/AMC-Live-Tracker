@@ -4,6 +4,7 @@ import { CheckCircle2, TriangleAlert } from "lucide-react";
 import { formatCr, formatPct, formatPriceInr, formatShortDateWithYear } from "@/lib/utils/format";
 import type { RegressionResult } from "@/lib/amc-stock/regression-engine";
 import { RegressionChart } from "./regression-chart";
+import { RegressionScatterChart } from "./regression-scatter-chart";
 
 const MIN_SESSIONS = 60;
 const MIN_NW_T = 2;
@@ -43,16 +44,20 @@ function Tile({ pass, head, sub }: { pass: boolean; head: string; sub: string })
 // control row and "R² by window" readout, which need access to the raw
 // AUM/price history (to recompute at other windows) that this
 // presentational component doesn't have -- those stay with each caller.
+// `showScatter` adds the driver -> price scatter below the Actual-vs-Model
+// chart; only the Stock Correlation tab opts in (user's choice).
 export function RegressionDeepDive({
   result,
   tradingSymbol,
   maWindow,
   extraLagDays,
+  showScatter = false,
 }: {
   result: RegressionResult | null;
   tradingSymbol: string;
   maWindow: number;
   extraLagDays: number;
+  showScatter?: boolean;
 }) {
   if (!result) {
     return <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">Not enough aligned AUM/price history to fit a regression for this AMC at this range.</div>;
@@ -172,6 +177,16 @@ export function RegressionDeepDive({
         <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Share Price: Actual vs Model</p>
         <RegressionChart points={result.chartPoints} />
       </div>
+
+      {showScatter && (
+        <div className="space-y-1 rounded-lg border bg-card p-4">
+          <p className="text-xs text-muted-foreground">
+            <span className="font-semibold tracking-wide uppercase">AUM MA{maWindow} → Price</span>
+            {" "}· each session, shaded by date · AUM lagged {totalLag} session{totalLag === 1 ? "" : "s"}
+          </p>
+          <RegressionScatterChart points={result.chartPoints} slope={result.slope} intercept={result.intercept} />
+        </div>
+      )}
     </div>
   );
 }
