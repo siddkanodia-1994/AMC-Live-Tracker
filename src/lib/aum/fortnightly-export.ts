@@ -93,6 +93,13 @@ const withRateLabel = (base: string, ratePct: number | null) => (ratePct === nul
 // to divide against; the YoY pair mirrors the same two rows, three
 // positions further down. Kept here (not imported from that component)
 // so this file's export math stays pure/testable without a React import.
+// Exports have no second line under the label like the live card, so the
+// date range goes in parentheses -- otherwise a partial-month row ("Nov
+// 2025", really just 1-4 Nov) reads as the whole month.
+function monthlyRowLabel(r: FortnightlySheet["mtmMonthly"][number]): string {
+  return `${r.label} (${formatShortDate(r.range[0])} – ${formatShortDate(r.range[1])})`;
+}
+
 function periodRatios(vals: (number | null)[]): { stepByRow: (number | null)[]; yoyByRow: (number | null)[] } {
   const ratio = (a: number | null, b: number | null) => (a !== null && b !== null && b !== 0 ? a / b - 1 : null);
   return {
@@ -157,6 +164,15 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     rows: [
       ["Period", "Val (Cr)", "QoQ", "YoY"],
       ...sheet.qaaum.map((r) => [r.label, cr(r.valCr), pct(r.qoqPct ?? null), pct(r.yoyPct ?? null)]),
+    ],
+  };
+
+  const mtmMonthly: ExportSection = {
+    title: "MTM Growth - Equity Monthly Average",
+    key: "mtm-growth-monthly",
+    rows: [
+      ["Period", "Val (Cr)", "MoM", "YoY"],
+      ...sheet.mtmMonthly.map((r) => [monthlyRowLabel(r), cr(r.valCr), pct(r.momPct ?? null), pct(r.yoyPct ?? null)]),
     ],
   };
 
@@ -302,7 +318,7 @@ export function buildFortnightlyExportSections(sheet: FortnightlySheet): ExportS
     ],
   };
 
-  return [header, pat, valuation, qaaum, sipAmc, sipIndustryQuarterly, sipIndustryMonthly, ratio, amcScore];
+  return [header, pat, valuation, qaaum, mtmMonthly, sipAmc, sipIndustryQuarterly, sipIndustryMonthly, ratio, amcScore];
 }
 
 // ---------------------------------------------------------------------
@@ -613,6 +629,19 @@ export function buildFortnightlySheetExcel(workbook: Workbook, sheet: Fortnightl
     writeLabel(ws, row, 1, r.label);
     writeNum(ws, row, 2, r.valCr, CR_FORMAT);
     writePct(ws, row, 3, r.qoqPct ?? null);
+    writePct(ws, row, 4, r.yoyPct ?? null);
+    row++;
+  }
+  row++;
+
+  writeBanner(ws, row, "MTM Growth - Equity Monthly Average", 4);
+  row++;
+  writeHeaderRow(ws, row, ["Period", "Val (Cr)", "MoM", "YoY"]);
+  row++;
+  for (const r of sheet.mtmMonthly) {
+    writeLabel(ws, row, 1, monthlyRowLabel(r));
+    writeNum(ws, row, 2, r.valCr, CR_FORMAT);
+    writePct(ws, row, 3, r.momPct ?? null);
     writePct(ws, row, 4, r.yoyPct ?? null);
     row++;
   }

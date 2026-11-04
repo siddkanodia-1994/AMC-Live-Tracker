@@ -62,6 +62,7 @@ const SIGNED_PCT_RE = /([+-]\d[\d,.]*%)/g;
 // lookup would silently stop matching for every AMC.
 const REPORT_TABLE_COLUMN_WIDTHS: Record<string, Record<number, { cellWidth: number }>> = {
   "mtm-growth-qaaum": { 0: { cellWidth: 58 }, 1: { cellWidth: 24 }, 2: { cellWidth: 18 }, 3: { cellWidth: 18 } },
+  "mtm-growth-monthly": { 0: { cellWidth: 58 }, 1: { cellWidth: 24 }, 2: { cellWidth: 18 }, 3: { cellWidth: 18 } },
   "sip-amc-growth": { 0: { cellWidth: 58 }, 1: { cellWidth: 24 }, 2: { cellWidth: 18 }, 3: { cellWidth: 18 }, 4: { cellWidth: 26 } },
   "sip-industry-quarterly": { 0: { cellWidth: 58 }, 1: { cellWidth: 24 }, 2: { cellWidth: 18 }, 3: { cellWidth: 18 } },
   "sip-industry-monthly": { 0: { cellWidth: 58 }, 1: { cellWidth: 24 }, 2: { cellWidth: 18 }, 3: { cellWidth: 18 } },

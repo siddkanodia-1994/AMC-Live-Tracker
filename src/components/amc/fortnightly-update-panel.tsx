@@ -261,6 +261,48 @@ function PriceCell({ value }: { value: number | null }) {
 // TwoRowBanner/BannerRow convention -- a full-width TableRow living INSIDE
 // the Table (not a <div> sibling above it), so every card's title reads
 // the same as "Financial Year"/"Quarter>>" do there.
+// Period / Val / step-growth / YoY table shared by the QAAUM card (step =
+// QoQ) and the Monthly Average card (step = MoM). stepPct/yoyPct undefined
+// or null both render as "—", same as before this was factored out.
+interface MtmGrowthCardRow {
+  label: string;
+  valCr: number | null;
+  stepPct?: number | null;
+  yoyPct?: number | null;
+  range: [string, string];
+}
+
+function MtmGrowthCard({ title, stepHeader, rows }: { title: string; stepHeader: string; rows: MtmGrowthCardRow[] }) {
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <Table className={TABLE_TEXT_CLASS}>
+        <TableBody>
+          <SectionBanner title={title} colSpan={4} />
+          <TableRow>
+            <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Val (Cr)</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">{stepHeader}</TableCell>
+            <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">YoY</TableCell>
+          </TableRow>
+          {rows.map((row) => (
+            <TableRow key={`${row.label}-${row.range[0]}`}>
+              <TableCell>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-[12px] font-normal text-[#262626]/70 dark:text-[#d4d4d4]/70">
+                  {formatShortDate(row.range[0])} – {formatShortDate(row.range[1])}
+                </div>
+              </TableCell>
+              <TableCell className="text-right tabular-nums">{row.valCr === null ? "—" : formatCrRounded(row.valCr)}</TableCell>
+              <PctCell value={row.stepPct ?? null} />
+              <PctCell value={row.yoyPct ?? null} />
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 function SectionBanner({ title, colSpan }: { title: string; colSpan: number }) {
   return (
     <TableRow className="bg-foreground hover:bg-foreground">
@@ -1048,7 +1090,8 @@ function FortnightlySheetView({
         </div>
       </div>
 
-      {/* Row 2: Bear/Base/Bull valuation block + QAAUM */}
+      {/* Row 2: Bear/Base/Bull valuation block -- still a 2-column grid so
+          it keeps its half width, with the right column left empty */}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="overflow-hidden rounded-lg border bg-card">
           <Table className={TABLE_TEXT_CLASS}>
@@ -1101,34 +1144,21 @@ function FortnightlySheetView({
             </TableBody>
           </Table>
         </div>
+      </div>
 
-        {/* MTM Growth - QAAUM -- pulled, read-only */}
-        <div className="overflow-hidden rounded-lg border bg-card">
-          <Table className={TABLE_TEXT_CLASS}>
-            <TableBody>
-              <SectionBanner title="MTM Growth - Equity QAAUM" colSpan={4} />
-              <TableRow>
-                <TableCell className="text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Period</TableCell>
-                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">Val (Cr)</TableCell>
-                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">QoQ</TableCell>
-                <TableCell className="text-right text-[12px] font-semibold uppercase text-[#262626] dark:text-[#d4d4d4]">YoY</TableCell>
-              </TableRow>
-              {sheet.qaaum.map((row) => (
-                <TableRow key={row.label}>
-                  <TableCell>
-                    <div className="font-semibold">{row.label}</div>
-                    <div className="text-[12px] font-normal text-[#262626]/70 dark:text-[#d4d4d4]/70">
-                      {formatShortDate(row.range[0])} – {formatShortDate(row.range[1])}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">{row.valCr === null ? "—" : formatCrRounded(row.valCr)}</TableCell>
-                  <PctCell value={row.qoqPct ?? null} />
-                  <PctCell value={row.yoyPct ?? null} />
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+      {/* Row 2b: MTM Growth, quarterly (QAAUM) and monthly average side by
+          side directly below Valuation -- pulled, read-only */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <MtmGrowthCard
+          title="MTM Growth - Equity QAAUM"
+          stepHeader="QoQ"
+          rows={sheet.qaaum.map((row) => ({ ...row, stepPct: row.qoqPct }))}
+        />
+        <MtmGrowthCard
+          title="MTM Growth - Equity Monthly Average"
+          stepHeader="MoM"
+          rows={sheet.mtmMonthly.map((row) => ({ ...row, stepPct: row.momPct }))}
+        />
       </div>
 
       {/* Row 3: AMC SIP Growth / Industry SIP Growth (Quarterly) -- fully

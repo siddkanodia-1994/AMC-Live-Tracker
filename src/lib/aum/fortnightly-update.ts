@@ -15,7 +15,7 @@ import {
   type DatedValue,
 } from "./series-math";
 import { computeRangeCutoffDate, filterByCutoff, subtractMonths } from "./date-range";
-import { computeSummaryViewData, type FlowAdjustment, type QuarterRow } from "./summary-view";
+import { computeMonthlyGrowthRows, computeSummaryViewData, type FlowAdjustment, type MonthlyGrowthRow, type QuarterRow } from "./summary-view";
 import { getAmcAumHistory, getAmcListedStockPriceHistoryForIsins, getEffectiveNetFlowForPeriod, type AmcStockPricePoint } from "./history";
 import { getAllMonthlyFlows, type MonthlyFlowPoint } from "./industry-flows";
 import { getAmcScoreForOverviewName, type AmcScoreCard } from "./amc-score";
@@ -975,6 +975,7 @@ export interface FortnightlySheet {
   // attempt that failed and silently fell back to the last EOD close.
   cmpIsLive: boolean;
   qaaum: QuarterRow[];
+  mtmMonthly: MonthlyGrowthRow[];
   ratio: RatioSection | null;
   sipAmcLabels: SipPeriodLabels;
   sipAmcLatestFy: number;
@@ -1071,6 +1072,7 @@ export async function getFortnightlySheet(
 
   const aumAsOf = aumHistory.filter((p) => p.date <= asOfDate);
   const qaaum = computeSummaryViewData(aumAsOf, "average", asOfDate, flowAdjustment).quarter;
+  const mtmMonthly = computeMonthlyGrowthRows(aumAsOf, "average", asOfDate, flowAdjustment);
 
   const stockPriceSeries = listedStock ? (priceByIsin.get(listedStock.isin) ?? []) : [];
   const ratio = listedStock
@@ -1110,6 +1112,7 @@ export async function getFortnightlySheet(
     cmpInr,
     cmpIsLive,
     qaaum,
+    mtmMonthly,
     ratio,
     sipAmcLabels: getSipAmcPeriodLabels(sipAmcLatestFy, sipAmcLatestQuarter),
     sipAmcLatestFy,

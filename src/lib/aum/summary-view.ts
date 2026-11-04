@@ -44,6 +44,16 @@ export interface MonthRow {
   range?: [string, string];
 }
 
+// The Fortnightly tab's "MTM Growth - Equity Monthly Average" card -- the
+// monthly sibling of QuarterRow (same undefined-vs-null convention).
+export interface MonthlyGrowthRow {
+  label: string;
+  valCr: number | null;
+  momPct?: number | null;
+  yoyPct?: number | null;
+  range: [string, string];
+}
+
 export interface TradingWindowRow {
   label: string;
   valCr: number | null;
@@ -294,6 +304,58 @@ function buildMonthBlock(
     },
     { label: label(twoBackB), valCr: v2, range: [twoBackB.start, twoBackB.end] },
     { label: "Avg Of Last 6 Months", valCr: v3, range: [sixStart, sixEnd] },
+  ];
+}
+
+const MONTH_SHORT_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// 5 rows for the Fortnightly tab's monthly card: current month to date,
+// prior month, 2-months-back, then the YoY anchors of the first two. Unlike
+// buildQuarterBlock, the current partial month's YoY anchor is the SAME
+// calendar days one year earlier (1 Nov -> 4 Nov 2025 for an as-of of 4 Nov
+// 2026), not that whole month -- the user's own spec. MoM still compares the
+// partial month against the full prior month, the same way QAAUM compares a
+// partial quarter against the full prior quarter. The 2-months-back row gets
+// its own MoM/YoY too (like QAAUM's third row), from a month-before and a
+// last-year month that aren't shown as rows.
+export function computeMonthlyGrowthRows(
+  aumHistory: AumHistoryPoint[],
+  mode: AumMode,
+  today: string,
+  flowAdjustment?: FlowAdjustment
+): MonthlyGrowthRow[] {
+  const points = trimToLastContinuousRun(aumHistory);
+  const m0 = monthBounds(today);
+  const m0End = clampToToday(m0.end, today);
+  const m1 = monthBounds(subtractMonths(today, 1));
+  const m2 = monthBounds(subtractMonths(today, 2));
+  const m3 = monthBounds(subtractMonths(today, 3));
+  // subtractMonths clamps the day, so a 29 Feb as-of maps to 28 Feb.
+  const yoy0End = subtractMonths(today, 12);
+  const yoy0 = { start: monthBounds(yoy0End).start, end: yoy0End };
+  const yoy1 = monthBounds(subtractMonths(today, 13));
+  const yoy2 = monthBounds(subtractMonths(today, 14));
+
+  const avg = (b: { start: string; end: string }) => averageOrExitAum(points, b.start, b.end, mode, flowAdjustment);
+  const v0 = avg({ start: m0.start, end: m0End });
+  const v1 = avg(m1);
+  const v2 = avg(m2);
+  const v3 = avg(m3);
+  const vY0 = avg(yoy0);
+  const vY1 = avg(yoy1);
+  const vY2 = avg(yoy2);
+
+  const label = (b: { start: string }) => {
+    const [year, month] = b.start.split("-").map(Number);
+    return `${MONTH_SHORT_NAMES[month - 1]} ${year}`;
+  };
+
+  return [
+    { label: label(m0), valCr: v0, momPct: pctChange(v0, v1), yoyPct: pctChange(v0, vY0), range: [m0.start, m0End] },
+    { label: label(m1), valCr: v1, momPct: pctChange(v1, v2), yoyPct: pctChange(v1, vY1), range: [m1.start, m1.end] },
+    { label: label(m2), valCr: v2, momPct: pctChange(v2, v3), yoyPct: pctChange(v2, vY2), range: [m2.start, m2.end] },
+    { label: label(yoy0), valCr: vY0, range: [yoy0.start, yoy0.end] },
+    { label: label(yoy1), valCr: vY1, range: [yoy1.start, yoy1.end] },
   ];
 }
 
