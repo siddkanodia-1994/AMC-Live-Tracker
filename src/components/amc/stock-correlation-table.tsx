@@ -295,10 +295,8 @@ function computeRow(
 
   // Regression-based Model Fair Value / Model Upside % -- a second,
   // independent fair-value method shown alongside the ratio-based one
-  // above. computeRegressionResult adds its OWN +1 session floor on top
-  // of extraLagDays regardless (BASE_LAG_SESSIONS in regression-engine.ts)
-  // -- that floor is regression-only, by design (see the Extra Lag
-  // comment at the top of this file).
+  // above. It applies extraLagDays exactly like the ratio columns do
+  // (0 = same-day; see regression-engine.ts).
   const regressionResult = computeRegressionResult(entry.aumHistory, entry.stockPriceSeries, { maWindow: maDays, extraLagDays, range });
   const modelFairValuePriceInr = regressionResult?.fairValueAtLatest ?? null;
   const modelUpsidePct =

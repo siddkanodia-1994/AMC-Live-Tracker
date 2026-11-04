@@ -63,7 +63,8 @@ export function RegressionDeepDive({
     return <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">Not enough aligned AUM/price history to fit a regression for this AMC at this range.</div>;
   }
 
-  const totalLag = 1 + extraLagDays;
+  const totalLag = extraLagDays;
+  const lagLabel = totalLag === 0 ? "AUM same-day" : `AUM lagged ${totalLag} session${totalLag === 1 ? "" : "s"}`;
   const fairValueGapPct = result.latestPrice !== 0 ? ((result.latestPrice - result.fairValueAtLatest) / result.fairValueAtLatest) * 100 : null;
 
   return (
@@ -96,10 +97,10 @@ export function RegressionDeepDive({
             )}
           </p>
           <div className="overflow-x-auto rounded-md border bg-background px-3 py-2 font-mono text-xs">
-            Price = {result.slope.toFixed(result.slope < 0.01 ? 6 : 4)} × AumMA{maWindow}[t−{totalLag}] {result.intercept >= 0 ? "+" : "−"} {Math.abs(result.intercept).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+            Price = {result.slope.toFixed(result.slope < 0.01 ? 6 : 4)} × AumMA{maWindow}[{totalLag === 0 ? "t" : `t−${totalLag}`}] {result.intercept >= 0 ? "+" : "−"} {Math.abs(result.intercept).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
           </div>
           <div className="font-mono text-[11px] leading-relaxed text-muted-foreground">
-            n {result.n} sessions · fitted from {formatShortDateWithYear(result.fittedFrom)} · AUM lagged {totalLag} session{totalLag === 1 ? "" : "s"} · R² {result.r2.toFixed(2)}
+            n {result.n} sessions · fitted from {formatShortDateWithYear(result.fittedFrom)} · {lagLabel} · R² {result.r2.toFixed(2)}
             {result.pearsonR !== null ? `, r ${result.pearsonR.toFixed(2)}` : ""} (in-sample) · {tradingSymbol}.NS close {formatShortDateWithYear(result.fittedTo)}
           </div>
           {result.estimatedSessionCount > 0 && (
@@ -182,7 +183,7 @@ export function RegressionDeepDive({
         <div className="space-y-1 rounded-lg border bg-card p-4">
           <p className="text-xs text-muted-foreground">
             <span className="font-semibold tracking-wide uppercase">AUM MA{maWindow} → Price</span>
-            {" "}· each session, shaded by date · AUM lagged {totalLag} session{totalLag === 1 ? "" : "s"}
+            {" "}· each session, shaded by date · {lagLabel}
           </p>
           <RegressionScatterChart points={result.chartPoints} slope={result.slope} intercept={result.intercept} />
         </div>

@@ -33,15 +33,15 @@ export const EXTRA_LAG_OPTIONS = [
 ] as const;
 export type ExtraLagDays = (typeof EXTRA_LAG_OPTIONS)[number]["value"];
 
-// The driver is ALWAYS at least 1 trading day stale relative to price --
-// you can't trade on today's AUM print before it exists -- with
-// extraLagDays on top of that base, never instead of it. Matches the
-// reference page's own "revenue lagged one session" baseline. This floor
-// is regression-specific -- the Stock Correlation tab's ratio-based
-// columns apply extraLagDays directly with NO floor, so "Extra Lag: None"
-// stays genuinely zero-lag for them (see lagSeriesForward's own callers
-// in stock-correlation-table.tsx).
-const BASE_LAG_SESSIONS = 1;
+// The driver is lagged by exactly extraLagDays trading sessions -- 0
+// ("Extra Lag: None") pairs each session's price with that same session's
+// AUM MA. Until 2026-11-04 the regression added a fixed +1 session floor
+// (copied from the reference page's "revenue lagged one session"
+// baseline); this app's AUM is live-repriced intraday, so today's AUM
+// does exist alongside today's price, and the user chose same-day pairing
+// to match the ratio-based columns, which never had the floor. Audited
+// before the change: R² moved by at most 0.004 and fair values by at most
+// ₹4 across the 8 listed AMCs (45-day MA, 3Y range).
 
 export interface RegressionConfig {
   maWindow: MaWindow;
@@ -116,7 +116,7 @@ export function computeRegressionResult(
   const trimmed = trimToLastContinuousRun(aumHistory);
   if (trimmed.length === 0 || priceSeries.length === 0) return null;
 
-  const totalLag = BASE_LAG_SESSIONS + config.extraLagDays;
+  const totalLag = config.extraLagDays;
 
   const aumMa = computeMovingAverage(
     trimmed.map((d) => d.liveAumCr),
@@ -210,8 +210,8 @@ export function computeRegressionResult(
   const latestPrice = ys[ys.length - 1];
   const fairValueAtLatest = fit.slope * latestDriver + fit.intercept;
 
-  // Right panel: unlagged, same-day ratio stats (no extra lag, no base
-  // 1-session lag) over the same range window.
+  // Right panel: unlagged, same-day ratio stats (no extra lag) over the
+  // same range window.
   const unlaggedDriverRanged = filterByCutoff(aumDated, cutoffDate);
   const { xs: ratioAumXs, ys: ratioPriceYs } = alignSeriesByDate(unlaggedDriverRanged, priceRanged);
   const ratioStats = priceToAumRatioStats(ratioAumXs, ratioPriceYs);

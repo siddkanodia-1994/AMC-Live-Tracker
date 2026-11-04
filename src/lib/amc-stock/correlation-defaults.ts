@@ -21,9 +21,8 @@ export interface StockCorrelationDefaults {
   // Trading-day lag applied to the AUM side before it's aligned with
   // price -- shared by the ratio-based columns (Corr/R²/Fair Value/
   // Z-score) AND the regression-based Model columns. 0 ("None") is a
-  // true no-op for the ratio columns (today's same-day behavior,
-  // unchanged); the regression columns always add their own +1 session
-  // floor on top of this regardless. See stock-correlation-table.tsx.
+  // true same-day pairing for both (the regression's former +1 session
+  // floor was removed 2026-11-04). See regression-engine.ts.
   extraLagDays: number;
 }
 
