@@ -52,6 +52,7 @@ function AumWhatIfCells({
   inputAumCr,
   defaultAumCr,
   defaultLabel,
+  hideRangeNoteOnDefault,
   onChange,
 }: {
   line: RegressionLine | null;
@@ -59,6 +60,11 @@ function AumWhatIfCells({
   inputAumCr: number | null;
   defaultAumCr: number | null;
   defaultLabel: string;
+  // Live and 5D starting AUMs routinely sit a hair above the fitted range
+  // (the line is fitted on a smoother 45D average, so a near-current AUM
+  // at a record high tops every 45D average) -- the user chose to hide the
+  // note for those untyped rows. Typed AUMs always show it.
+  hideRangeNoteOnDefault: boolean;
   onChange: (aumCr: number | null) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -146,7 +152,7 @@ function AumWhatIfCells({
       <TableCell className="text-right tabular-nums">
         <div className="leading-tight">
           <div>{formatPriceInr(targetPrice)}</div>
-          {outOfRange && (
+          {outOfRange && !(hideRangeNoteOnDefault && inputAumCr === null) && (
             <div className="text-[10px] font-normal text-amber-600 dark:text-amber-400">
               outside fitted AUM range ({formatLakhRange(line.driverMin, line.driverMax)})
             </div>
@@ -1207,6 +1213,7 @@ export function StockCorrelationTable() {
                   inputAumCr={aumInputs[row.slug] ?? null}
                   defaultAumCr={row.whatIfStartByDays[whatIfAumDays] ?? null}
                   defaultLabel={whatIfDefaultLabel}
+                  hideRangeNoteOnDefault={whatIfAumDays === 0 || whatIfAumDays === 5}
                   onChange={(v) =>
                     setAumInputs((prev) => {
                       const next = { ...prev };
