@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getStockCorrelationDefaults, setStockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
+import { getStockCorrelationDefaults, sanitizeAumInputs, setStockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
+import { MAX_AUM_INPUT_CR } from "@/lib/amc-stock/aum-what-if";
 import { RANGE_OPTIONS } from "@/lib/aum/date-range";
 import { RATIO_BASIS_OPTIONS } from "@/lib/aum/series-math";
 import { EXTRA_LAG_OPTIONS } from "@/lib/amc-stock/regression-engine";
@@ -43,7 +44,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `extraLagDays must be one of ${EXTRA_LAG_OPTIONS.map((o) => o.value).join(", ")}` }, { status: 400 });
   }
 
-  const defaults = { range, maDays, ratioBasis, aumOnlyAveraging, levelsCorrelation, extraLagDays };
+  // Optional (older clients omit it). Every entry must be valid -- a
+  // partially-bad map is rejected, not silently trimmed.
+  const aumInputs = sanitizeAumInputs(body?.aumInputs);
+  const sentCount = body?.aumInputs && typeof body.aumInputs === "object" ? Object.keys(body.aumInputs).length : 0;
+  if (aumInputs === null || Object.keys(aumInputs).length !== sentCount) {
+    return NextResponse.json(
+      { error: `aumInputs must map listed AMC slugs to an AUM in ₹ cr between 0 and ${MAX_AUM_INPUT_CR.toLocaleString("en-IN")}` },
+      { status: 400 }
+    );
+  }
+
+  const defaults = { range, maDays, ratioBasis, aumOnlyAveraging, levelsCorrelation, extraLagDays, aumInputs };
   await setStockCorrelationDefaults(defaults);
   return NextResponse.json(defaults);
 }

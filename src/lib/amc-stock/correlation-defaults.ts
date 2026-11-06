@@ -4,6 +4,8 @@ import { appSettings } from "../db/schema";
 import { RANGE_OPTIONS, type RangeOption } from "../aum/date-range";
 import { RATIO_BASIS_OPTIONS, type RatioBasis } from "../aum/series-math";
 import { EXTRA_LAG_OPTIONS } from "./regression-engine";
+import accordCodes from "../../../data/amc-accord-codes.json";
+import { MAX_AUM_INPUT_CR } from "./aum-what-if";
 
 const SETTINGS_KEY = "stock_correlation_defaults";
 
@@ -24,6 +26,10 @@ export interface StockCorrelationDefaults {
   // true same-day pairing for both (the regression's former +1 session
   // floor was removed 2026-11-04). See regression-engine.ts.
   extraLagDays: number;
+  // The table's "AUM what-if" inputs (AMC slug -> AUM in ₹ cr) that someone
+  // typed and then saved with "Save as default". Rows not listed here use
+  // their own AUM moving average. Older saved rows have no such field ({}).
+  aumInputs: Record<string, number>;
 }
 
 const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
@@ -33,7 +39,27 @@ const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
   aumOnlyAveraging: false,
   levelsCorrelation: false,
   extraLagDays: 0,
+  aumInputs: {},
 };
+
+// The 8 listed AMCs the Stock Correlation table shows -- the only slugs an
+// AUM input can be saved for.
+const LISTED_AMC_SLUGS = new Set(Object.values(accordCodes).map((v) => v.slug));
+
+/**
+ * Keeps only valid AUM inputs: a known listed-AMC slug mapped to a finite
+ * number in (0, MAX_AUM_INPUT_CR). Returns null when `value` isn't a plain
+ * object at all, so the API can 400 it; bad entries inside are dropped.
+ */
+export function sanitizeAumInputs(value: unknown): Record<string, number> | null {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) return null;
+  const out: Record<string, number> = {};
+  for (const [slug, v] of Object.entries(value as Record<string, unknown>)) {
+    if (LISTED_AMC_SLUGS.has(slug) && typeof v === "number" && Number.isFinite(v) && v > 0 && v < MAX_AUM_INPUT_CR) out[slug] = v;
+  }
+  return out;
+}
 
 function isRangeOption(value: unknown): value is RangeOption {
   return typeof value === "string" && RANGE_OPTIONS.some((o) => o.value === value);
@@ -67,6 +93,7 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
       aumOnlyAveraging: typeof parsed.aumOnlyAveraging === "boolean" ? parsed.aumOnlyAveraging : FALLBACK_DEFAULTS.aumOnlyAveraging,
       levelsCorrelation: typeof parsed.levelsCorrelation === "boolean" ? parsed.levelsCorrelation : FALLBACK_DEFAULTS.levelsCorrelation,
       extraLagDays: isExtraLagDays(parsed.extraLagDays) ? parsed.extraLagDays : FALLBACK_DEFAULTS.extraLagDays,
+      aumInputs: sanitizeAumInputs(parsed.aumInputs) ?? FALLBACK_DEFAULTS.aumInputs,
     };
   } catch {
     return FALLBACK_DEFAULTS;

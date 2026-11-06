@@ -21,6 +21,7 @@ import {
 import { RANGE_OPTIONS, computeRangeCutoffDate, filterByCutoff, type RangeOption } from "@/lib/aum/date-range";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { EXTRA_LAG_OPTIONS, MA_WINDOW_OPTIONS, computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
+import { computeAumWhatIf, parseAumInput, type RegressionLine } from "@/lib/amc-stock/aum-what-if";
 import { FairValueExplainer } from "./fair-value-explainer";
 import { RegressionDeepDive } from "./regression-deep-dive";
 import { ValuationBandCharts } from "./valuation-band-charts";
@@ -29,6 +30,131 @@ import { AumTrendChart } from "./aum-trend-chart";
 // The AMC used as the worked example below the table -- HDFC specifically
 // requested, not user-selectable (yet).
 const EXPLAINER_AMC_SLUG = "hdfc-mutual-fund";
+
+const formatAumInput = (v: number) => v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const formatLakhRange = (min: number, max: number) => `${(min / 1e5).toFixed(2)}–${(max / 1e5).toFixed(2)} L cr`;
+
+// The "AUM what-if" group's three cells: an editable AUM (default = the AUM
+// the row's Model fair value uses), the regression line's price at that
+// AUM, and its upside vs the current share price. Enter/blur commits, Esc
+// cancels, unparseable input just reverts; ↺ clears the override.
+function AumWhatIfCells({
+  line,
+  currentPrice,
+  inputAumCr,
+  defaultLabel,
+  onChange,
+}: {
+  line: (RegressionLine & { latestDriver: number }) | null;
+  currentPrice: number | null;
+  inputAumCr: number | null;
+  defaultLabel: string;
+  onChange: (aumCr: number | null) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const selectOnMouseUp = useRef(false);
+  // Set by Esc so the blur that follows discards the draft even if it
+  // fires before React has re-rendered with draft cleared.
+  const cancelled = useRef(false);
+  if (!line) {
+    return (
+      <>
+        <TableCell className="border-l-2 border-foreground/30 text-right">—</TableCell>
+        <TableCell className="text-right">—</TableCell>
+        <TableCell className="text-right">—</TableCell>
+      </>
+    );
+  }
+  const aumCr = inputAumCr ?? line.latestDriver;
+  const { targetPrice, upsidePct, outOfRange } = computeAumWhatIf(line, aumCr, currentPrice);
+  const commit = () => {
+    if (cancelled.current) {
+      cancelled.current = false;
+      setDraft(null);
+      return;
+    }
+    if (draft === null) return;
+    const parsed = parseAumInput(draft);
+    setDraft(null);
+    // Focusing and leaving the box without changing the number must not
+    // turn a following-the-average row into a frozen "your input".
+    if (parsed !== null && Math.abs(parsed - aumCr) >= 0.005) onChange(parsed);
+  };
+  return (
+    <>
+      <TableCell className="border-l-2 border-foreground/30 text-right tabular-nums">
+        <div className="flex items-center justify-end gap-1">
+          {inputAumCr !== null && (
+            <button
+              type="button"
+              onClick={() => onChange(null)}
+              title={`Back to the ${defaultLabel}`}
+              className="text-sm text-muted-foreground hover:text-foreground"
+            >
+              ↺
+            </button>
+          )}
+          <input
+            type="text"
+            inputMode="decimal"
+            aria-label="Input equity AAUM in crore"
+            value={draft ?? formatAumInput(aumCr)}
+            onFocus={(e) => {
+              setDraft(String(Math.round(aumCr * 100) / 100));
+              selectOnMouseUp.current = true;
+              const input = e.target;
+              requestAnimationFrame(() => input.select());
+            }}
+            // The click that focused the box would otherwise drop a caret
+            // into the middle of the old number on mouse-up; keep the
+            // whole value selected so typing replaces it.
+            onMouseUp={(e) => {
+              if (selectOnMouseUp.current) {
+                e.preventDefault();
+                selectOnMouseUp.current = false;
+              }
+            }}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") {
+                cancelled.current = true;
+                setDraft(null);
+                requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
+              }
+            }}
+            className={`w-28 rounded-md border bg-card px-1.5 py-0.5 text-right text-sm tabular-nums ${
+              inputAumCr !== null ? "border-foreground/60 font-semibold" : ""
+            }`}
+          />
+        </div>
+        <div className="text-[10px] font-normal text-muted-foreground">
+          {inputAumCr !== null ? `your input · default ${line.latestDriver.toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : `default: ${defaultLabel}`}
+        </div>
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        <div className="leading-tight">
+          <div>{formatPriceInr(targetPrice)}</div>
+          {outOfRange && (
+            <div className="text-[10px] font-normal text-amber-600 dark:text-amber-400">
+              outside fitted AUM range ({formatLakhRange(line.driverMin, line.driverMax)})
+            </div>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {upsidePct !== null ? (
+          <span className={upsidePct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}>
+            {formatPct(upsidePct, { alwaysSign: true })}
+          </span>
+        ) : (
+          "—"
+        )}
+      </TableCell>
+    </>
+  );
+}
 
 // Generic Range/Extra-Lag button-group rendering -- used for both the
 // table's own control row AND the regression deep-dive section's local
@@ -156,6 +282,10 @@ interface ComputedRow {
   // nullable cell here -- no special-casing for thin AMCs).
   modelFairValuePriceInr: number | null;
   modelUpsidePct: number | null;
+  // The same fitted line, kept so the "AUM what-if" columns can price any
+  // typed AUM without re-running the regression. latestDriver is the AUM
+  // the Model fair value above was computed from -- the what-if default.
+  regressionLine: (RegressionLine & { latestDriver: number }) | null;
 }
 
 // Mirrors aum-trend-chart.tsx's own per-AMC computation exactly (same
@@ -326,6 +456,15 @@ function computeRow(
         : aumTruncatedFromDate ?? priceTruncatedFromDate,
     modelFairValuePriceInr,
     modelUpsidePct,
+    regressionLine: regressionResult
+      ? {
+          slope: regressionResult.slope,
+          intercept: regressionResult.intercept,
+          driverMin: regressionResult.driverMin,
+          driverMax: regressionResult.driverMax,
+          latestDriver: regressionResult.latestDriver,
+        }
+      : null,
   };
 }
 
@@ -638,6 +777,9 @@ export function StockCorrelationTable() {
   // the ratio-based columns AND the Model columns (see computeRow). 0
   // ("None") is a true no-op for the ratio columns.
   const [extraLagDays, setExtraLagDays] = useState<ExtraLagDays>(0);
+  // "AUM what-if" overrides (slug -> AUM ₹ cr). Rows without one use their
+  // own Model AUM. Saved for every visitor only via "Save as default".
+  const [aumInputs, setAumInputs] = useState<Record<string, number>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
 
@@ -655,6 +797,7 @@ export function StockCorrelationTable() {
     setAumOnlyAveraging(data.defaults.aumOnlyAveraging);
     setLevelsCorrelation(data.defaults.levelsCorrelation);
     setExtraLagDays(data.defaults.extraLagDays as ExtraLagDays);
+    setAumInputs(data.defaults.aumInputs ?? {});
   }, [data]);
 
   async function handleSaveDefaults() {
@@ -670,6 +813,7 @@ export function StockCorrelationTable() {
           aumOnlyAveraging,
           levelsCorrelation,
           extraLagDays,
+          aumInputs,
         }),
       });
       if (!res.ok) {
@@ -725,6 +869,10 @@ export function StockCorrelationTable() {
     if (!data) return [];
     return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation, extraLagDays));
   }, [data, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation, extraLagDays]);
+
+  // What the what-if default AUM is, in the regression's own terms (its
+  // driver: the AUM moving average, shifted back by any extra lag).
+  const aumWhatIfDefaultLabel = `${maDays > 1 ? `${maDays}D avg` : "latest"} AUM${extraLagDays > 0 ? `, ${extraLagDays}D lag` : ""}`;
 
   const explainerEntry = useMemo(() => data?.amcs.find((a) => a.slug === EXPLAINER_AMC_SLUG) ?? null, [data]);
 
@@ -866,6 +1014,16 @@ export function StockCorrelationTable() {
           >
             {isSaving ? "Saving…" : "Save as default"}
           </button>
+          {Object.keys(aumInputs).length > 0 && (
+            <button
+              type="button"
+              onClick={() => setAumInputs({})}
+              title="Put every AUM what-if row back to its own average AUM (click Save as default afterwards to make that the shared view)"
+              className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              ↺ Reset AUM inputs
+            </button>
+          )}
           <button
             type="button"
             onClick={handleDownloadExcel}
@@ -914,6 +1072,9 @@ export function StockCorrelationTable() {
               <TableHead colSpan={2} className={groupHeadClass}>
                 Regression model
               </TableHead>
+              <TableHead colSpan={3} className={groupHeadClass}>
+                AUM what-if · regression
+              </TableHead>
             </TableRow>
             <TableRow>
               <TableHead className="align-bottom">AMC</TableHead>
@@ -930,6 +1091,9 @@ export function StockCorrelationTable() {
               <TableHead className="text-right align-bottom">Z-score</TableHead>
               <TableHead className="border-l-2 border-foreground/30 text-right align-bottom">Model fair value</TableHead>
               <TableHead className="text-right align-bottom">Model upside %</TableHead>
+              <TableHead className="border-l-2 border-foreground/30 text-right align-bottom">Input Equity AAUM (₹ cr)</TableHead>
+              <TableHead className="text-right align-bottom">Target price</TableHead>
+              <TableHead className="text-right align-bottom">Upside %</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -1004,11 +1168,29 @@ export function StockCorrelationTable() {
                     "—"
                   )}
                 </TableCell>
+                <AumWhatIfCells
+                  line={row.regressionLine}
+                  currentPrice={row.latestPriceInr}
+                  inputAumCr={aumInputs[row.slug] ?? null}
+                  defaultLabel={aumWhatIfDefaultLabel}
+                  onChange={(v) =>
+                    setAumInputs((prev) => {
+                      const next = { ...prev };
+                      if (v === null) delete next[row.slug];
+                      else next[row.slug] = v;
+                      return next;
+                    })
+                  }
+                />
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </div>
+      <p className="text-xs text-muted-foreground">
+        AUM what-if: type any AUM (₹ cr) to price it on that AMC&apos;s regression line; upside is vs the current share price.
+        Typed AUMs are saved for everyone only when you click Save as default.
+      </p>
 
       <div className="space-y-2 rounded-lg border bg-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
