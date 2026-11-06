@@ -1,20 +1,23 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAmcValuation } from "@/hooks/use-amc-valuation";
 import { computeRangeCutoffDate, filterByCutoff, RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
-import { computeBands, formatDayMonthYear, rangeTicks, type Bands } from "@/lib/valuation/bands";
+import { computeBands, formatDayMonthYear, niceYAxis, rangeTicks, type Bands } from "@/lib/valuation/bands";
 import type { ValuationPoint } from "@/lib/valuation/store";
 import { ValuationUploadPanel } from "./valuation-upload-panel";
 
 // PE and Mcap/Sales band charts for the Stock Correlation tab, below the
 // AUM MA -> Price scatter. Styled after the user's own Excel chart: navy
 // series, solid grey average, dashed orange/red (+1/+2 SD) and light/dark
-// green (-1/-2 SD) lines. Mean and SD come from the window shown, so the
-// bands move with the tab's Range toggle, and so do the x-axis ticks
-// (weekly on 3M up to quarterly on All).
+// green (-1/-2 SD) lines. They have their own Valuation range toggle (one
+// for both charts, independent of the tab's Range). Mean and SD come from
+// the window shown, the x-axis ticks follow the range (weekly on 3M up to
+// quarterly on All), and the y-axis fits the window's values and bands.
+
+const DEFAULT_RANGE: RangeOption = "3y";
 
 const SERIES = "#1f2a5c";
 const BAND_LINES: { key: keyof Pick<Bands, "mean" | "plus1" | "plus2" | "minus1" | "minus2">; label: string; color: string; dashed: boolean }[] = [
@@ -69,11 +72,12 @@ function ValuationBandChart({
     const rows = filterByCutoff(all, computeRangeCutoffDate(all, range));
     const bands = computeBands(rows.map((r) => r.value));
     const ticks = rangeTicks(rows.map((r) => r.date), range);
-    return { rows, bands, ticks, tickLabelByDate: new Map(ticks.map((t) => [rows[t.index].date, t.label])) };
+    const yAxis = bands ? niceYAxis(rows.map((r) => r.value), bands) : null;
+    return { rows, bands, ticks, yAxis, tickLabelByDate: new Map(ticks.map((t) => [rows[t.index].date, t.label])) };
   }, [points, metric, range]);
 
-  const { rows, bands, ticks, tickLabelByDate } = view;
-  if (!bands) {
+  const { rows, bands, ticks, yAxis, tickLabelByDate } = view;
+  if (!bands || !yAxis) {
     return <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">Not enough {label} data for this range.</div>;
   }
   const rangeLabel = RANGE_OPTIONS.find((o) => o.value === range)?.label ?? range;
@@ -115,7 +119,14 @@ function ValuationBandChart({
               height={52}
               tick={{ fontSize: 11 }}
             />
-            <YAxis domain={[0, "auto"]} tickFormatter={(v: number) => v.toFixed(2)} width={52} tick={{ fontSize: 11 }} />
+            <YAxis
+              domain={[yAxis.min, yAxis.max]}
+              ticks={yAxis.ticks}
+              interval={0}
+              tickFormatter={(v: number) => v.toFixed(2)}
+              width={52}
+              tick={{ fontSize: 11 }}
+            />
             <Tooltip content={<BandTooltip bands={bands} />} />
             {BAND_LINES.map((b) => (
               <ReferenceLine key={b.key} y={bands[b.key]} stroke={b.color} strokeWidth={2} strokeDasharray={b.dashed ? "8 6" : undefined} />
@@ -140,8 +151,33 @@ function ValuationBandChart({
   );
 }
 
-export function ValuationBandCharts({ slug, range }: { slug: string; range: RangeOption }) {
+function ValuationRangeToggle({ value, onChange }: { value: RangeOption; onChange: (v: RangeOption) => void }) {
+  // Same look as the tab's own ButtonGroup controls.
+  return (
+    <div className="flex items-center gap-1.5" role="group" aria-label="Valuation range">
+      <span className="text-[10px] font-bold tracking-wide text-muted-foreground uppercase">Valuation range</span>
+      {RANGE_OPTIONS.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => onChange(o.value)}
+          className={
+            o.value === value
+              ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
+              : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          }
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function ValuationBandCharts({ slug }: { slug: string }) {
   const { data, error, isLoading } = useAmcValuation(slug);
+  // Kept across AMC switches: this component stays mounted, only `slug` changes.
+  const [range, setRange] = useState<RangeOption>(DEFAULT_RANGE);
 
   let body: React.ReactNode;
   if (isLoading) {
@@ -170,6 +206,10 @@ export function ValuationBandCharts({ slug, range }: { slug: string; range: Rang
 
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-3">
+        <span className="text-sm font-semibold">Valuation bands · PE and Mcap / Sales</span>
+        <ValuationRangeToggle value={range} onChange={setRange} />
+      </div>
       {body}
       <ValuationUploadPanel lastUpload={data?.lastUpload ?? null} />
     </div>

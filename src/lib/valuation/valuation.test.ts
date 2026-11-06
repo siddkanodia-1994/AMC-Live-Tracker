@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseValuationRows, type ValuationRow } from "./parse-valuation-workbook";
 import { diffValuationRows, summarizeValuationDiff } from "./diff-valuation";
-import { computeBands, rangeTicks } from "./bands";
+import { computeBands, niceYAxis, rangeTicks } from "./bands";
 
 const HEADER = ["Accord Code", "Company Name", "NDP_Date", "NDP_PE", "NDP_Consolidated PE", "NDP_Consolidated MCAP NS", "NDP_MCAP_NS"];
 
@@ -112,5 +112,33 @@ describe("rangeTicks", () => {
 
   it("skips a mid-month first point on monthly ranges", () => {
     expect(rangeTicks(from("2025-11-14"), "1y")[0].label).toBe("Dec-25");
+  });
+});
+
+describe("niceYAxis", () => {
+  it("fits the data and every band line on clean gridlines", () => {
+    const values = [32.4, 48.9, 40.1, 36.1, 44.2, 35.0];
+    const bands = computeBands(values)!;
+    const axis = niceYAxis(values, bands);
+    expect(axis.min).toBeLessThanOrEqual(Math.min(...values, bands.minus2));
+    expect(axis.max).toBeGreaterThanOrEqual(Math.max(...values, bands.plus2));
+    expect(axis.min).toBeGreaterThan(0); // no longer pinned to 0
+    const steps = axis.ticks.slice(1).map((t, i) => t - axis.ticks[i]);
+    steps.forEach((s) => expect(s).toBeCloseTo(steps[0], 9));
+    expect(axis.ticks.length).toBeGreaterThanOrEqual(4);
+    expect(axis.ticks.length).toBeLessThanOrEqual(9);
+  });
+
+  it("never goes below zero", () => {
+    const values = [0.4, 1.2, 0.3, 2.5];
+    const axis = niceYAxis(values, computeBands(values)!);
+    expect(axis.min).toBe(0);
+    expect(axis.max).toBeGreaterThanOrEqual(2.5);
+  });
+
+  it("gives a flat series a real span", () => {
+    const axis = niceYAxis([3, 3, 3], computeBands([3, 3, 3])!);
+    expect(axis.min).toBeLessThan(3);
+    expect(axis.max).toBeGreaterThan(3);
   });
 });

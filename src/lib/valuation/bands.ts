@@ -91,3 +91,25 @@ export function rangeTicks(dates: string[], range: RangeOption): { index: number
   });
   return ticks;
 }
+
+/**
+ * Y-axis that fits the window shown: spans the series AND all five band
+ * lines (so no SD line is ever clipped), padded 5%, snapped to a "nice"
+ * step (1 / 2 / 2.5 / 5 x 10^k) for ~5 gridlines, and never below 0.
+ * Flat data gets a +/-1 span instead of a zero-height axis.
+ */
+export function niceYAxis(values: number[], bands: Bands): { min: number; max: number; ticks: number[] } {
+  let lo = Math.min(...values, bands.minus2);
+  let hi = Math.max(...values, bands.plus2);
+  const pad = hi > lo ? (hi - lo) * 0.05 : 1;
+  lo -= pad;
+  hi += pad;
+  const raw = (hi - lo) / 5;
+  const magnitude = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * magnitude).find((s) => s >= raw)!;
+  const min = Math.max(0, Math.floor(lo / step) * step);
+  const max = Math.ceil(hi / step) * step;
+  const ticks: number[] = [];
+  for (let i = 0; min + i * step <= max + step / 1e6; i++) ticks.push(Number((min + i * step).toFixed(6)));
+  return { min: ticks[0], max: ticks[ticks.length - 1], ticks };
+}

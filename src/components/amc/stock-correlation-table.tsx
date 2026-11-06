@@ -1086,8 +1086,8 @@ export function StockCorrelationTable() {
             )}
           </div>
           <RegressionDeepDive result={chartRegressionResult} tradingSymbol={chartEntry.tradingSymbol} maWindow={maDays} extraLagDays={extraLagDays} showScatter />
-          {/* Valuation bands -- same AMC dropdown and Range as everything above */}
-          <ValuationBandCharts slug={chartAmcSlug} range={range} />
+          {/* Valuation bands -- same AMC dropdown as above, but their own range toggle */}
+          <ValuationBandCharts slug={chartAmcSlug} />
         </details>
       )}
 
