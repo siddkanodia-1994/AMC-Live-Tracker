@@ -959,3 +959,47 @@ export const opsRunLog = pgTable(
     index("ops_run_log_loop_created_at_idx").on(t.loop, t.createdAt),
   ]
 );
+
+// Daily valuation multiples for the 8 listed AMCs, loaded from the user's
+// Ace Equity export (one row per AMC per trading date) by dropping the Excel
+// into the Stock Correlation tab. All four raw columns are kept so the
+// "consolidated, else standalone" rule lives in code (getAmcValuationSeries)
+// and a re-upload can tell exactly which field changed. Never committed to
+// the repo: the data is vendor-licensed and the repo is public.
+export const amcValuationDaily = pgTable(
+  "amc_valuation_daily",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    peCons: numeric("pe_cons", { precision: 12, scale: 4 }),
+    peSa: numeric("pe_sa", { precision: 12, scale: 4 }),
+    mcapNsCons: numeric("mcap_ns_cons", { precision: 12, scale: 4 }),
+    mcapNsSa: numeric("mcap_ns_sa", { precision: 12, scale: 4 }),
+    sourceFile: text("source_file").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("amc_valuation_daily_amc_date_idx").on(t.amcId, t.date)]
+);
+
+// One row per changed field whenever a re-uploaded file carries a different
+// value for a date already stored -- the old value is kept here so any
+// revision can be traced or reverted.
+export const amcValuationRevision = pgTable(
+  "amc_valuation_revision",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    field: text("field").$type<"peCons" | "peSa" | "mcapNsCons" | "mcapNsSa">().notNull(),
+    oldValue: numeric("old_value", { precision: 12, scale: 4 }),
+    newValue: numeric("new_value", { precision: 12, scale: 4 }),
+    sourceFile: text("source_file").notNull(),
+    revisedAt: timestamp("revised_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("amc_valuation_revision_amc_date_idx").on(t.amcId, t.date)]
+);

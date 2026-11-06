@@ -23,6 +23,7 @@ import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summa
 import { EXTRA_LAG_OPTIONS, MA_WINDOW_OPTIONS, computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
 import { FairValueExplainer } from "./fair-value-explainer";
 import { RegressionDeepDive } from "./regression-deep-dive";
+import { ValuationBandCharts } from "./valuation-band-charts";
 import { AumTrendChart } from "./aum-trend-chart";
 
 // The AMC used as the worked example below the table -- HDFC specifically
@@ -1085,6 +1086,8 @@ export function StockCorrelationTable() {
             )}
           </div>
           <RegressionDeepDive result={chartRegressionResult} tradingSymbol={chartEntry.tradingSymbol} maWindow={maDays} extraLagDays={extraLagDays} showScatter />
+          {/* Valuation bands -- same AMC dropdown and Range as everything above */}
+          <ValuationBandCharts slug={chartAmcSlug} range={range} />
         </details>
       )}
 
