@@ -35,15 +35,44 @@ interface ChartRow {
   value: number;
 }
 
-function BandTooltip({ active, payload, bands }: { active?: boolean; payload?: ReadonlyArray<{ payload?: ChartRow }>; bands: Bands }) {
+function TooltipRow({ color, label, value, dashed }: { color: string; label: string; value: string; dashed?: boolean }) {
+  return (
+    <div className="flex items-center gap-2 tabular-nums">
+      <span className={`inline-block w-3.5 border-t-2 ${dashed ? "border-dashed" : ""}`} style={{ borderColor: color }} />
+      <span className="flex-1">{label}</span>
+      <span>{value}</span>
+    </div>
+  );
+}
+
+// The navy series, grey average and dark-green SD-2 vanish on the dark
+// tooltip card, so their swatches get lighter shades of the same colours.
+const TOOLTIP_SWATCH: Partial<Record<(typeof BAND_LINES)[number]["key"], string>> = { mean: "#c5cad3", minus2: "#6fa36f" };
+
+// The band lines are ReferenceLines, which recharts leaves out of the hover
+// payload -- so list them here from `bands` (as the Chart.js mockup did).
+function BandTooltip({
+  active,
+  payload,
+  bands,
+  seriesLabel,
+}: {
+  active?: boolean;
+  payload?: ReadonlyArray<{ payload?: ChartRow }>;
+  bands: Bands;
+  seriesLabel: string;
+}) {
   const row = active ? payload?.[0]?.payload : undefined;
   if (!row) return null;
   const z = bands.sd !== 0 ? (row.value - bands.mean) / bands.sd : null;
   // Same fixed-dark card as the regression charts' tooltips.
   return (
-    <div className="rounded-lg px-3 py-2.5 text-xs" style={{ backgroundColor: "#1b2130", color: "#eef1f6" }}>
+    <div className="min-w-[180px] space-y-0.5 rounded-lg px-3 py-2.5 text-xs" style={{ backgroundColor: "#1b2130", color: "#eef1f6" }}>
       <div className="mb-1 font-semibold">{formatDayMonthYear(row.date)}</div>
-      <div>{row.value.toFixed(2)}x</div>
+      <TooltipRow color="#8fa3ff" label={seriesLabel} value={`${row.value.toFixed(2)}x`} />
+      {BAND_LINES.map((b) => (
+        <TooltipRow key={b.key} color={TOOLTIP_SWATCH[b.key] ?? b.color} label={b.label} value={`${bands[b.key].toFixed(2)}x`} dashed={b.dashed} />
+      ))}
       {z !== null && (
         <div className="mt-1" style={{ color: "#b9c0cf" }}>
           {z >= 0 ? "+" : ""}
@@ -127,11 +156,23 @@ function ValuationBandChart({
               width={52}
               tick={{ fontSize: 11 }}
             />
-            <Tooltip content={<BandTooltip bands={bands} />} />
+            <Tooltip content={<BandTooltip bands={bands} seriesLabel={label} />} />
             {BAND_LINES.map((b) => (
               <ReferenceLine key={b.key} y={bands[b.key]} stroke={b.color} strokeWidth={2} strokeDasharray={b.dashed ? "8 6" : undefined} />
             ))}
             <Line type="linear" dataKey="value" stroke={SERIES} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+            {/* Invisible flat lines, only so hovering marks the cursor's date on each band with a dot. */}
+            {BAND_LINES.map((b) => (
+              <Line
+                key={`hover-${b.key}`}
+                dataKey={() => bands[b.key]}
+                stroke="none"
+                dot={false}
+                activeDot={{ r: 4, fill: b.color, stroke: "#fff", strokeWidth: 1 }}
+                legendType="none"
+                isAnimationActive={false}
+              />
+            ))}
           </LineChart>
         </ResponsiveContainer>
       </div>
