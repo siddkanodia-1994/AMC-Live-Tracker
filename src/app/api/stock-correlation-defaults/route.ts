@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getStockCorrelationDefaults, sanitizeAumInputs, setStockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
-import { MAX_AUM_INPUT_CR } from "@/lib/amc-stock/aum-what-if";
+import {
+  DEFAULT_WHAT_IF_AUM_DAYS,
+  isWhatIfAumDays,
+  MAX_AUM_INPUT_CR,
+  WHAT_IF_AUM_DAYS_OPTIONS,
+} from "@/lib/amc-stock/aum-what-if";
 import { RANGE_OPTIONS } from "@/lib/aum/date-range";
 import { RATIO_BASIS_OPTIONS } from "@/lib/aum/series-math";
 import { EXTRA_LAG_OPTIONS } from "@/lib/amc-stock/regression-engine";
@@ -55,7 +60,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const defaults = { range, maDays, ratioBasis, aumOnlyAveraging, levelsCorrelation, extraLagDays, aumInputs };
+  // Optional too (older clients omit it -> the 5-day default).
+  const whatIfAumDays = body?.whatIfAumDays ?? DEFAULT_WHAT_IF_AUM_DAYS;
+  if (!isWhatIfAumDays(whatIfAumDays)) {
+    return NextResponse.json(
+      { error: `whatIfAumDays must be one of ${WHAT_IF_AUM_DAYS_OPTIONS.map((o) => o.value).join(", ")}` },
+      { status: 400 }
+    );
+  }
+
+  const defaults = { range, maDays, ratioBasis, aumOnlyAveraging, levelsCorrelation, extraLagDays, aumInputs, whatIfAumDays };
   await setStockCorrelationDefaults(defaults);
   return NextResponse.json(defaults);
 }

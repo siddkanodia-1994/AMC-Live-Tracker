@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeAumWhatIf, parseAumInput, type RegressionLine } from "./aum-what-if";
+import { computeAumWhatIf, isWhatIfAumDays, parseAumInput, whatIfStartingAum, type RegressionLine } from "./aum-what-if";
 import { sanitizeAumInputs } from "./correlation-defaults";
 
 // HDFC's production fit on 2026-11-06 (45D MA, 3Y, no extra lag).
@@ -53,5 +53,25 @@ describe("sanitizeAumInputs", () => {
     expect(sanitizeAumInputs(null)).toEqual({});
     expect(sanitizeAumInputs([1, 2])).toBeNull();
     expect(sanitizeAumInputs("x")).toBeNull();
+  });
+});
+
+describe("whatIfStartingAum", () => {
+  const daily = [100, 110, 120, 130, 140, 150]; // oldest -> today
+
+  it("0 is today's live value; N averages the last N days including today", () => {
+    expect(whatIfStartingAum(daily, 0)).toBe(150);
+    expect(whatIfStartingAum(daily, 5)).toBe(130); // 110..150
+    expect(whatIfStartingAum(daily, 6)).toBe(125);
+  });
+
+  it("falls back to today's value when history is shorter than the window, and null when empty", () => {
+    expect(whatIfStartingAum([90, 95], 5)).toBe(95);
+    expect(whatIfStartingAum([], 5)).toBeNull();
+  });
+
+  it("only accepts the dropdown's windows", () => {
+    for (const ok of [0, 5, 10, 15, 20]) expect(isWhatIfAumDays(ok)).toBe(true);
+    for (const bad of [1, 45, -5, "5", null]) expect(isWhatIfAumDays(bad)).toBe(false);
   });
 });

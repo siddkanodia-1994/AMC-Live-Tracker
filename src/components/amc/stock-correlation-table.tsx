@@ -21,7 +21,14 @@ import {
 import { RANGE_OPTIONS, computeRangeCutoffDate, filterByCutoff, type RangeOption } from "@/lib/aum/date-range";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { EXTRA_LAG_OPTIONS, MA_WINDOW_OPTIONS, computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
-import { computeAumWhatIf, parseAumInput, type RegressionLine } from "@/lib/amc-stock/aum-what-if";
+import {
+  computeAumWhatIf,
+  DEFAULT_WHAT_IF_AUM_DAYS,
+  parseAumInput,
+  WHAT_IF_AUM_DAYS_OPTIONS,
+  whatIfStartingAum,
+  type RegressionLine,
+} from "@/lib/amc-stock/aum-what-if";
 import { FairValueExplainer } from "./fair-value-explainer";
 import { RegressionDeepDive } from "./regression-deep-dive";
 import { ValuationBandCharts } from "./valuation-band-charts";
@@ -34,20 +41,23 @@ const EXPLAINER_AMC_SLUG = "hdfc-mutual-fund";
 const formatAumInput = (v: number) => v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const formatLakhRange = (min: number, max: number) => `${(min / 1e5).toFixed(2)}–${(max / 1e5).toFixed(2)} L cr`;
 
-// The "AUM what-if" group's three cells: an editable AUM (default = the AUM
-// the row's Model fair value uses), the regression line's price at that
-// AUM, and its upside vs the current share price. Enter/blur commits, Esc
+// The "AUM what-if" group's three cells: an editable AUM (default = the
+// starting AUM picked in the column header's dropdown -- live or an N-day
+// average), the regression line's price at that AUM, and its upside vs the
+// current share price. Enter/blur commits, Esc
 // cancels, unparseable input just reverts; ↺ clears the override.
 function AumWhatIfCells({
   line,
   currentPrice,
   inputAumCr,
+  defaultAumCr,
   defaultLabel,
   onChange,
 }: {
-  line: (RegressionLine & { latestDriver: number }) | null;
+  line: RegressionLine | null;
   currentPrice: number | null;
   inputAumCr: number | null;
+  defaultAumCr: number | null;
   defaultLabel: string;
   onChange: (aumCr: number | null) => void;
 }) {
@@ -56,7 +66,8 @@ function AumWhatIfCells({
   // Set by Esc so the blur that follows discards the draft even if it
   // fires before React has re-rendered with draft cleared.
   const cancelled = useRef(false);
-  if (!line) {
+  const aumCr = inputAumCr ?? defaultAumCr;
+  if (!line || aumCr === null) {
     return (
       <>
         <TableCell className="border-l-2 border-foreground/30 text-right">—</TableCell>
@@ -65,7 +76,6 @@ function AumWhatIfCells({
       </>
     );
   }
-  const aumCr = inputAumCr ?? line.latestDriver;
   const { targetPrice, upsidePct, outOfRange } = computeAumWhatIf(line, aumCr, currentPrice);
   const commit = () => {
     if (cancelled.current) {
@@ -130,7 +140,7 @@ function AumWhatIfCells({
           />
         </div>
         <div className="text-[10px] font-normal text-muted-foreground">
-          {inputAumCr !== null ? `your input · default ${line.latestDriver.toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : `default: ${defaultLabel}`}
+          {inputAumCr !== null ? `your input · ${defaultLabel} ${defaultAumCr !== null ? defaultAumCr.toLocaleString("en-IN", { maximumFractionDigits: 0 }) : "—"}` : `default: ${defaultLabel}`}
         </div>
       </TableCell>
       <TableCell className="text-right tabular-nums">
@@ -283,9 +293,12 @@ interface ComputedRow {
   modelFairValuePriceInr: number | null;
   modelUpsidePct: number | null;
   // The same fitted line, kept so the "AUM what-if" columns can price any
-  // typed AUM without re-running the regression. latestDriver is the AUM
-  // the Model fair value above was computed from -- the what-if default.
-  regressionLine: (RegressionLine & { latestDriver: number }) | null;
+  // AUM without re-running the regression.
+  regressionLine: RegressionLine | null;
+  // The what-if rows' starting AUM for each of the header dropdown's
+  // windows (0 = today's live AUM, else an N-day average ending today) --
+  // from the raw daily AUM, independent of Moving avg and Extra Lag.
+  whatIfStartByDays: Record<number, number | null>;
 }
 
 // Mirrors aum-trend-chart.tsx's own per-AMC computation exactly (same
@@ -462,9 +475,11 @@ function computeRow(
           intercept: regressionResult.intercept,
           driverMin: regressionResult.driverMin,
           driverMax: regressionResult.driverMax,
-          latestDriver: regressionResult.latestDriver,
         }
       : null,
+    whatIfStartByDays: Object.fromEntries(
+      WHAT_IF_AUM_DAYS_OPTIONS.map((o) => [o.value, whatIfStartingAum(data.map((d) => d.liveAumCr), o.value)])
+    ),
   };
 }
 
@@ -780,6 +795,9 @@ export function StockCorrelationTable() {
   // "AUM what-if" overrides (slug -> AUM ₹ cr). Rows without one use their
   // own Model AUM. Saved for every visitor only via "Save as default".
   const [aumInputs, setAumInputs] = useState<Record<string, number>>({});
+  // Which AUM untyped what-if rows start from (the Input column header's
+  // dropdown) -- independent of Moving avg, saved with "Save as default".
+  const [whatIfAumDays, setWhatIfAumDays] = useState<number>(DEFAULT_WHAT_IF_AUM_DAYS);
   const [isSaving, setIsSaving] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
 
@@ -798,6 +816,7 @@ export function StockCorrelationTable() {
     setLevelsCorrelation(data.defaults.levelsCorrelation);
     setExtraLagDays(data.defaults.extraLagDays as ExtraLagDays);
     setAumInputs(data.defaults.aumInputs ?? {});
+    setWhatIfAumDays(data.defaults.whatIfAumDays ?? DEFAULT_WHAT_IF_AUM_DAYS);
   }, [data]);
 
   async function handleSaveDefaults() {
@@ -814,6 +833,7 @@ export function StockCorrelationTable() {
           levelsCorrelation,
           extraLagDays,
           aumInputs,
+          whatIfAumDays,
         }),
       });
       if (!res.ok) {
@@ -870,9 +890,7 @@ export function StockCorrelationTable() {
     return data.amcs.map((entry) => computeRow(entry, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation, extraLagDays));
   }, [data, maDays, ratioBasis, range, aumOnlyAveraging, levelsCorrelation, extraLagDays]);
 
-  // What the what-if default AUM is, in the regression's own terms (its
-  // driver: the AUM moving average, shifted back by any extra lag).
-  const aumWhatIfDefaultLabel = `${maDays > 1 ? `${maDays}D avg` : "latest"} AUM${extraLagDays > 0 ? `, ${extraLagDays}D lag` : ""}`;
+  const whatIfDefaultLabel = (WHAT_IF_AUM_DAYS_OPTIONS.find((o) => o.value === whatIfAumDays) ?? WHAT_IF_AUM_DAYS_OPTIONS[1]).description;
 
   const explainerEntry = useMemo(() => data?.amcs.find((a) => a.slug === EXPLAINER_AMC_SLUG) ?? null, [data]);
 
@@ -1091,7 +1109,22 @@ export function StockCorrelationTable() {
               <TableHead className="text-right align-bottom">Z-score</TableHead>
               <TableHead className="border-l-2 border-foreground/30 text-right align-bottom">Model fair value</TableHead>
               <TableHead className="text-right align-bottom">Model upside %</TableHead>
-              <TableHead className="border-l-2 border-foreground/30 text-right align-bottom">Input Equity AAUM (₹ cr)</TableHead>
+              <TableHead className="border-l-2 border-foreground/30 text-right align-bottom">
+                <div>Input Equity AAUM (₹ cr)</div>
+                <select
+                  aria-label="What-if starting AUM"
+                  title="Which AUM the what-if rows start from -- separate from Moving avg, which the regression line is fitted on"
+                  value={whatIfAumDays}
+                  onChange={(e) => setWhatIfAumDays(Number(e.target.value))}
+                  className="mt-1 rounded-md border bg-card px-1.5 py-0.5 text-xs font-normal text-foreground"
+                >
+                  {WHAT_IF_AUM_DAYS_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </TableHead>
               <TableHead className="text-right align-bottom">Target price</TableHead>
               <TableHead className="text-right align-bottom">Upside %</TableHead>
             </TableRow>
@@ -1172,7 +1205,8 @@ export function StockCorrelationTable() {
                   line={row.regressionLine}
                   currentPrice={row.latestPriceInr}
                   inputAumCr={aumInputs[row.slug] ?? null}
-                  defaultLabel={aumWhatIfDefaultLabel}
+                  defaultAumCr={row.whatIfStartByDays[whatIfAumDays] ?? null}
+                  defaultLabel={whatIfDefaultLabel}
                   onChange={(v) =>
                     setAumInputs((prev) => {
                       const next = { ...prev };
@@ -1188,8 +1222,9 @@ export function StockCorrelationTable() {
         </Table>
       </div>
       <p className="text-xs text-muted-foreground">
-        AUM what-if: type any AUM (₹ cr) to price it on that AMC&apos;s regression line; upside is vs the current share price.
-        Typed AUMs are saved for everyone only when you click Save as default.
+        AUM what-if: rows start from the AUM picked in the Input column&apos;s dropdown (live or a 5–20 day average); type any AUM
+        (₹ cr) to price it on that AMC&apos;s regression line, which stays fitted on the Moving avg above. Upside is vs the current
+        share price. Typed AUMs and the dropdown are saved for everyone only when you click Save as default.
       </p>
 
       <div className="space-y-2 rounded-lg border bg-card p-4">

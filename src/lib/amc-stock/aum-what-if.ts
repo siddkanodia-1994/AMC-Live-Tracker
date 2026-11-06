@@ -28,6 +28,34 @@ export function computeAumWhatIf(line: RegressionLine, aumCr: number, currentPri
   };
 }
 
+// The what-if column's own starting-AUM window -- independent of the tab's
+// Moving avg (which the regression line itself is fitted on). 0 = today's
+// live AUM, the same figure as the table's Live AUM column.
+export const WHAT_IF_AUM_DAYS_OPTIONS = [
+  { value: 0, label: "Live (0D)", description: "live AUM (today)" },
+  { value: 5, label: "5D avg", description: "5D avg AUM" },
+  { value: 10, label: "10D avg", description: "10D avg AUM" },
+  { value: 15, label: "15D avg", description: "15D avg AUM" },
+  { value: 20, label: "20D avg", description: "20D avg AUM" },
+] as const;
+export const DEFAULT_WHAT_IF_AUM_DAYS = 5;
+
+export function isWhatIfAumDays(value: unknown): value is number {
+  return typeof value === "number" && WHAT_IF_AUM_DAYS_OPTIONS.some((o) => o.value === value);
+}
+
+/**
+ * The starting AUM for a what-if row: the mean of the last `days` daily AUM
+ * values (oldest first, today last), or today's value for 0. With fewer
+ * than `days` values on record, falls back to today's value. null if empty.
+ */
+export function whatIfStartingAum(dailyAumCr: number[], days: number): number | null {
+  if (dailyAumCr.length === 0) return null;
+  if (days <= 0 || dailyAumCr.length < days) return dailyAumCr[dailyAumCr.length - 1];
+  const window = dailyAumCr.slice(-days);
+  return window.reduce((a, b) => a + b, 0) / days;
+}
+
 // Well above any AMC's AUM (the largest is ~₹5 lakh cr); rejects typos.
 // Shared with the saved-defaults validation so the page never keeps a
 // value "Save as default" would refuse.

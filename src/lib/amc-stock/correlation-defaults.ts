@@ -5,7 +5,7 @@ import { RANGE_OPTIONS, type RangeOption } from "../aum/date-range";
 import { RATIO_BASIS_OPTIONS, type RatioBasis } from "../aum/series-math";
 import { EXTRA_LAG_OPTIONS } from "./regression-engine";
 import accordCodes from "../../../data/amc-accord-codes.json";
-import { MAX_AUM_INPUT_CR } from "./aum-what-if";
+import { DEFAULT_WHAT_IF_AUM_DAYS, isWhatIfAumDays, MAX_AUM_INPUT_CR } from "./aum-what-if";
 
 const SETTINGS_KEY = "stock_correlation_defaults";
 
@@ -30,6 +30,9 @@ export interface StockCorrelationDefaults {
   // typed and then saved with "Save as default". Rows not listed here use
   // their own AUM moving average. Older saved rows have no such field ({}).
   aumInputs: Record<string, number>;
+  // Which AUM the what-if rows start from: 0 (live) or a 5/10/15/20-day
+  // average. Independent of maDays. Older saved rows lack it (5).
+  whatIfAumDays: number;
 }
 
 const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
@@ -40,6 +43,7 @@ const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
   levelsCorrelation: false,
   extraLagDays: 0,
   aumInputs: {},
+  whatIfAumDays: DEFAULT_WHAT_IF_AUM_DAYS,
 };
 
 // The 8 listed AMCs the Stock Correlation table shows -- the only slugs an
@@ -94,6 +98,7 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
       levelsCorrelation: typeof parsed.levelsCorrelation === "boolean" ? parsed.levelsCorrelation : FALLBACK_DEFAULTS.levelsCorrelation,
       extraLagDays: isExtraLagDays(parsed.extraLagDays) ? parsed.extraLagDays : FALLBACK_DEFAULTS.extraLagDays,
       aumInputs: sanitizeAumInputs(parsed.aumInputs) ?? FALLBACK_DEFAULTS.aumInputs,
+      whatIfAumDays: isWhatIfAumDays(parsed.whatIfAumDays) ? parsed.whatIfAumDays : FALLBACK_DEFAULTS.whatIfAumDays,
     };
   } catch {
     return FALLBACK_DEFAULTS;
