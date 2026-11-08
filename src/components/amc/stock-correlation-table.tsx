@@ -31,12 +31,15 @@ import {
 } from "@/lib/amc-stock/aum-what-if";
 import { FairValueExplainer } from "./fair-value-explainer";
 import { RegressionDeepDive } from "./regression-deep-dive";
+import { ACCORD_CODES } from "@/lib/valuation/parse-valuation-workbook";
 import { ValuationBandCharts } from "./valuation-band-charts";
 import { AumTrendChart } from "./aum-trend-chart";
 
 // The AMC used as the worked example below the table -- HDFC specifically
 // requested, not user-selectable (yet).
 const EXPLAINER_AMC_SLUG = "hdfc-mutual-fund";
+
+const COMPANY_BY_SLUG = new Map(Object.values(ACCORD_CODES).map((v) => [v.slug, v.company]));
 
 const formatAumInput = (v: number) => v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const formatLakhRange = (min: number, max: number) => `${(min / 1e5).toFixed(2)}–${(max / 1e5).toFixed(2)} L cr`;
@@ -902,6 +905,12 @@ export function StockCorrelationTable() {
 
   const [chartAmcSlug, setChartAmcSlug] = useState(EXPLAINER_AMC_SLUG);
   const chartEntry = useMemo(() => data?.amcs.find((a) => a.slug === chartAmcSlug) ?? null, [data, chartAmcSlug]);
+  // The valuation charts' own AMC dropdown -- same AMCs and order as the
+  // deep-dive dropdown, labelled by the listed company's name.
+  const valuationAmcOptions = useMemo(
+    () => (data?.amcs ?? []).map((a) => ({ slug: a.slug, label: COMPANY_BY_SLUG.get(a.slug) ?? a.overviewName })),
+    [data]
+  );
   // The regression deep-dive section below follows this same AMC + the
   // table's own shared Moving avg (days)/Extra Lag/Range -- no separate
   // controls or AMC selector of its own.
@@ -1311,7 +1320,7 @@ export function StockCorrelationTable() {
           </div>
           <RegressionDeepDive result={chartRegressionResult} tradingSymbol={chartEntry.tradingSymbol} maWindow={maDays} extraLagDays={extraLagDays} showScatter />
           {/* Valuation bands -- same AMC dropdown as above, but their own range toggle */}
-          <ValuationBandCharts slug={chartAmcSlug} />
+          <ValuationBandCharts slug={chartAmcSlug} amcOptions={valuationAmcOptions} onSlugChange={setChartAmcSlug} />
         </details>
       )}
 

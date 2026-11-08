@@ -1,6 +1,7 @@
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcs, amcValuationDaily, amcValuationRevision } from "../db/schema";
+import { amcListedStock, amcs, amcValuationDaily, amcValuationRevision, isinDailyPrice } from "../db/schema";
+import { computeProvisionalFill, type PriceClose, type ProvisionalFill } from "./provisional";
 import { diffValuationRows, summarizeValuationDiff, type ValuationDiff, type ValuationDiffSummaryRow, type ValuationRevision } from "./diff-valuation";
 import { ACCORD_CODES, VALUATION_FIELDS, type ValuationRow } from "./parse-valuation-workbook";
 
@@ -169,6 +170,9 @@ export interface ValuationPoint {
   date: string;
   pe: number | null;
   mcapToSales: number | null;
+  // Days after the last Ace upload, price-scaled from DHAN closes (see
+  // provisional.ts). Never stored -- the next upload replaces them.
+  provisional?: boolean;
 }
 
 export interface AmcValuationSeries {
@@ -176,6 +180,26 @@ export interface AmcValuationSeries {
   companyName: string;
   points: ValuationPoint[];
   lastUpload: { sourceFile: string; updatedAt: string } | null;
+  // The last real Ace date the provisional days are scaled from, the first
+  // provisional date, and the first quarter-end since the anchor (after which
+  // Ace will have rolled in new earnings). All null when there is no fill.
+  provisionalAnchorDate: string | null;
+  provisionalFrom: string | null;
+  staleSince: string | null;
+}
+
+// How far before the anchor to look for its close (covers holidays/gaps).
+const ANCHOR_PRICE_LOOKBACK_DAYS = 10;
+
+async function getClosesFrom(amcId: number, fromDate: string): Promise<PriceClose[]> {
+  const [listed] = await db.select({ isin: amcListedStock.isin }).from(amcListedStock).where(eq(amcListedStock.amcId, amcId));
+  if (!listed) return [];
+  const rows = await db
+    .select({ date: isinDailyPrice.snapshotDate, priceInr: isinDailyPrice.priceInr })
+    .from(isinDailyPrice)
+    .where(and(eq(isinDailyPrice.isin, listed.isin), gte(isinDailyPrice.snapshotDate, fromDate)))
+    .orderBy(asc(isinDailyPrice.snapshotDate));
+  return rows.map((r) => ({ date: r.date, priceInr: Number(r.priceInr) }));
 }
 
 /**
@@ -204,14 +228,29 @@ export async function getAmcValuationSeries(slug: string): Promise<AmcValuationS
       .orderBy(desc(amcValuationDaily.updatedAt))
       .limit(1),
   ]);
+  const points: ValuationPoint[] = rows.map((r) => ({
+    date: r.date,
+    pe: num(r.peCons) ?? num(r.peSa),
+    mcapToSales: num(r.mcapNsCons) ?? num(r.mcapNsSa),
+  }));
+
+  // Extend past the last Ace row with price-scaled days (one small query:
+  // this AMC's closes from just before that row onward).
+  const anchorRows = points.slice(-10);
+  const anchor = anchorRows.at(-1);
+  let fill: ProvisionalFill = { points: [], staleSince: null };
+  if (anchor) {
+    const from = new Date(Date.parse(`${anchorRows[0].date}T00:00:00Z`) - ANCHOR_PRICE_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
+    fill = computeProvisionalFill(anchorRows, await getClosesFrom(amc.id, from));
+  }
+
   return {
     slug,
     companyName: COMPANY_BY_SLUG.get(slug) ?? amc.name,
-    points: rows.map((r) => ({
-      date: r.date,
-      pe: num(r.peCons) ?? num(r.peSa),
-      mcapToSales: num(r.mcapNsCons) ?? num(r.mcapNsSa),
-    })),
+    points: [...points, ...fill.points],
     lastUpload: last ? { sourceFile: last.sourceFile, updatedAt: last.updatedAt.toISOString() } : null,
+    provisionalAnchorDate: fill.points.length > 0 ? anchor!.date : null,
+    provisionalFrom: fill.points[0]?.date ?? null,
+    staleSince: fill.staleSince,
   };
 }

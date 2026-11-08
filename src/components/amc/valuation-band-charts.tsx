@@ -215,7 +215,18 @@ function ValuationRangeToggle({ value, onChange }: { value: RangeOption; onChang
   );
 }
 
-export function ValuationBandCharts({ slug }: { slug: string }) {
+export function ValuationBandCharts({
+  slug,
+  amcOptions,
+  onSlugChange,
+}: {
+  slug: string;
+  // The 8 listed AMCs, labelled by company name. Picking one calls
+  // onSlugChange, which the tab wires to its shared AMC selection -- so this
+  // dropdown and the deep-dive's stay in sync both ways.
+  amcOptions: { slug: string; label: string }[];
+  onSlugChange: (slug: string) => void;
+}) {
   const { data, error, isLoading } = useAmcValuation(slug);
   // Kept across AMC switches: this component stays mounted, only `slug` changes.
   const [range, setRange] = useState<RangeOption>(DEFAULT_RANGE);
@@ -249,9 +260,40 @@ export function ValuationBandCharts({ slug }: { slug: string }) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-3">
         <span className="text-sm font-semibold">Valuation bands · PE and Mcap / Sales</span>
-        <ValuationRangeToggle value={range} onChange={setRange} />
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="valuation-amc-select" className="text-[10px] font-bold tracking-wide text-muted-foreground uppercase">
+              AMC
+            </label>
+            <select
+              id="valuation-amc-select"
+              value={slug}
+              onChange={(e) => onSlugChange(e.target.value)}
+              className="max-w-xs truncate rounded-md border bg-card px-2 py-1 text-xs text-foreground"
+            >
+              {amcOptions.map((o) => (
+                <option key={o.slug} value={o.slug}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <ValuationRangeToggle value={range} onChange={setRange} />
+        </div>
       </div>
+      {data?.staleSince && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          A quarter ended on {formatDayMonthYear(data.staleSince)} since the last Ace Equity file, so the TTM earnings used for the
+          latest days may be out of date. Upload the latest export to correct them.
+        </p>
+      )}
       {body}
+      {data?.provisionalFrom && data.provisionalAnchorDate && (
+        <p className="text-xs text-muted-foreground">
+          From {formatDayMonthYear(data.provisionalFrom)}: price-updated daily from DHAN closes, with TTM EPS and sales held at the
+          last Ace Equity file ({formatDayMonthYear(data.provisionalAnchorDate)}). The next upload replaces these days.
+        </p>
+      )}
       <ValuationUploadPanel lastUpload={data?.lastUpload ?? null} />
     </div>
   );

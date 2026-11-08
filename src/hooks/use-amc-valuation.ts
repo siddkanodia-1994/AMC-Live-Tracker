@@ -10,8 +10,9 @@ async function fetcher(url: string): Promise<AmcValuationSeries> {
   return res.json();
 }
 
-// Changes only when someone uploads a new file (the upload panel calls
-// mutate on this key afterwards), so no polling and no focus revalidation.
+// Changes when someone uploads a new file (the upload panel calls mutate on
+// this key afterwards) and once a day as new closes extend the price-scaled
+// tail -- so no polling and no focus revalidation.
 export function useAmcValuation(slug: string | null) {
   return useSWR<AmcValuationSeries>(slug ? `/api/amc-valuation?slug=${encodeURIComponent(slug)}` : null, fetcher, {
     revalidateOnFocus: false,
