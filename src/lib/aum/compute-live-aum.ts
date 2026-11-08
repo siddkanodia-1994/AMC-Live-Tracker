@@ -1,4 +1,4 @@
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcPeriods, amcs, appSettings, holdings, instrumentMap, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
 import { segmentKey } from "../dhan/client";
@@ -88,36 +88,55 @@ async function getCurrentReportPeriod(): Promise<string> {
 // identical stored prices walking back from the most recent date is a
 // strong "stuck / suspended" signal. null = no price history at all yet
 // (e.g. a brand-new listing).
-async function computeDaysUnchanged(isins: string[]): Promise<Map<string, number | null>> {
+//
+// The streak is counted in Postgres -- one row back per ISIN -- rather than
+// downloading every ISIN's full price history and walking it in JS: off
+// hours every priced ISIN (~1,200) falls back to last close, and that
+// history is ~200K rows. The streak is every row dated after the ISIN's most
+// recent price that differs from its latest one (all rows if none differs).
+// Batched at 500 ISINs per query: the Neon HTTP driver drops a single
+// 1,000+-parameter IN list over slower connections.
+export async function computeDaysUnchanged(isins: string[]): Promise<Map<string, number | null>> {
   const result = new Map<string, number | null>();
   if (isins.length === 0) return result;
 
-  const rows = await db
-    .select({ isin: isinDailyPrice.isin, snapshotDate: isinDailyPrice.snapshotDate, priceInr: isinDailyPrice.priceInr })
-    .from(isinDailyPrice)
-    .where(inArray(isinDailyPrice.isin, isins))
-    .orderBy(isinDailyPrice.isin, desc(isinDailyPrice.snapshotDate));
-
-  const rowsByIsin = new Map<string, { priceInr: string }[]>();
-  for (const r of rows) {
-    const list = rowsByIsin.get(r.isin);
-    if (list) list.push(r);
-    else rowsByIsin.set(r.isin, [r]);
+  const BATCH_SIZE = 500;
+  const batches: string[][] = [];
+  for (let i = 0; i < isins.length; i += BATCH_SIZE) {
+    batches.push(isins.slice(i, i + BATCH_SIZE));
   }
 
+  const batchRows = await Promise.all(
+    batches.map((batch) =>
+      db.execute<{ isin: string; streak: number }>(sql`
+        with latest as (
+          select distinct on (isin) isin, price_inr
+          from ${isinDailyPrice}
+          where ${inArray(isinDailyPrice.isin, batch)}
+          order by isin, snapshot_date desc
+        ),
+        last_change as (
+          select l.isin, max(p.snapshot_date) as last_change_date
+          from latest l
+          join ${isinDailyPrice} p on p.isin = l.isin and p.price_inr <> l.price_inr
+          group by l.isin
+        )
+        select l.isin, count(*)::int as streak
+        from latest l
+        join ${isinDailyPrice} p on p.isin = l.isin
+        left join last_change c on c.isin = l.isin
+        where c.last_change_date is null or p.snapshot_date > c.last_change_date
+        group by l.isin
+      `)
+    )
+  );
+
+  const streakByIsin = new Map<string, number>();
+  for (const { rows } of batchRows) {
+    for (const r of rows) streakByIsin.set(r.isin, Number(r.streak));
+  }
   for (const isin of isins) {
-    const history = rowsByIsin.get(isin);
-    if (!history || history.length === 0) {
-      result.set(isin, null);
-      continue;
-    }
-    let streak = 0;
-    const latestPrice = history[0].priceInr;
-    for (const row of history) {
-      if (row.priceInr !== latestPrice) break;
-      streak++;
-    }
-    result.set(isin, streak);
+    result.set(isin, streakByIsin.get(isin) ?? null);
   }
   return result;
 }
