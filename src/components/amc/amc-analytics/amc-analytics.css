@@ -495,3 +495,26 @@
   .aa .vm-grid { grid-template-columns: 1fr; }
   .aa .vm-t:first-child { border-right: 0; border-bottom: 2px solid var(--pl-color-border); }
 }
+
+/* Valuation · FY28E Bear / Base / Bull tables (user's reference layout) */
+.aa .vs-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; padding: 14px 12px; }
+.aa .vs-cap { margin: 0 0 6px; font-size: 12px; color: var(--pl-color-text-muted); }
+.aa .vs-cap b { color: var(--pl-ledger-cell-strong); margin-right: 4px; }
+.aa .vs-t { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; border: 2px solid #1a1a1a; font-variant-numeric: tabular-nums; }
+.aa .vs-t + .vs-t { margin-top: 12px; }
+.aa .vs-t th, .aa .vs-t td { padding: 7px 10px; border-bottom: 1px solid #e3e3e3; }
+.aa .vs-t thead th { font-weight: 600; border-bottom: 2px solid #1a1a1a; text-align: right; color: #1a1a1a; }
+.aa .vs-t thead th:first-child { text-align: left; width: 40%; background: #fff; }
+.aa .vs-t thead .vs-bear { background: #f4b9b9; text-align: center; }
+.aa .vs-t thead .vs-base { background: #fbe08a; text-align: center; }
+.aa .vs-t thead .vs-bull { background: #b7dfa0; text-align: center; }
+.aa .vs-t tbody th { text-align: left; font-weight: 400; color: var(--pl-ledger-cell); }
+.aa .vs-t tbody td { text-align: right; color: var(--pl-ledger-cell-strong); }
+.aa .vs-t .vs-mult { background: #e6f1dc; }
+.aa .vs-t .vs-strong th, .aa .vs-t .vs-strong td { font-weight: 700; border-top: 2px solid #1a1a1a; color: #1a1a1a; }
+.aa .vs-t .vs-up { background: #fbe3d8; }
+.aa .vs-t .vs-up td { font-weight: 600; }
+.aa .vs-t td.vs-in { background: #dceafb; padding: 4px 6px; }
+.aa .vs-t td.vs-in .vm-in { text-align: center; border-color: #9fc0ea; background: #eef5fd; }
+.aa .vs-t td.vs-in .vm-in.is-band { color: var(--pl-color-text-muted); }
+@media (max-width: 900px) { .aa .vs-grid { grid-template-columns: minmax(0, 1fr); } }

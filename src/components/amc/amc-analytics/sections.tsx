@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { mutate as globalMutate } from "swr";
 import { AumTrendChart } from "@/components/amc/aum-trend-chart";
@@ -22,7 +22,7 @@ import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summa
 import { RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
 import { trimToLastContinuousRun } from "@/lib/aum/series-math";
 import { formatLedgerInr, formatLedgerPct } from "@/lib/aum/period-ledger";
-import type { FortnightlyFieldName, FortnightlySheet } from "@/lib/aum/fortnightly-update";
+import { computeValuationBlock, type FortnightlyFieldName, type FortnightlyManualFields, type FortnightlySheet } from "@/lib/aum/fortnightly-update";
 import { useAmcValuation } from "@/hooks/use-amc-valuation";
 import { computeRatioLadder, RATIO_LADDER_SDS, type RatioLadder } from "@/lib/valuation/ratio-ladder";
 import { computeTargetPrices, SCENARIO_KEYS, type TargetPriceTable, type ValuationMethodKey } from "@/lib/valuation/target-price";
@@ -708,6 +708,232 @@ function SavedNumberInput({
   );
 }
 
+// ── Valuation Model: the Fortnightly tab's Bear / Base / Bull valuation,
+// laid out like the user's reference "Valuation · FY28E" table: one for
+// PE (FY28E PAT) and one for Mcap / Sales (FY28E revenue). Same maths as
+// the Fortnightly card (computeValuationBlock), same inputs (the latest
+// Fortnightly snapshot), so the three places always agree.
+type ScenarioKey = (typeof SCENARIO_KEYS)[number];
+const SCENARIO_LABEL: Record<ScenarioKey, string> = { bear: "Bear", base: "Base", bull: "Bull" };
+
+function inr0(v: number | null | undefined): string {
+  return v == null || !Number.isFinite(v) ? "—" : formatLedgerInr(v);
+}
+
+function ScenarioRow({ label, values, className, fmt = inr0 }: { label: string; values: Record<ScenarioKey, number | null>; className?: string; fmt?: (v: number | null) => string }) {
+  return (
+    <tr className={className}>
+      <th scope="row">{label}</th>
+      {SCENARIO_KEYS.map((k) => (
+        <td key={k}>{fmt(values[k])}</td>
+      ))}
+    </tr>
+  );
+}
+
+function UpsideRow({ values }: { values: Record<ScenarioKey, number | null> }) {
+  return (
+    <tr className="vs-up">
+      <th scope="row">Upside</th>
+      {SCENARIO_KEYS.map((k) => (
+        <td key={k}>
+          <Pct change={values[k]} />
+        </td>
+      ))}
+    </tr>
+  );
+}
+
+/** One value shown across all three columns, editable in Base (the reference layout). */
+function SharedInputRow({
+  label,
+  value,
+  editable,
+  onSave,
+  decimals,
+  scale = 1,
+  fmt,
+  className,
+}: {
+  label: string;
+  value: number | null;
+  editable: boolean;
+  onSave: (v: number | null) => Promise<void>;
+  decimals: number;
+  scale?: number;
+  fmt: (v: number | null) => string;
+  className?: string;
+}) {
+  return (
+    <tr className={className}>
+      <th scope="row">{label}</th>
+      <td>{fmt(value)}</td>
+      <td className={editable ? "vs-in" : undefined}>
+        {editable ? <SavedNumberInput value={value} onSave={onSave} ariaLabel={label} decimals={decimals} scale={scale} /> : fmt(value)}
+      </td>
+      <td>{fmt(value)}</td>
+    </tr>
+  );
+}
+
+// The PE and Mcap / Sales tables side by side: the caption and each row
+// are held to the taller of the pair, so a label that wraps on one side
+// never pushes the other side's rows out of line. Skipped once the two
+// stack (narrow screens).
+function AlignedScenarioGrid({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const grid = ref.current;
+    if (!grid) return;
+    const align = () => {
+      const blocks = [...grid.querySelectorAll<HTMLElement>(".vs-block")];
+      const rows = blocks.map((b) => [...b.querySelectorAll<HTMLElement>(".vs-cap, tr")]);
+      rows.flat().forEach((r) => (r.style.height = ""));
+      if (blocks.length !== 2 || rows[0].length !== rows[1].length) return;
+      if (Math.abs(blocks[0].offsetTop - blocks[1].offsetTop) > 1) return;
+      rows[0].forEach((left, i) => {
+        const right = rows[1][i];
+        const h = Math.max(left.getBoundingClientRect().height, right.getBoundingClientRect().height);
+        left.style.height = right.style.height = `${h}px`;
+      });
+    };
+    align();
+    let lastWidth = grid.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (grid.clientWidth === lastWidth) return;
+      lastWidth = grid.clientWidth;
+      align();
+    });
+    observer.observe(grid);
+    return () => observer.disconnect();
+  });
+  return (
+    <div className="vs-grid" ref={ref}>
+      {children}
+    </div>
+  );
+}
+
+function ScenarioValuationTable({
+  kind,
+  manual: m,
+  cmpInr,
+  editable,
+  saveField,
+  multiples,
+  band,
+}: {
+  kind: "pe" | "mcapSales";
+  manual: FortnightlyManualFields;
+  cmpInr: number | null;
+  editable: boolean;
+  saveField: (field: FortnightlyFieldName, value: number | null) => Promise<void>;
+  /** Mcap / Sales only: the multiple each scenario uses (typed, else the chart band). */
+  multiples?: Record<ScenarioKey, number | null>;
+  band?: { mean: number; sd: number } | null;
+}) {
+  const isPe = kind === "pe";
+  const earnings = isPe ? m.patFy28eCr : m.revenueFy28eCr;
+  const v = computeValuationBlock(
+    isPe
+      ? m
+      : { ...m, patFy28eCr: m.revenueFy28eCr, targetPeBear: multiples?.bear ?? null, targetPeBase: multiples?.base ?? null, targetPeBull: multiples?.bull ?? null },
+    cmpInr
+  );
+  const perShare = earnings !== null && m.noOfSharesCr ? earnings / m.noOfSharesCr : null;
+  const multipleFields = isPe
+    ? (["targetPeBear", "targetPeBase", "targetPeBull"] as const)
+    : (["targetMcapSalesBear", "targetMcapSalesBase", "targetMcapSalesBull"] as const);
+  const pctFmt = (x: number | null) => (x === null ? "—" : `${(x * 100).toFixed(1)}%`);
+  const sharesFmt = (x: number | null) => (x === null ? "—" : x.toLocaleString("en-IN", { maximumFractionDigits: 2 }));
+  const perShareFmt = (x: number | null) => (x === null ? "—" : x.toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
+  return (
+    <div className="vs-block">
+      <p className="vs-cap">
+        <b>{isPe ? "PE method" : "Mcap / Sales method"}</b> {isPe ? "FY28E PAT × target PE" : "FY28E revenue × Mcap / Sales multiple"} ÷ shares, discounted to today
+      </p>
+      <table className="vs-t">
+        <thead>
+          <tr>
+            <th scope="col">CMP {cmpInr === null ? "—" : `₹${inr0(cmpInr)}`}</th>
+            {SCENARIO_KEYS.map((k) => (
+              <th key={k} scope="col" className={`vs-${k}`}>
+                {SCENARIO_LABEL[k]}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <SharedInputRow
+            label={isPe ? "PAT FY28E (₹ Cr)" : "Revenue FY28E (₹ Cr)"}
+            value={earnings}
+            editable={editable}
+            onSave={(x) => saveField(isPe ? "patFy28eCr" : "revenueFy28eCr", x)}
+            decimals={0}
+            fmt={inr0}
+          />
+          <SharedInputRow label="Shares (Cr)" value={m.noOfSharesCr} editable={editable} onSave={(x) => saveField("noOfSharesCr", x)} decimals={2} fmt={sharesFmt} />
+          <ScenarioRow label={isPe ? "EPS FY28E (₹)" : "Revenue / share FY28E (₹)"} values={{ bear: perShare, base: perShare, bull: perShare }} fmt={perShareFmt} />
+          <tr className="vs-mult">
+            <th scope="row">{isPe ? "PE (x)" : "Mcap / Sales (x)"}</th>
+            {multipleFields.map((f, i) => {
+              const bandValue = !isPe && band ? band.mean + (i - 1) * band.sd : null;
+              const value = m[f];
+              return (
+                <td key={f} className={editable ? "vs-in" : undefined}>
+                  {editable ? (
+                    <SavedNumberInput
+                      value={value}
+                      onSave={(x) => saveField(f, x)}
+                      ariaLabel={`${isPe ? "PE" : "Mcap / Sales"} ${SCENARIO_KEYS[i]}`}
+                      decimals={isPe ? 2 : 1}
+                      placeholder={bandValue === null ? "—" : bandValue.toFixed(1)}
+                      muted={!isPe && value === null}
+                    />
+                  ) : (
+                    (value ?? bandValue)?.toFixed(isPe ? 0 : 1) ?? "—"
+                  )}
+                </td>
+              );
+            })}
+          </tr>
+          <ScenarioRow label="Price Target FY28" values={v.fy28TargetPriceInr} className="vs-strong" />
+          <UpsideRow values={v.fy28UpsidePct} />
+        </tbody>
+      </table>
+      <table className="vs-t vs-sub">
+        <tbody>
+          <SharedInputRow
+            label="Discount % (FY27)"
+            value={m.discountRateFy27Pct}
+            editable={editable}
+            onSave={(x) => saveField("discountRateFy27Pct", x)}
+            decimals={2}
+            scale={100}
+            fmt={pctFmt}
+          />
+          <ScenarioRow label="Target Price FY27" values={v.fy27DiscountedPriceInr} className="vs-strong" />
+        </tbody>
+      </table>
+      <table className="vs-t vs-sub">
+        <tbody>
+          <SharedInputRow
+            label="Discount % (FY26)"
+            value={m.discountRateFy26Pct}
+            editable={editable}
+            onSave={(x) => saveField("discountRateFy26Pct", x)}
+            decimals={2}
+            scale={100}
+            fmt={pctFmt}
+          />
+          <ScenarioRow label="Target Price Current" values={v.fy26DiscountedPriceInr} className="vs-strong" />
+          <UpsideRow values={v.fy26UpsidePct} />
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function ValuationModelSection({
   slug,
   entry,
@@ -800,6 +1026,40 @@ export function ValuationModelSection({
 
   return (
     <>
+      <section className="pl-panel vm" aria-label="Valuation FY28E" style={{ marginBottom: 16 }}>
+        <div className="pl-band">
+          Valuation · FY28E{" "}
+          <span className="pl-band-unit">
+            Bear / Base / Bull · income ₹ Cr · targets ₹ per share · same inputs and maths as the Fortnightly AMC Update tab
+          </span>
+        </div>
+        {!m ? (
+          <p className="aa-note" style={{ padding: 12 }}>
+            Loading the Fortnightly inputs…
+          </p>
+        ) : (
+          <AlignedScenarioGrid>
+            <ScenarioValuationTable kind="pe" manual={m} cmpInr={sheetForSlug?.cmpInr ?? null} editable={editable} saveField={saveField} />
+            <ScenarioValuationTable
+              kind="mcapSales"
+              manual={m}
+              cmpInr={sheetForSlug?.cmpInr ?? null}
+              editable={editable}
+              saveField={saveField}
+              multiples={table?.mcapSalesMultiples}
+              band={band}
+            />
+          </AlignedScenarioGrid>
+        )}
+        <p className="aa-note" style={{ padding: "0 12px 12px" }}>
+          {editable
+            ? "Blue cells save to the latest Fortnightly AMC Update snapshot, so this tab and the Fortnightly tab always show the same numbers."
+            : "Showing a past Fortnightly snapshot: inputs are read-only here."}{" "}
+          Grey Mcap / Sales multiples are the chart&apos;s 3Y −1 SD / Mean / +1 SD; type to override, clear to go back to the band.
+          Target Price Current is the PE / Mcap / Sales row of the Target Price table below.
+        </p>
+      </section>
+
       <div className="aa-reused">
         <ValuationBandCharts slug={slug} amcOptions={amcOptions} onSlugChange={onSlugChange} showUpload={false} />
       </div>
@@ -854,67 +1114,13 @@ export function ValuationModelSection({
             <table className="vm-t vm-inputs">
               <thead>
                 <tr>
-                  <th scope="col">Inputs</th>
-                  <th scope="col">Bear</th>
-                  <th scope="col">Base</th>
-                  <th scope="col">Bull</th>
+                  <th scope="col" colSpan={4}>
+                    Settings
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <th scope="row">Target PE (x)</th>
-                  {(["targetPeBear", "targetPeBase", "targetPeBull"] as const).map((f) => (
-                    <td key={f}>
-                      {editable ? <SavedNumberInput value={m[f]} onSave={(v) => saveField(f, v)} ariaLabel={`Target PE ${f.slice(8).toLowerCase()}`} /> : m[f] ?? "—"}
-                    </td>
-                  ))}
-                </tr>
-                <tr>
-                  <th scope="row">
-                    Mcap / Sales (x) <small>blank = 3Y chart band</small>
-                  </th>
-                  {(["targetMcapSalesBear", "targetMcapSalesBase", "targetMcapSalesBull"] as const).map((f, i) => {
-                    const bandValue = band ? band.mean + (i - 1) * band.sd : null;
-                    return (
-                      <td key={f}>
-                        {editable ? (
-                          <SavedNumberInput
-                            value={m[f]}
-                            onSave={(v) => saveField(f, v)}
-                            ariaLabel={`Mcap / Sales ${SCENARIO_KEYS[i]}`}
-                            decimals={1}
-                            placeholder={bandValue === null ? "—" : bandValue.toFixed(1)}
-                            muted={m[f] === null}
-                          />
-                        ) : (
-                          (m[f] ?? bandValue)?.toFixed(1) ?? "—"
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-                <ManualRow label="FY28E PAT (₹ Cr)" field="patFy28eCr" value={m.patFy28eCr} decimals={0} editable={editable} onSave={saveField} />
-                <ManualRow label="FY28E Revenue (₹ Cr)" field="revenueFy28eCr" value={m.revenueFy28eCr} decimals={0} editable={editable} onSave={saveField} />
-                <ManualRow label="Shares (Cr)" field="noOfSharesCr" value={m.noOfSharesCr} decimals={2} editable={editable} onSave={saveField} />
-                <tr>
-                  <th scope="row">Discount rate FY27 / FY26 (%)</th>
-                  <td />
-                  <td>
-                    {editable ? (
-                      <SavedNumberInput value={m.discountRateFy27Pct} onSave={(v) => saveField("discountRateFy27Pct", v)} ariaLabel="FY27 discount rate (%)" scale={100} />
-                    ) : (
-                      pctText(m.discountRateFy27Pct)
-                    )}
-                  </td>
-                  <td>
-                    {editable ? (
-                      <SavedNumberInput value={m.discountRateFy26Pct} onSave={(v) => saveField("discountRateFy26Pct", v)} ariaLabel="FY26 discount rate (%)" scale={100} />
-                    ) : (
-                      pctText(m.discountRateFy26Pct)
-                    )}
-                  </td>
-                </tr>
-                <tr className="vm-sep">
                   <th scope="row">
                     Ratio · AUM average <small>history and today</small>
                   </th>
@@ -958,42 +1164,10 @@ export function ValuationModelSection({
           </div>
         )}
         <p className="aa-note" style={{ padding: "0 12px 12px" }}>
-          {editable
-            ? "PE, Mcap / Sales, PAT, revenue, shares and discount-rate cells save to the latest Fortnightly AMC Update snapshot, so both tabs always show the same numbers."
-            : "Showing a past Fortnightly snapshot: inputs are read-only here."}{" "}
-          Grey Mcap / Sales multiples are the chart&apos;s 3Y −1 SD / Mean / +1 SD; type to override, clear to go back to the band.
+          PE, Mcap / Sales, PAT, revenue, shares and discount rates are edited in the Valuation · FY28E tables at the top.
         </p>
       </section>
     </>
-  );
-}
-
-function pctText(v: number | null): string {
-  return v === null ? "—" : `${Number((v * 100).toFixed(2))}%`;
-}
-
-function ManualRow({
-  label,
-  field,
-  value,
-  decimals,
-  editable,
-  onSave,
-}: {
-  label: string;
-  field: FortnightlyFieldName;
-  value: number | null;
-  decimals: number;
-  editable: boolean;
-  onSave: (field: FortnightlyFieldName, v: number | null) => Promise<void>;
-}) {
-  return (
-    <tr>
-      <th scope="row">{label}</th>
-      <td colSpan={3}>
-        {editable ? <SavedNumberInput value={value} onSave={(v) => onSave(field, v)} ariaLabel={label} decimals={decimals} /> : value ?? "—"}
-      </td>
-    </tr>
   );
 }
 
