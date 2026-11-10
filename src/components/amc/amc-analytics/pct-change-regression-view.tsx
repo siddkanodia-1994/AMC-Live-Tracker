@@ -3,13 +3,14 @@
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from "recharts";
 import { DW_LOWER, DW_UPPER, MIN_NW_T, MIN_SESSIONS, Tile } from "@/components/amc/regression-deep-dive";
 import { dateShade } from "@/components/amc/regression-scatter-chart";
-import type { PctChangePoint, PctChangeRegressionResult } from "@/lib/amc-stock/pct-change-regression";
-import { formatShortDateWithYear } from "@/lib/utils/format";
+import { PCT_TARGET_AVG_DAYS, type PctChangePoint, type PctChangeRegressionResult } from "@/lib/amc-stock/pct-change-regression";
+import { formatCr, formatPct, formatPriceInr, formatShortDateWithYear } from "@/lib/utils/format";
 
-// The AMC Analytics Regression section with "Levels (no % chg)" OFF: the
-// daily % change model's equation, the same diagnostic tiles as the levels
-// deep-dive (holdout scored on the change itself), Actual vs Model daily
-// change, and the %ΔAUM → %ΔPrice scatter. Colours match the levels charts.
+// The AMC Analytics Regression section with "Levels (no % chg)" OFF, laid
+// out like the levels deep-dive: price vs the % change line's target, the
+// equation, the diagnostic tiles (holdout scored on the change itself),
+// Actual vs Model daily change, and the %ΔAUM → %ΔPrice scatter. Colours
+// match the levels charts.
 const FIT_LINE = "#3B63C9";
 const ACTUAL_LINE = "#9aa3b2";
 const LATEST_RING = "#111827";
@@ -74,22 +75,43 @@ export function PctChangeRegressionView({
   const latest = rows[last];
   const xMin = Math.min(...rows.map((r) => r.aumChg));
   const xMax = Math.max(...rows.map((r) => r.aumChg));
+  const t = result.target;
+  const gapPct = t && t.targetPrice !== 0 ? ((t.basePrice - t.targetPrice) / t.targetPrice) * 100 : null;
 
   return (
     <div className="space-y-3">
       <div className="space-y-2 rounded-lg border bg-card p-4">
-        <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Daily % change model (Levels off)</p>
+        <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Price vs AUM Target (daily % change)</p>
+        {t ? (
+          <>
+            <div className="flex flex-wrap items-baseline gap-3">
+              <span className="font-mono text-2xl font-semibold tabular-nums">{formatPriceInr(t.basePrice)}</span>
+              <span className="text-xs text-muted-foreground">vs target</span>
+              <span className="font-mono text-2xl font-semibold tabular-nums text-blue-600 dark:text-blue-400">{formatPriceInr(t.targetPrice)}</span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Price is{" "}
+              <span className={gapPct !== null && gapPct < 0 ? "font-semibold text-emerald-600 dark:text-emerald-400" : "font-semibold text-red-600 dark:text-red-400"}>
+                {gapPct === null ? "—" : `${formatPct(Math.abs(gapPct) / 100)} ${gapPct < 0 ? "below" : "above"}`}
+              </span>{" "}
+              the target. Live AUM {formatCr(t.liveAumCr)} is {pct(t.aumGap)} vs its {PCT_TARGET_AVG_DAYS}-day average {formatCr(t.avgAumCr)}; on the
+              line that is a {pct(t.priceMove)} price move from today&apos;s {formatPriceInr(t.basePrice)}.
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">Not enough AUM history for a {PCT_TARGET_AVG_DAYS}-day average.</p>
+        )}
         <div className="overflow-x-auto rounded-md border bg-background px-3 py-2 font-mono text-xs">
           %ΔPrice = {result.beta.toFixed(3)} × %ΔAumMA{maWindow}[{lagTag}] {result.alpha >= 0 ? "+" : "−"} {Math.abs(result.alpha * 100).toFixed(3)}%
         </div>
         <div className="font-mono text-[11px] leading-relaxed text-muted-foreground">
           n {result.n} daily changes · fitted from {formatShortDateWithYear(result.fittedFrom)} · {lagLabel} · R² {(result.r2 * 100).toFixed(2)}%
-          {result.pearsonR !== null ? `, r ${result.pearsonR.toFixed(2)}` : ""} · {tradingSymbol}.NS raw close {formatShortDateWithYear(result.fittedTo)}
+          {result.pearsonR !== null ? `, r ${result.pearsonR.toFixed(2)}` : ""} (in-sample) · {tradingSymbol}.NS raw close {formatShortDateWithYear(result.fittedTo)}
         </div>
-        <p className="text-sm text-muted-foreground">
-          A 1% move in the {maWindow > 1 ? `${maWindow}-day average AUM` : "AUM"} has come with a {result.beta.toFixed(2)}% move in the share price
-          the same day, explaining {(result.r2 * 100).toFixed(1)}% of the daily price moves. Same daily changes as Stock Correlation&apos;s
-          Corr/R² with AUM-only avg on. Fair value above stays on the levels line, since a % change model has no price level.
+        <p className="text-[11px] text-muted-foreground">
+          Levels off: each session&apos;s % change in the raw share price vs its % change in the {maWindow > 1 ? `${maWindow}-day average AUM` : "live AUM"}{" "}
+          (the same daily changes as Stock Correlation&apos;s Corr/R² with AUM-only avg on), and target = today&apos;s price × (1 + the line&apos;s
+          move at the live vs {PCT_TARGET_AVG_DAYS}-day average AUM gap).
         </p>
       </div>
 

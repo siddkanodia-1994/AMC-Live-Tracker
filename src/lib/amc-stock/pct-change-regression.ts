@@ -15,8 +15,14 @@ import type { RegressionConfig } from "./regression-engine";
 // anchored on the AUM series, each series' own day-over-day change, then
 // intersected by date), so its R² equals that table's R² for the same
 // settings. Always the raw price, whatever the AUM-only avg toggle says
-// (user's choice). A % change model has no price level, so fair value stays
-// on the levels line (regression-engine.ts).
+// (user's choice). The AUM side follows the Moving avg box (1 = daily live
+// AUM).
+//
+// A % change line has no price level, so its target price (user's choice)
+// reads today's AUM as a % gap -- live AUM vs its 45-day average -- and
+// applies the line's price move for that gap to today's price:
+//
+//   target = price × (1 + α + β × (live AUM ÷ 45-day avg AUM − 1))
 
 export interface PctChangePoint {
   date: string;
@@ -37,6 +43,21 @@ export interface PctChangeHoldout {
   modelBeatsNaive: boolean;
 }
 
+/** The 45-day average the target's AUM gap is measured against (user's choice). */
+export const PCT_TARGET_AVG_DAYS = 45;
+
+export interface PctChangeTarget {
+  liveAumCr: number;
+  avgAumCr: number;
+  /** live ÷ 45-day avg − 1, as a fraction. */
+  aumGap: number;
+  /** α + β × aumGap, as a fraction. */
+  priceMove: number;
+  /** The share price the move is applied to (latest raw close). */
+  basePrice: number;
+  targetPrice: number;
+}
+
 export interface PctChangeRegressionResult {
   n: number;
   beta: number;
@@ -49,6 +70,7 @@ export interface PctChangeRegressionResult {
   fittedFrom: string;
   fittedTo: string;
   points: PctChangePoint[];
+  target: PctChangeTarget | null;
 }
 
 // Same static 80/20 split as computeHoldoutBacktest, scored on the daily
@@ -122,6 +144,19 @@ export function computePctChangeRegression(
     if (vx !== 0 && vy !== 0) pearsonR = cov / Math.sqrt(vx * vy);
   }
   const nw = neweyWestSlopeTStat(xs, fit.residuals, fit.slope, neweyWestLagCount(fit.n));
+
+  const liveAumCr = data[data.length - 1].liveAumCr;
+  const avgAumCr = computeMovingAverage(
+    data.map((d) => d.liveAumCr),
+    PCT_TARGET_AVG_DAYS
+  ).at(-1);
+  const basePrice = priceSeries[priceSeries.length - 1].priceInr;
+  let target: PctChangeTarget | null = null;
+  if (avgAumCr !== undefined && avgAumCr !== 0) {
+    const aumGap = liveAumCr / avgAumCr - 1;
+    const priceMove = fit.intercept + fit.slope * aumGap;
+    target = { liveAumCr, avgAumCr, aumGap, priceMove, basePrice, targetPrice: basePrice * (1 + priceMove) };
+  }
   return {
     n: fit.n,
     beta: fit.slope,
@@ -134,5 +169,6 @@ export function computePctChangeRegression(
     fittedFrom: dates[0],
     fittedTo: dates[dates.length - 1],
     points: dates.map((date, i) => ({ date, aumChg: xs[i], priceChg: ys[i], model: fit.intercept + fit.slope * xs[i] })),
+    target,
   };
 }

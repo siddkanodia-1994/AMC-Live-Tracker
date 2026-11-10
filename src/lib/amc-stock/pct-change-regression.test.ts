@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computePctChangeRegression } from "./pct-change-regression";
+import { computePctChangeRegression, PCT_TARGET_AVG_DAYS } from "./pct-change-regression";
 import { computeCorrelationStats, computeMovingAverage, computeReturnsByDate } from "../aum/series-math";
 import { computeRangeCutoffDate, filterByCutoff } from "../aum/date-range";
 import type { AumHistoryPoint, AmcStockPricePoint } from "../aum/history";
@@ -70,6 +70,20 @@ describe("computePctChangeRegression", () => {
     const last = r.points.at(-1)!;
     expect(last.model).toBeCloseTo(r.alpha + r.beta * last.aumChg, 12);
     expect(r.fittedTo).toBe(aumHistory.at(-1)!.date);
+  });
+
+  it("target: today's price moved by the line at live AUM vs its 45-day average", () => {
+    const { aumHistory, stockPriceSeries } = series();
+    for (const maWindow of [1, 20, 45]) {
+      const r = computePctChangeRegression(aumHistory, stockPriceSeries, { maWindow, extraLagDays: 0, range: "3y" })!;
+      const t = r.target!;
+      const avg = aumHistory.slice(-PCT_TARGET_AVG_DAYS).reduce((s, d) => s + d.liveAumCr, 0) / PCT_TARGET_AVG_DAYS;
+      expect(t.liveAumCr).toBe(aumHistory.at(-1)!.liveAumCr);
+      expect(t.avgAumCr).toBeCloseTo(avg, 6);
+      expect(t.aumGap).toBeCloseTo(t.liveAumCr / avg - 1, 12);
+      expect(t.basePrice).toBe(stockPriceSeries.at(-1)!.priceInr);
+      expect(t.targetPrice).toBeCloseTo(t.basePrice * (1 + r.alpha + r.beta * t.aumGap), 9);
+    }
   });
 
   it("scores the holdout against a 0% 'price unchanged' day", () => {

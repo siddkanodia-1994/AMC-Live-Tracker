@@ -498,31 +498,29 @@ export function RegressionSection({
         <ToggleBox
           id="aa-regression-levels"
           label="Levels (no % chg)"
-          title="On: Price regressed on the AUM MA level. Off: the daily % change in the raw share price regressed on the daily % change in the AUM MA (fair value stays on the levels line)"
+          title="On: Price regressed on the AUM MA level. Off: the daily % change in the raw share price regressed on the daily % change in the AUM MA, with the target at live AUM vs its 45-day average"
           checked={levelsCorrelation}
           onChange={controls.setLevelsCorrelation}
         />
         <SavedOrReset controls={controls} />
         <span className="text-xs text-muted-foreground">Shared with the Ratio section; not saved.</span>
       </div>
-      <RegressionDeepDive
-        result={result}
-        tradingSymbol={entry.tradingSymbol}
-        maWindow={maDays}
-        extraLagDays={defaults.extraLagDays}
-        showScatter
-        showRatioPanel={false}
-        fairValueOnly={!levelsCorrelation}
-      />
-      {!levelsCorrelation && (
-        <div className="mt-3">
-          <PctChangeRegressionView
-            result={pctResult}
-            tradingSymbol={entry.tradingSymbol}
-            maWindow={maDays}
-            extraLagDays={defaults.extraLagDays}
-          />
-        </div>
+      {levelsCorrelation ? (
+        <RegressionDeepDive
+          result={result}
+          tradingSymbol={entry.tradingSymbol}
+          maWindow={maDays}
+          extraLagDays={defaults.extraLagDays}
+          showScatter
+          showRatioPanel={false}
+        />
+      ) : (
+        <PctChangeRegressionView
+          result={pctResult}
+          tradingSymbol={entry.tradingSymbol}
+          maWindow={maDays}
+          extraLagDays={defaults.extraLagDays}
+        />
       )}
     </div>
   );
