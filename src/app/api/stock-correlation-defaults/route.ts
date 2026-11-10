@@ -9,6 +9,7 @@ import {
 import { RANGE_OPTIONS } from "@/lib/aum/date-range";
 import { RATIO_BASIS_OPTIONS } from "@/lib/aum/series-math";
 import { EXTRA_LAG_OPTIONS } from "@/lib/amc-stock/regression-engine";
+import { isBestFitAumPct, isValuationAumDays, VALUATION_AUM_DAYS_OPTIONS } from "@/lib/valuation/valuation-settings";
 
 // Deliberately NOT wrapped in withAdminAuth -- unlike every other global
 // app-wide setting in this codebase, saving the Stock Correlation tab's
@@ -69,7 +70,37 @@ export async function POST(request: Request) {
     );
   }
 
-  const defaults = { range, maDays, ratioBasis, aumOnlyAveraging, levelsCorrelation, extraLagDays, aumInputs, whatIfAumDays };
+  // The Valuation Model's three choices are optional. When a save omits
+  // them (the Stock Correlation table's own "Save as default" never sends
+  // them), the stored values are kept rather than reset.
+  const stored = await getStockCorrelationDefaults();
+  const valuationRatioDays = body?.valuationRatioDays ?? stored.valuationRatioDays;
+  const bestFitAumDays = body?.bestFitAumDays ?? stored.bestFitAumDays;
+  const bestFitAumPct = body?.bestFitAumPct ?? stored.bestFitAumPct;
+  const dayChoices = VALUATION_AUM_DAYS_OPTIONS.map((o) => o.value).join(", ");
+  if (!isValuationAumDays(valuationRatioDays)) {
+    return NextResponse.json({ error: `valuationRatioDays must be one of ${dayChoices}` }, { status: 400 });
+  }
+  if (!isValuationAumDays(bestFitAumDays)) {
+    return NextResponse.json({ error: `bestFitAumDays must be one of ${dayChoices}` }, { status: 400 });
+  }
+  if (!isBestFitAumPct(bestFitAumPct)) {
+    return NextResponse.json({ error: "bestFitAumPct must be a number from 0 to under 100" }, { status: 400 });
+  }
+
+  const defaults = {
+    range,
+    maDays,
+    ratioBasis,
+    aumOnlyAveraging,
+    levelsCorrelation,
+    extraLagDays,
+    aumInputs,
+    whatIfAumDays,
+    valuationRatioDays,
+    bestFitAumDays,
+    bestFitAumPct,
+  };
   await setStockCorrelationDefaults(defaults);
   return NextResponse.json(defaults);
 }

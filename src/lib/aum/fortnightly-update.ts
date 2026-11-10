@@ -40,6 +40,10 @@ export interface FortnightlyManualFields {
   targetPeBull: number | null;
   discountRateFy27Pct: number | null;
   discountRateFy26Pct: number | null;
+  revenueFy28eCr: number | null;
+  targetMcapSalesBear: number | null;
+  targetMcapSalesBase: number | null;
+  targetMcapSalesBull: number | null;
   sipAmcQtdValCr: number | null;
   sipAmcQtdPct: number | null;
   sipAmcPrevQValCr: number | null;
@@ -89,6 +93,10 @@ export const MANUAL_FIELD_NAMES = [
   "targetPeBull",
   "discountRateFy27Pct",
   "discountRateFy26Pct",
+  "revenueFy28eCr",
+  "targetMcapSalesBear",
+  "targetMcapSalesBase",
+  "targetMcapSalesBull",
   "sipAmcQtdValCr",
   "sipAmcQtdPct",
   "sipAmcPrevQValCr",
@@ -138,6 +146,10 @@ function rowToManualFields(row: typeof amcFortnightlyUpdate.$inferSelect): Fortn
     targetPeBull: toNum(row.targetPeBull),
     discountRateFy27Pct: toNum(row.discountRateFy27Pct),
     discountRateFy26Pct: toNum(row.discountRateFy26Pct),
+    revenueFy28eCr: toNum(row.revenueFy28eCr),
+    targetMcapSalesBear: toNum(row.targetMcapSalesBear),
+    targetMcapSalesBase: toNum(row.targetMcapSalesBase),
+    targetMcapSalesBull: toNum(row.targetMcapSalesBull),
     sipAmcQtdValCr: toNum(row.sipAmcQtdValCr),
     sipAmcQtdPct: toNum(row.sipAmcQtdPct),
     sipAmcPrevQValCr: toNum(row.sipAmcPrevQValCr),

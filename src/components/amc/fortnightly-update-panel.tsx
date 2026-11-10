@@ -631,6 +631,7 @@ function ScenarioEditRow({
   bull,
   onSave,
   title,
+  fields = ["targetPeBear", "targetPeBase", "targetPeBull"],
 }: {
   label: string;
   bear: number | null;
@@ -638,13 +639,15 @@ function ScenarioEditRow({
   bull: number | null;
   onSave: (field: FortnightlyFieldName, v: number | null) => Promise<void>;
   title: string;
+  // The bear / base / bull columns this row saves to (the target PEs unless given).
+  fields?: [FortnightlyFieldName, FortnightlyFieldName, FortnightlyFieldName];
 }) {
   return (
     <TableRow>
       <TableCell className="font-semibold">{label}</TableCell>
-      <ManualCell value={bear} onSave={(v) => onSave("targetPeBear", v)} title={title} />
-      <ManualCell value={base} onSave={(v) => onSave("targetPeBase", v)} title={title} />
-      <ManualCell value={bull} onSave={(v) => onSave("targetPeBull", v)} title={title} />
+      <ManualCell value={bear} onSave={(v) => onSave(fields[0], v)} title={title} />
+      <ManualCell value={base} onSave={(v) => onSave(fields[1], v)} title={title} />
+      <ManualCell value={bull} onSave={(v) => onSave(fields[2], v)} title={title} />
     </TableRow>
   );
 }
@@ -1085,6 +1088,18 @@ function FortnightlySheetView({
                 <ManualCell value={m.patFy28eCr} onSave={(val) => onSave("patFy28eCr", val)} decimals={0} />
                 <PctCell value={v.cagr2yPct} />
               </TableRow>
+              <TableRow>
+                <TableCell className="font-semibold">Revenue (Cr)</TableCell>
+                <TableCell />
+                <TableCell />
+                <ManualCell
+                  value={m.revenueFy28eCr}
+                  onSave={(val) => onSave("revenueFy28eCr", val)}
+                  decimals={0}
+                  title="Manual -- FY28E revenue, for AMC Analytics' Mcap / Sales target price (also editable there)"
+                />
+                <TableCell />
+              </TableRow>
             </TableBody>
           </Table>
         </div>
@@ -1105,6 +1120,15 @@ function FortnightlySheetView({
                 bull={m.targetPeBull}
                 onSave={onSave}
                 title="Manual -- FY28 Target Market Cap = PAT FY28E x Target PE"
+              />
+              <ScenarioEditRow
+                label="Target Mcap / Sales"
+                bear={m.targetMcapSalesBear}
+                base={m.targetMcapSalesBase}
+                bull={m.targetMcapSalesBull}
+                onSave={onSave}
+                fields={["targetMcapSalesBear", "targetMcapSalesBase", "targetMcapSalesBull"]}
+                title="Manual -- AMC Analytics' Mcap / Sales target price = Revenue FY28E x this multiple; blank uses the Mcap / Sales chart's -1 SD / Mean / +1 SD (also editable there). Not used in this card's own figures."
               />
               <ScenarioMcapRow label="FY28 Target Market Cap (Cr)" values={v.fy28TargetMcapCr} />
               <ScenarioPriceRow label="Target Price" values={v.fy28TargetPriceInr} bold />

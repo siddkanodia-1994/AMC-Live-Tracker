@@ -1,0 +1,677 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
+import { mutate as globalMutate } from "swr";
+import { RegressionDeepDive } from "@/components/amc/regression-deep-dive";
+import { ValuationBandCharts } from "@/components/amc/valuation-band-charts";
+import {
+  computeAumWhatIf,
+  parseAumInput,
+  whatIfStartingAum,
+  WHAT_IF_AUM_DAYS_OPTIONS,
+  DEFAULT_WHAT_IF_AUM_DAYS,
+  type RegressionLine,
+} from "@/lib/amc-stock/aum-what-if";
+import { computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
+import type { StockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
+import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
+import { trimToLastContinuousRun } from "@/lib/aum/series-math";
+import { formatLedgerInr, formatLedgerPct } from "@/lib/aum/period-ledger";
+import type { FortnightlyFieldName, FortnightlySheet } from "@/lib/aum/fortnightly-update";
+import { useAmcValuation } from "@/hooks/use-amc-valuation";
+import { computeTargetPrices, SCENARIO_KEYS, type TargetPriceTable, type ValuationMethodKey } from "@/lib/valuation/target-price";
+import {
+  DEFAULT_BEST_FIT_AUM_DAYS,
+  DEFAULT_BEST_FIT_AUM_PCT,
+  DEFAULT_VALUATION_RATIO_DAYS,
+  isBestFitAumPct,
+  VALUATION_AUM_DAYS_OPTIONS,
+} from "@/lib/valuation/valuation-settings";
+
+// The AMC Analytics tab's per-AMC sections beyond the AUM Summary ledger.
+// Each one reuses the dashboard's existing maths (and, where one exists,
+// its component) with the SAME saved Stock Correlation settings, so its
+// numbers equal the Stock Correlation / Regression tabs' for the same AMC.
+
+/** The regression the Stock Correlation table fits for this AMC, at the saved settings. */
+export function useSavedRegression(entry: AmcStockCorrelationEntry | undefined, defaults: StockCorrelationDefaults | undefined) {
+  return useMemo(() => {
+    if (!entry || !defaults) return null;
+    return computeRegressionResult(entry.aumHistory, entry.stockPriceSeries, {
+      maWindow: defaults.maDays,
+      extraLagDays: defaults.extraLagDays as ExtraLagDays,
+      range: defaults.range,
+    });
+  }, [entry, defaults]);
+}
+
+function lineOf(result: ReturnType<typeof computeRegressionResult>): RegressionLine | null {
+  return result ? { slope: result.slope, intercept: result.intercept, driverMin: result.driverMin, driverMax: result.driverMax } : null;
+}
+
+function Pct({ change }: { change: number | null }) {
+  const p = formatLedgerPct(change);
+  return <span className={`pl-chg pl-chg--${p?.tone ?? "neu"}`}>{p?.text ?? "—"}</span>;
+}
+
+function rupees(v: number | null): string {
+  return v == null || !Number.isFinite(v) ? "—" : `₹${v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function Panel({ title, unit, children }: { title: string; unit?: string; children: React.ReactNode }) {
+  return (
+    <section className="pl-panel" aria-label={title}>
+      <div className="pl-band">
+        {title} {unit && <span className="pl-band-unit">{unit}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+// ── AUM Predictor: the Stock Correlation "AUM what-if" for one AMC ────────
+export function AumPredictorSection({
+  entry,
+  defaults,
+}: {
+  entry: AmcStockCorrelationEntry | undefined;
+  defaults: StockCorrelationDefaults | undefined;
+}) {
+  const result = useSavedRegression(entry, defaults);
+  const line = lineOf(result);
+  const [days, setDays] = useState<number | null>(null);
+  const [typed, setTyped] = useState<Record<string, number | null>>({});
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  if (!entry || !defaults) return null;
+
+  const whatIfDays = days ?? defaults.whatIfAumDays ?? DEFAULT_WHAT_IF_AUM_DAYS;
+  const daily = trimToLastContinuousRun(entry.aumHistory).map((d) => d.liveAumCr);
+  const startAum = whatIfStartingAum(daily, whatIfDays);
+  const savedInput = defaults.aumInputs?.[entry.slug] ?? null;
+  const inputAum = entry.slug in typed ? typed[entry.slug] : savedInput;
+  const aum = inputAum ?? startAum;
+  // Same "current price" the table's what-if uses: the latest stored close.
+  const currentPrice = entry.stockPriceSeries.at(-1)?.priceInr ?? null;
+  const w = line && aum !== null ? computeAumWhatIf(line, aum, currentPrice) : null;
+  const dayLabel = (WHAT_IF_AUM_DAYS_OPTIONS.find((o) => o.value === whatIfDays) ?? WHAT_IF_AUM_DAYS_OPTIONS[1]).description;
+
+  async function save() {
+    if (!defaults || !entry) return;
+    setSaving(true);
+    try {
+      const aumInputs = { ...(defaults.aumInputs ?? {}) };
+      if (inputAum === null) delete aumInputs[entry.slug];
+      else aumInputs[entry.slug] = inputAum;
+      const res = await fetch("/api/stock-correlation-defaults", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...defaults, aumInputs, whatIfAumDays: whatIfDays }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Save failed");
+      }
+      await globalMutate((key) => typeof key === "string" && key.startsWith("/api/amc-stock-correlations"));
+      toast.success("Saved as the default for everyone (shared with Stock Correlation)");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Panel title="AUM what-if" unit={`₹ per share · ${defaults.maDays}D-avg regression line`}>
+      <div className="aa-controls">
+        <label className="aa-field">
+          Starting AUM
+          <select className="aa-select" value={whatIfDays} onChange={(e) => setDays(Number(e.target.value))}>
+            {WHAT_IF_AUM_DAYS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="aa-field">
+          Input equity AAUM (₹ Cr)
+          <input
+            className="aa-input"
+            inputMode="decimal"
+            value={draft ?? (aum === null ? "" : formatLedgerInr(aum))}
+            onFocus={(e) => {
+              setDraft(aum === null ? "" : String(Math.round(aum)));
+              const el = e.target;
+              requestAnimationFrame(() => el.select());
+            }}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              if (draft === null) return;
+              const parsed = parseAumInput(draft);
+              setDraft(null);
+              if (parsed !== null && (aum === null || Math.abs(parsed - aum) >= 0.005)) setTyped((t) => ({ ...t, [entry.slug]: parsed }));
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") {
+                setDraft(null);
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+          />
+        </label>
+        {inputAum !== null && (
+          <button type="button" className="aa-btn aa-btn--ghost" onClick={() => setTyped((t) => ({ ...t, [entry.slug]: null }))}>
+            Back to {dayLabel}
+          </button>
+        )}
+        <button type="button" className="aa-btn" disabled={saving} onClick={save}>
+          {saving ? "Saving…" : "Save as default"}
+        </button>
+      </div>
+      <table className="aa-kv">
+        <tbody>
+          <tr>
+            <th scope="row">AUM used (₹ Cr)</th>
+            <td>{formatLedgerInr(aum)}</td>
+          </tr>
+          <tr>
+            <th scope="row">Target price</th>
+            <td>{rupees(w?.targetPrice ?? null)}</td>
+          </tr>
+          <tr>
+            <th scope="row">Current price (last close)</th>
+            <td>{rupees(currentPrice)}</td>
+          </tr>
+          <tr>
+            <th scope="row">Upside</th>
+            <td>
+              <Pct change={w?.upsidePct ?? null} />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      {w?.outOfRange && line && (
+        <p className="aa-warn">
+          Outside the fitted range (₹{formatLedgerInr(line.driverMin)}–₹{formatLedgerInr(line.driverMax)} Cr): the line is extrapolated here.
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+// ── Live Predictor: today's live AUM through the same line, vs the live price ──
+export function LivePredictorSection({
+  entry,
+  defaults,
+  liveAumCr,
+  cmpInr,
+  cmpIsLive,
+}: {
+  entry: AmcStockCorrelationEntry | undefined;
+  defaults: StockCorrelationDefaults | undefined;
+  liveAumCr: number | null;
+  cmpInr: number | null;
+  cmpIsLive: boolean;
+}) {
+  const result = useSavedRegression(entry, defaults);
+  const line = lineOf(result);
+  if (!entry || !defaults) return null;
+  // Today's live snapshot when we have it; else the latest stored day.
+  const aum = liveAumCr ?? whatIfStartingAum(trimToLastContinuousRun(entry.aumHistory).map((d) => d.liveAumCr), 0);
+  const w = line && aum !== null ? computeAumWhatIf(line, aum, cmpInr) : null;
+  return (
+    <Panel title="Live fair value" unit={`₹ per share · live AUM on the ${defaults.maDays}D-avg regression line`}>
+      <table className="aa-kv">
+        <tbody>
+          <tr>
+            <th scope="row">{liveAumCr != null ? "Live AUM (₹ Cr)" : "Latest stored AUM (₹ Cr)"}</th>
+            <td>{formatLedgerInr(aum)}</td>
+          </tr>
+          <tr>
+            <th scope="row">Implied price</th>
+            <td>{rupees(w?.targetPrice ?? null)}</td>
+          </tr>
+          <tr>
+            <th scope="row">{cmpIsLive ? "Live share price" : "Share price (last close)"}</th>
+            <td>{rupees(cmpInr)}</td>
+          </tr>
+          <tr>
+            <th scope="row">Gap (implied vs price)</th>
+            <td>
+              <Pct change={w?.upsidePct ?? null} />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      {w?.outOfRange && line && (
+        <p className="aa-warn">
+          Live AUM is outside the fitted range (₹{formatLedgerInr(line.driverMin)}–₹{formatLedgerInr(line.driverMax)} Cr): the line is
+          extrapolated here.
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+// ── Regression: the Regression tab's own deep-dive for this AMC ──────────
+export function RegressionSection({
+  entry,
+  defaults,
+}: {
+  entry: AmcStockCorrelationEntry | undefined;
+  defaults: StockCorrelationDefaults | undefined;
+}) {
+  const result = useSavedRegression(entry, defaults);
+  if (!entry || !defaults) return null;
+  return (
+    <div className="aa-reused">
+      <RegressionDeepDive
+        result={result}
+        tradingSymbol={entry.tradingSymbol}
+        maWindow={defaults.maDays}
+        extraLagDays={defaults.extraLagDays}
+        showScatter
+      />
+    </div>
+  );
+}
+
+// ── Valuation Model: band charts, then the 4-method Target Price table ───
+const METHOD_ROWS: { key: ValuationMethodKey; name: string; how: (t: TargetPriceTable, s: ValuationSettings) => string }[] = [
+  {
+    key: "ratio",
+    name: "Ratio",
+    how: (t, s) =>
+      `Price ÷ ${dayText(s.ratioDays)} equity AUM (3Y): −1 SD / Mean / +1 SD × today's ${dayText(s.ratioDays)} AUM (₹${formatLedgerInr(t.ratioAumCr)} Cr)`,
+  },
+  {
+    key: "bestFit",
+    name: "Best fit line",
+    how: (t, s) =>
+      `Regression line at ${dayText(s.bestFitAumDays)} AUM (₹${formatLedgerInr(t.bestFitAumCr)} Cr) −${s.bestFitAumPct}% / as is / +${s.bestFitAumPct}%`,
+  },
+  { key: "pe", name: "PE", how: () => "FY28E PAT × target PE ÷ shares, discounted 2 periods (FY27, FY26 rates)" },
+  { key: "mcapSales", name: "Mcap / Sales", how: () => "FY28E revenue × Mcap / Sales ÷ shares, discounted 2 periods" },
+];
+
+interface ValuationSettings {
+  ratioDays: number;
+  bestFitAumDays: number;
+  bestFitAumPct: number;
+}
+
+function dayText(days: number): string {
+  return days === 0 ? "live" : `${days}D-avg`;
+}
+
+function PriceCell({ price, upside }: { price: number | null; upside: number | null }) {
+  return (
+    <td className="vm-c">
+      <span className="vm-p">{price === null ? "—" : formatLedgerInr(price)}</span>
+      {price !== null && <Pct change={upside} />}
+    </td>
+  );
+}
+
+// A number box that saves on blur/Enter; blank saves null. `scale` maps the
+// shown value to the stored one (rates: shown in %, stored as a fraction).
+function SavedNumberInput({
+  value,
+  onSave,
+  ariaLabel,
+  decimals = 2,
+  scale = 1,
+  placeholder,
+  muted,
+}: {
+  value: number | null;
+  onSave: (v: number | null) => Promise<void>;
+  ariaLabel: string;
+  decimals?: number;
+  scale?: number;
+  placeholder?: string;
+  muted?: boolean;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = value === null ? "" : String(Number((value * scale).toFixed(decimals)));
+  const commit = async () => {
+    if (draft === null) return;
+    const text = draft.replace(/,/g, "").trim();
+    setDraft(null);
+    const next = text === "" ? null : Number(text);
+    if (next !== null && !Number.isFinite(next)) {
+      toast.error(`${ariaLabel}: not a number`);
+      return;
+    }
+    const stored = next === null ? null : next / scale;
+    if (stored === value || (stored !== null && value !== null && Math.abs(stored - value) < 1e-9)) return;
+    try {
+      await onSave(stored);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    }
+  };
+  return (
+    <input
+      className={`vm-in${muted && draft === null ? " is-band" : ""}`}
+      inputMode="decimal"
+      aria-label={ariaLabel}
+      placeholder={placeholder ?? "—"}
+      value={draft ?? shown}
+      onFocus={() => setDraft(shown)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") {
+          setDraft(null);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+    />
+  );
+}
+
+export function ValuationModelSection({
+  slug,
+  entry,
+  defaults,
+  sheet,
+  onSheetSaved,
+  amcOptions,
+  onSlugChange,
+}: {
+  slug: string;
+  entry: AmcStockCorrelationEntry | undefined;
+  defaults: StockCorrelationDefaults | undefined;
+  sheet: FortnightlySheet | undefined;
+  onSheetSaved: () => Promise<unknown>;
+  amcOptions: { slug: string; label: string }[];
+  onSlugChange: (slug: string) => void;
+}) {
+  const { data: valuation } = useAmcValuation(slug);
+  const [local, setLocal] = useState<Partial<ValuationSettings>>({});
+  const [saving, setSaving] = useState(false);
+  const settings: ValuationSettings = {
+    ratioDays: local.ratioDays ?? defaults?.valuationRatioDays ?? DEFAULT_VALUATION_RATIO_DAYS,
+    bestFitAumDays: local.bestFitAumDays ?? defaults?.bestFitAumDays ?? DEFAULT_BEST_FIT_AUM_DAYS,
+    bestFitAumPct: local.bestFitAumPct ?? defaults?.bestFitAumPct ?? DEFAULT_BEST_FIT_AUM_PCT,
+  };
+  const sheetForSlug = sheet && sheet.slug === slug ? sheet : undefined;
+
+  const table = useMemo(() => {
+    if (!entry || !defaults || !sheetForSlug) return null;
+    return computeTargetPrices({
+      aumHistory: entry.aumHistory,
+      stockPriceSeries: entry.stockPriceSeries,
+      range: defaults.range,
+      maDays: defaults.maDays,
+      extraLagDays: defaults.extraLagDays,
+      ratioDays: settings.ratioDays,
+      bestFitAumDays: settings.bestFitAumDays,
+      bestFitAumPct: settings.bestFitAumPct,
+      manual: sheetForSlug.manual,
+      mcapSalesSeries: (valuation?.points ?? []).flatMap((p) => (p.mcapToSales === null ? [] : [{ date: p.date, value: p.mcapToSales }])),
+      cmpInr: sheetForSlug.cmpInr,
+    });
+  }, [entry, defaults, sheetForSlug, valuation, settings.ratioDays, settings.bestFitAumDays, settings.bestFitAumPct]);
+
+  async function saveField(field: FortnightlyFieldName, value: number | null) {
+    if (!sheetForSlug) return;
+    const res = await fetch("/api/fortnightly-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amcId: sheetForSlug.amcId, asOfDate: sheetForSlug.asOfDate, field, value }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error ?? "Failed to save");
+    }
+    await onSheetSaved();
+  }
+
+  async function saveSettings() {
+    if (!defaults) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/stock-correlation-defaults", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...defaults,
+          valuationRatioDays: settings.ratioDays,
+          bestFitAumDays: settings.bestFitAumDays,
+          bestFitAumPct: settings.bestFitAumPct,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Save failed");
+      }
+      await globalMutate((key) => typeof key === "string" && key.startsWith("/api/amc-stock-correlations"));
+      setLocal({});
+      toast.success("Saved as the default for everyone");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const m = sheetForSlug?.manual;
+  const editable = !!sheetForSlug?.isLatest;
+  const band = table?.mcapSalesBand ?? null;
+
+  return (
+    <>
+      <div className="aa-reused">
+        <ValuationBandCharts slug={slug} amcOptions={amcOptions} onSlugChange={onSlugChange} showUpload={false} />
+      </div>
+
+      <section className="pl-panel vm" aria-label="Target price" style={{ marginTop: 16 }}>
+        <div className="pl-band">
+          Target Price{" "}
+          <span className="pl-band-unit">
+            ₹ per share · vs {sheetForSlug?.cmpIsLive ? "live price" : "last close"}{" "}
+            {sheetForSlug?.cmpInr != null ? `₹${sheetForSlug.cmpInr.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+          </span>
+        </div>
+        {!table || !m ? (
+          <p className="aa-note" style={{ padding: 12 }}>
+            Loading the Fortnightly inputs…
+          </p>
+        ) : (
+          <div className="vm-grid">
+            <table className="vm-t">
+              <thead>
+                <tr>
+                  <th scope="col">Method</th>
+                  <th scope="col">Bear</th>
+                  <th scope="col">Base</th>
+                  <th scope="col">Bull</th>
+                </tr>
+              </thead>
+              <tbody>
+                {METHOD_ROWS.map((row) => (
+                  <tr key={row.key}>
+                    <th scope="row">
+                      <b>{row.name}</b>
+                      <small>{row.how(table, settings)}</small>
+                    </th>
+                    {SCENARIO_KEYS.map((k) => (
+                      <PriceCell key={k} price={table.methods[row.key][k]} upside={table.upside[row.key][k]} />
+                    ))}
+                  </tr>
+                ))}
+                <tr className="vm-avg">
+                  <th scope="row">
+                    <b>Average</b>
+                    <small>Of the methods with a value: {table.averageCount.base} of 4</small>
+                  </th>
+                  {SCENARIO_KEYS.map((k) => (
+                    <PriceCell key={k} price={table.average[k]} upside={table.upside.average[k]} />
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+
+            <table className="vm-t vm-inputs">
+              <thead>
+                <tr>
+                  <th scope="col">Inputs</th>
+                  <th scope="col">Bear</th>
+                  <th scope="col">Base</th>
+                  <th scope="col">Bull</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Target PE (x)</th>
+                  {(["targetPeBear", "targetPeBase", "targetPeBull"] as const).map((f) => (
+                    <td key={f}>
+                      {editable ? <SavedNumberInput value={m[f]} onSave={(v) => saveField(f, v)} ariaLabel={`Target PE ${f.slice(8).toLowerCase()}`} /> : m[f] ?? "—"}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <th scope="row">
+                    Mcap / Sales (x) <small>blank = 3Y chart band</small>
+                  </th>
+                  {(["targetMcapSalesBear", "targetMcapSalesBase", "targetMcapSalesBull"] as const).map((f, i) => {
+                    const bandValue = band ? band.mean + (i - 1) * band.sd : null;
+                    return (
+                      <td key={f}>
+                        {editable ? (
+                          <SavedNumberInput
+                            value={m[f]}
+                            onSave={(v) => saveField(f, v)}
+                            ariaLabel={`Mcap / Sales ${SCENARIO_KEYS[i]}`}
+                            decimals={1}
+                            placeholder={bandValue === null ? "—" : bandValue.toFixed(1)}
+                            muted={m[f] === null}
+                          />
+                        ) : (
+                          (m[f] ?? bandValue)?.toFixed(1) ?? "—"
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+                <ManualRow label="FY28E PAT (₹ Cr)" field="patFy28eCr" value={m.patFy28eCr} decimals={0} editable={editable} onSave={saveField} />
+                <ManualRow label="FY28E Revenue (₹ Cr)" field="revenueFy28eCr" value={m.revenueFy28eCr} decimals={0} editable={editable} onSave={saveField} />
+                <ManualRow label="Shares (Cr)" field="noOfSharesCr" value={m.noOfSharesCr} decimals={2} editable={editable} onSave={saveField} />
+                <tr>
+                  <th scope="row">Discount rate FY27 / FY26 (%)</th>
+                  <td />
+                  <td>
+                    {editable ? (
+                      <SavedNumberInput value={m.discountRateFy27Pct} onSave={(v) => saveField("discountRateFy27Pct", v)} ariaLabel="FY27 discount rate (%)" scale={100} />
+                    ) : (
+                      pctText(m.discountRateFy27Pct)
+                    )}
+                  </td>
+                  <td>
+                    {editable ? (
+                      <SavedNumberInput value={m.discountRateFy26Pct} onSave={(v) => saveField("discountRateFy26Pct", v)} ariaLabel="FY26 discount rate (%)" scale={100} />
+                    ) : (
+                      pctText(m.discountRateFy26Pct)
+                    )}
+                  </td>
+                </tr>
+                <tr className="vm-sep">
+                  <th scope="row">
+                    Ratio · AUM average <small>history and today</small>
+                  </th>
+                  <td colSpan={3}>
+                    <DaysSelect value={settings.ratioDays} onChange={(v) => setLocal((s) => ({ ...s, ratioDays: v }))} label="Ratio AUM average" />
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    Best fit · AUM <small>line stays on the {defaults?.maDays}D avg</small>
+                  </th>
+                  <td colSpan={3}>
+                    <DaysSelect value={settings.bestFitAumDays} onChange={(v) => setLocal((s) => ({ ...s, bestFitAumDays: v }))} label="Best fit AUM" />
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Best fit · AUM −/+ (%)</th>
+                  <td colSpan={3}>
+                    <input
+                      className="vm-in"
+                      inputMode="decimal"
+                      aria-label="Best fit AUM move (%)"
+                      value={settings.bestFitAumPct}
+                      onChange={(e) => {
+                        const n = Number(e.target.value);
+                        if (e.target.value === "" || isBestFitAumPct(n)) setLocal((s) => ({ ...s, bestFitAumPct: e.target.value === "" ? 0 : n }));
+                      }}
+                    />
+                  </td>
+                </tr>
+                <tr className="vm-ro">
+                  <td colSpan={4}>
+                    <button type="button" className="aa-btn" disabled={saving} onClick={saveSettings}>
+                      {saving ? "Saving…" : "Save as default"}
+                    </button>{" "}
+                    <small>the two AUM choices and the ±% are shared settings</small>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="aa-note" style={{ padding: "0 12px 12px" }}>
+          {editable
+            ? "PE, Mcap / Sales, PAT, revenue, shares and discount-rate cells save to the latest Fortnightly AMC Update snapshot, so both tabs always show the same numbers."
+            : "Showing a past Fortnightly snapshot: inputs are read-only here."}{" "}
+          Grey Mcap / Sales multiples are the chart&apos;s 3Y −1 SD / Mean / +1 SD; type to override, clear to go back to the band.
+        </p>
+      </section>
+    </>
+  );
+}
+
+function pctText(v: number | null): string {
+  return v === null ? "—" : `${Number((v * 100).toFixed(2))}%`;
+}
+
+function ManualRow({
+  label,
+  field,
+  value,
+  decimals,
+  editable,
+  onSave,
+}: {
+  label: string;
+  field: FortnightlyFieldName;
+  value: number | null;
+  decimals: number;
+  editable: boolean;
+  onSave: (field: FortnightlyFieldName, v: number | null) => Promise<void>;
+}) {
+  return (
+    <tr>
+      <th scope="row">{label}</th>
+      <td colSpan={3}>
+        {editable ? <SavedNumberInput value={value} onSave={(v) => onSave(field, v)} ariaLabel={label} decimals={decimals} /> : value ?? "—"}
+      </td>
+    </tr>
+  );
+}
+
+function DaysSelect({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
+  return (
+    <select className="vm-sel" aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))}>
+      {VALUATION_AUM_DAYS_OPTIONS.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}

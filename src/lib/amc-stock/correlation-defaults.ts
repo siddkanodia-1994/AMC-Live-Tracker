@@ -6,6 +6,13 @@ import { RATIO_BASIS_OPTIONS, type RatioBasis } from "../aum/series-math";
 import { EXTRA_LAG_OPTIONS } from "./regression-engine";
 import accordCodes from "../../../data/amc-accord-codes.json";
 import { DEFAULT_WHAT_IF_AUM_DAYS, isWhatIfAumDays, MAX_AUM_INPUT_CR } from "./aum-what-if";
+import {
+  DEFAULT_BEST_FIT_AUM_DAYS,
+  DEFAULT_BEST_FIT_AUM_PCT,
+  DEFAULT_VALUATION_RATIO_DAYS,
+  isBestFitAumPct,
+  isValuationAumDays,
+} from "../valuation/valuation-settings";
 
 const SETTINGS_KEY = "stock_correlation_defaults";
 
@@ -33,6 +40,12 @@ export interface StockCorrelationDefaults {
   // Which AUM the what-if rows start from: 0 (live) or a 5/10/15/20-day
   // average. Independent of maDays. Older saved rows lack it (5).
   whatIfAumDays: number;
+  // AMC Analytics' Valuation Model (see src/lib/valuation/target-price.ts):
+  // the Ratio method's AUM average (history and today), the Best fit line's
+  // starting AUM, and its −/+ % move. Older saved rows lack them (45/45/10).
+  valuationRatioDays: number;
+  bestFitAumDays: number;
+  bestFitAumPct: number;
 }
 
 const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
@@ -44,6 +57,9 @@ const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
   extraLagDays: 0,
   aumInputs: {},
   whatIfAumDays: DEFAULT_WHAT_IF_AUM_DAYS,
+  valuationRatioDays: DEFAULT_VALUATION_RATIO_DAYS,
+  bestFitAumDays: DEFAULT_BEST_FIT_AUM_DAYS,
+  bestFitAumPct: DEFAULT_BEST_FIT_AUM_PCT,
 };
 
 // The 8 listed AMCs the Stock Correlation table shows -- the only slugs an
@@ -99,6 +115,9 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
       extraLagDays: isExtraLagDays(parsed.extraLagDays) ? parsed.extraLagDays : FALLBACK_DEFAULTS.extraLagDays,
       aumInputs: sanitizeAumInputs(parsed.aumInputs) ?? FALLBACK_DEFAULTS.aumInputs,
       whatIfAumDays: isWhatIfAumDays(parsed.whatIfAumDays) ? parsed.whatIfAumDays : FALLBACK_DEFAULTS.whatIfAumDays,
+      valuationRatioDays: isValuationAumDays(parsed.valuationRatioDays) ? parsed.valuationRatioDays : FALLBACK_DEFAULTS.valuationRatioDays,
+      bestFitAumDays: isValuationAumDays(parsed.bestFitAumDays) ? parsed.bestFitAumDays : FALLBACK_DEFAULTS.bestFitAumDays,
+      bestFitAumPct: isBestFitAumPct(parsed.bestFitAumPct) ? parsed.bestFitAumPct : FALLBACK_DEFAULTS.bestFitAumPct,
     };
   } catch {
     return FALLBACK_DEFAULTS;

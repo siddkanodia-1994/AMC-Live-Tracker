@@ -219,6 +219,7 @@ export function ValuationBandCharts({
   slug,
   amcOptions,
   onSlugChange,
+  showUpload = true,
 }: {
   slug: string;
   // The 8 listed AMCs, labelled by company name. Picking one calls
@@ -226,6 +227,8 @@ export function ValuationBandCharts({
   // dropdown and the deep-dive's stay in sync both ways.
   amcOptions: { slug: string; label: string }[];
   onSlugChange: (slug: string) => void;
+  // The Ace Equity upload drop zone lives in Stock Correlation; AMC Analytics hides it.
+  showUpload?: boolean;
 }) {
   const { data, error, isLoading } = useAmcValuation(slug);
   // Kept across AMC switches: this component stays mounted, only `slug` changes.
@@ -294,7 +297,7 @@ export function ValuationBandCharts({
           last Ace Equity file ({formatDayMonthYear(data.provisionalAnchorDate)}). The next upload replaces these days.
         </p>
       )}
-      <ValuationUploadPanel lastUpload={data?.lastUpload ?? null} />
+      {showUpload && <ValuationUploadPanel lastUpload={data?.lastUpload ?? null} />}
     </div>
   );
 }

@@ -806,6 +806,14 @@ export const amcFortnightlyUpdate = pgTable(
     targetPeBull: numeric("target_pe_bull", { precision: 10, scale: 2 }),
     discountRateFy27Pct: numeric("discount_rate_fy27_pct", { precision: 7, scale: 4 }),
     discountRateFy26Pct: numeric("discount_rate_fy26_pct", { precision: 7, scale: 4 }),
+    // AMC Analytics' Valuation Model: FY28E revenue and the Mcap / Sales
+    // multiples for its Bear / Base / Bull target prices (the same maths as
+    // the target PEs above, revenue in place of PAT). Null multiples mean
+    // "use the Mcap / Sales chart's −1 SD / Mean / +1 SD".
+    revenueFy28eCr: numeric("revenue_fy28e_cr", { precision: 18, scale: 4 }),
+    targetMcapSalesBear: numeric("target_mcap_sales_bear", { precision: 10, scale: 2 }),
+    targetMcapSalesBase: numeric("target_mcap_sales_base", { precision: 10, scale: 2 }),
+    targetMcapSalesBull: numeric("target_mcap_sales_bull", { precision: 10, scale: 2 }),
     // SIP AMC Growth -- 5 periods (QTD, prior quarter, prior-prior
     // quarter, same quarter last year, prior quarter last year), each
     // with its own Val and SIP/Equity AUM % -- QoQ/YoY are computed from

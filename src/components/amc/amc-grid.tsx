@@ -24,6 +24,7 @@ import { BacktestPage } from "./backtest-page";
 import { StockTab } from "@/components/stock/stock-tab";
 import { DailyDataTable } from "./daily-data-table";
 import { CorrectionsLog } from "./corrections-log";
+import { AmcAnalytics } from "./amc-analytics/amc-analytics";
 import { MarketStatusBadge } from "@/components/layout/market-status-badge";
 import { useFlowEstimateDisplay } from "@/components/layout/flow-estimate-context";
 import { useActiveGoldSilverBlendAmcIds, useGoldSilverBlend } from "@/components/layout/gold-silver-blend-context";
@@ -943,7 +944,7 @@ export function AmcGrid({
           // explicitly revalidate their shared (once-a-day cron-updated)
           // data here instead, so "come back and see anything new" keeps
           // working exactly as it did before.
-          if (next === "amc-stock-correlation" || next === "amc-regression") {
+          if (next === "amc-stock-correlation" || next === "amc-regression" || next === "amc-analytics") {
             globalMutate((key) => typeof key === "string" && key.startsWith("/api/amc-stock-correlations"));
           }
         }}
@@ -951,6 +952,9 @@ export function AmcGrid({
         <div className="rounded-xl border bg-card p-3 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-2.5">
             <TabsList variant="line">
+              <TabsTrigger value="amc-analytics" className="after:bg-[var(--toolbar-accent)]">
+                AMC Analytics
+              </TabsTrigger>
               <TabsTrigger value="overview" className="after:bg-[var(--toolbar-accent)]">
                 Overview
               </TabsTrigger>
@@ -996,7 +1000,10 @@ export function AmcGrid({
             </TabsList>
             <div className="flex items-center gap-3 text-sm">
               {activeTab === "overview" && <SearchBar value={query} onChange={setQuery} />}
-              {activeTab !== "stock" && activeTab !== "amc-stock-correlation" && activeTab !== "amc-regression" && (
+              {activeTab !== "stock" &&
+                activeTab !== "amc-stock-correlation" &&
+                activeTab !== "amc-regression" &&
+                activeTab !== "amc-analytics" && (
                 <div className="flex items-center gap-1">
                   <span className="text-muted-foreground">Show:</span>
                   {TOP_N_OPTIONS.map((option) => (
@@ -1299,6 +1306,10 @@ export function AmcGrid({
             </div>
           )}
         </div>
+        <TabsContent value="amc-analytics">
+          {/* Only today's live snapshot feeds its "today" strip -- never a repriced historical Overview date. */}
+          <AmcAnalytics liveAum={asOfDate ? undefined : data} />
+        </TabsContent>
         <TabsContent value="overview">
           <AmcTable
             amcs={filteredAmcs}

@@ -246,6 +246,13 @@
       "when": 1793875732961,
       "tag": "0034_amc_valuation",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794253181730,
+      "tag": "0035_fortnightly_valuation_inputs",
+      "breakpoints": true
     }
   ]
 }
