@@ -503,11 +503,11 @@
 .aa .vs-t { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; border: 2px solid #1a1a1a; font-variant-numeric: tabular-nums; }
 .aa .vs-t + .vs-t { margin-top: 12px; }
 .aa .vs-t th, .aa .vs-t td { padding: 7px 10px; border-bottom: 1px solid #e3e3e3; }
-.aa .vs-t thead th { font-weight: 600; border-bottom: 2px solid #1a1a1a; text-align: right; color: #1a1a1a; }
-.aa .vs-t thead th:first-child { text-align: left; width: 40%; background: #fff; }
-.aa .vs-t thead .vs-bear { background: #f4b9b9; text-align: center; }
-.aa .vs-t thead .vs-base { background: #fbe08a; text-align: center; }
-.aa .vs-t thead .vs-bull { background: #b7dfa0; text-align: center; }
+.aa .vs-t thead th { font-weight: 600; border-bottom: 2px solid #1a1a1a; text-align: center; background: var(--pl-ledger-head); color: var(--pl-on-dark); }
+.aa .vs-t thead th:first-child { text-align: left; width: 40%; }
+.aa .vs-t thead .vs-bear { box-shadow: inset 0 -4px 0 #d9534f; }
+.aa .vs-t thead .vs-base { box-shadow: inset 0 -4px 0 #d9a520; }
+.aa .vs-t thead .vs-bull { box-shadow: inset 0 -4px 0 #3c9a5f; }
 .aa .vs-t tbody th { text-align: left; font-weight: 400; color: var(--pl-ledger-cell); }
 .aa .vs-t tbody td { text-align: right; color: var(--pl-ledger-cell-strong); }
 .aa .vs-t .vs-mult { background: #e6f1dc; }
