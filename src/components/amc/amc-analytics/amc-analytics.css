@@ -412,6 +412,20 @@
 .aa .aa-nav-btn[aria-current="page"] { background: var(--pl-color-ink); color: var(--pl-on-dark); border-color: var(--pl-color-primary); }
 .aa .aa-nav-btn svg { width: 19px; height: 19px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .aa .aa-main { min-width: 0; }
+/* Section menu hide/show: folds to a slim icon rail */
+.aa .aa-brand-text { min-width: 0; }
+.aa .aa-collapse { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.aa .aa-collapse { margin-left: auto; width: 26px; height: 26px; flex: none; border: 1px solid rgba(255, 255, 255, 0.28); color: var(--pl-on-dark); }
+.aa .aa-collapse:hover { border-color: var(--pl-color-primary); color: var(--pl-color-primary); }
+.aa .aa-collapse:focus-visible { outline: 2px solid var(--pl-color-primary); outline-offset: 1px; }
+.aa .aa-collapse svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.aa.is-nav-rail { grid-template-columns: 56px minmax(0, 1fr); }
+.aa.is-nav-rail .aa-brand { flex-direction: column; padding: 14px 0; gap: 10px; }
+.aa.is-nav-rail .aa-brand-text { display: none; }
+.aa.is-nav-rail .aa-collapse { margin-left: 0; }
+.aa.is-nav-rail .aa-nav { padding: 12px 6px; }
+.aa.is-nav-rail .aa-nav-btn { justify-content: center; padding: 11px 0; }
+.aa.is-nav-rail .aa-nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .aa .aa-strip {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 20px;
   border-bottom: 3px solid var(--pl-color-primary); background: var(--pl-color-bg-card);
@@ -460,6 +474,14 @@
   .aa .aa-side { border-right: 0; border-bottom: 1px solid var(--pl-color-border); }
   .aa .aa-nav { display: flex; overflow-x: auto; padding: 8px; gap: 4px; }
   .aa .aa-nav-btn { width: auto; white-space: nowrap; margin: 0; padding: 10px 12px; }
+  /* The menu already folds into a scrolling strip here, so hiding it does nothing. */
+  .aa .aa-collapse { display: none; }
+  .aa.is-nav-rail { grid-template-columns: 1fr; }
+  .aa.is-nav-rail .aa-brand { flex-direction: row; padding: 16px 18px; }
+  .aa.is-nav-rail .aa-brand-text { display: block; }
+  .aa.is-nav-rail .aa-nav { padding: 8px; }
+  .aa.is-nav-rail .aa-nav-btn { padding: 10px 12px; }
+  .aa.is-nav-rail .aa-nav-label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
 }
 @media (max-width: 640px) {
   .aa .aa-strip, .aa .aa-title, .aa .aa-body { padding-left: 12px; padding-right: 12px; }

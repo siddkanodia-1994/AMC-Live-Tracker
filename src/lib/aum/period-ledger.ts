@@ -117,7 +117,8 @@ function labelsByKey(map: Map<string, number>): string[] {
 export interface LedgerDefaults {
   fy: [string, string];
   q: [string, string, string, string];
-  m: [string, string];
+  /** Month>> rows: the latest three months (user added the third). */
+  m: [string, string, string];
   /** Per weekday: the quarter table's three selectable rows. */
   wq: [string, string, string];
 }
@@ -280,7 +281,7 @@ export function buildPeriodLedger(points: LedgerPoint[]): PeriodLedger {
       return {
         fy: [at(fys, fys.length - 1), at(fys, fys.length - 2)],
         q: [at(quarters, q0), at(quarters, n - 2), at(quarters, n - 3), at(quarters, q3)],
-        m: [at(months, months.length - 1), at(months, months.length - 2)],
+        m: [at(months, months.length - 1), at(months, months.length - 2), at(months, months.length - 3)],
         wq: [at(quarters, q0), at(quarters, n - 2), at(quarters, q3)],
       };
     },

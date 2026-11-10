@@ -119,7 +119,8 @@ function defaultSelections(model: PeriodLedger): LedgerSelections {
 function reconcileSelections(prev: LedgerSelections | null, model: PeriodLedger): LedgerSelections {
   const fresh = defaultSelections(model);
   if (!prev) return fresh;
-  const keep = (list: string[], picked: string[], dflt: string[]) => picked.map((l, i) => (list.includes(l) ? l : dflt[i]));
+  // One row per default, so a newly added row (e.g. the third Month row) appears.
+  const keep = (list: string[], picked: string[], dflt: string[]) => dflt.map((d, i) => (picked[i] !== undefined && list.includes(picked[i]) ? picked[i] : d));
   const wq = {} as Record<LedgerWeekday, string[]>;
   for (const day of LEDGER_WEEKDAYS) wq[day] = keep(model.quarters, prev.wq[day], fresh.wq[day]);
   return {
@@ -146,6 +147,8 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   const [slug, setSlug] = useState(AMC_TABS[0].slug);
   const [selections, setSelections] = useState<LedgerSelections | null>(null);
   const fitControls = useFitControls(data?.defaults);
+  // Section menu folds to a slim icon rail; opens every visit (user's choice).
+  const [navCollapsed, setNavCollapsed] = useState(false);
 
   // Same SWR key the Gold/Silver blend context already fetches, so no extra request.
   const { data: listed } = useSWR<{ amcs: { id: number; slug: string }[] }>("/api/listed-amcs", fetchJson, { revalidateOnFocus: false });
@@ -195,16 +198,29 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   const active = SECTIONS.find((s) => s.key === section)!;
 
   return (
-    <div className={`aa ${plexSans.variable} ${plexCondensed.variable}`}>
-      <aside className="aa-side">
+    <div className={`aa ${plexSans.variable} ${plexCondensed.variable}${navCollapsed ? " is-nav-rail" : ""}`}>
+      <aside className="aa-side" id="aa-side">
         <div className="aa-brand">
           <span className="aa-brand-mark" aria-hidden="true">
             A
           </span>
-          <div>
+          <div className="aa-brand-text">
             <span className="aa-brand-title">AMC ANALYTICS</span>
             <span className="aa-brand-sub">EQUITY AUM INTELLIGENCE</span>
           </div>
+          <button
+            type="button"
+            className="aa-collapse"
+            aria-controls="aa-side"
+            aria-expanded={!navCollapsed}
+            aria-label={navCollapsed ? "Show the section menu" : "Hide the section menu"}
+            title={navCollapsed ? "Show menu" : "Hide menu"}
+            onClick={() => setNavCollapsed((v) => !v)}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d={navCollapsed ? "M9 6l6 6-6 6" : "M15 6l-6 6 6 6"} />
+            </svg>
+          </button>
         </div>
         <nav aria-label="AMC Analytics sections">
           <ul className="aa-nav">
@@ -214,10 +230,11 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                   type="button"
                   className="aa-nav-btn"
                   aria-current={s.key === section ? "page" : undefined}
+                  title={navCollapsed ? s.label : undefined}
                   onClick={() => setSection(s.key)}
                 >
                   {s.icon}
-                  {s.label}
+                  <span className="aa-nav-label">{s.label}</span>
                 </button>
               </li>
             ))}

@@ -97,6 +97,11 @@ describe("buildPeriodLedger", () => {
     expect(short.defaults().fy).toEqual(["FY 2027", "FY 2026"]);
   });
 
+  it("defaults the Month rows to the latest three months", () => {
+    const m = buildPeriodLedger(weekdays("2025-07-01", "2026-11-06", () => 1));
+    expect(m.defaults().m).toEqual(["FY 2027 November", "FY 2027 October", "FY 2027 September"]);
+  });
+
   it("gives a weekday's QoQ and YoY from its quarter averages, YoY null without that quarter", () => {
     const pts = weekdays("2026-04-01", "2026-11-06", (iso) => (iso >= "2026-10-01" ? 120 : 100));
     const x = buildPeriodLedger(pts).dayQuarter("Wednesday");
