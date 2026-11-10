@@ -248,6 +248,7 @@ export function AumTrendChart({
   aumOnlyAveraging = false,
   levelsCorrelation = false,
   showReportedAum = true,
+  initialView = "absolute",
 }: {
   data: AumHistoryPoint[];
   mode?: "absolute" | "change";
@@ -283,6 +284,9 @@ export function AumTrendChart({
   // daily estimate. Only the Stock Correlation tab's chart passes false,
   // since it's specifically about the AUM-vs-share-price relationship.
   showReportedAum?: boolean;
+  // Which view the chart opens in. Defaults to Absolute everywhere; only
+  // the AMC Analytics tab's Regression section opens on Ratio.
+  initialView?: "absolute" | "ratio";
 }) {
   const [showStockPrice, setShowStockPrice] = useState(true);
   // Which body/caption this chart currently renders -- "ratio" swaps the
@@ -291,7 +295,7 @@ export function AumTrendChart({
   // of the Stock Correlation tab's "Save as default" persistence (that
   // persists calculation INPUTS -- period/moving-avg/ratio-basis -- this is
   // just a view choice, same category as showStockPrice below).
-  const [chartView, setChartView] = useState<"absolute" | "ratio">("absolute");
+  const [chartView, setChartView] = useState<"absolute" | "ratio">(initialView);
   // Independent from showStockPrice below -- Absolute view's own price
   // line default-shows and this is a separate opt-in overlay for Ratio
   // view, so switching views doesn't carry one's choice into the other.

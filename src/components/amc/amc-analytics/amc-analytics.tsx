@@ -13,7 +13,7 @@ import { buildPeriodLedger, LEDGER_WEEKDAYS, type LedgerWeekday, type PeriodLedg
 import { toLedgerPoints } from "@/lib/aum/period-ledger-rows";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import { AumSummaryLedger, type LedgerSelectKey, type LedgerSelections } from "./aum-summary-ledger";
-import { AumPredictorSection, LivePredictorSection, RegressionSection, ValuationModelSection } from "./sections";
+import { AumPredictorSection, LivePredictorSection, RatioSection, RegressionSection, useFitControls, ValuationModelSection } from "./sections";
 
 // The ledger design system's typefaces, loaded for this tab only (the
 // variables are read by amc-analytics.css's --pl-font-* tokens).
@@ -44,7 +44,7 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 const COMPANY_BY_SLUG =new Map(Object.values(ACCORD_CODES).map((v) => [v.slug, v.company]));
 
-export type AmcAnalyticsSection = "summary" | "aum-predictor" | "live-predictor" | "regression" | "valuation";
+export type AmcAnalyticsSection = "summary" | "aum-predictor" | "live-predictor" | "ratio" | "regression" | "valuation";
 
 const SECTIONS: { key: AmcAnalyticsSection; label: string; icon: ReactNode }[] = [
   {
@@ -73,6 +73,17 @@ const SECTIONS: { key: AmcAnalyticsSection; label: string; icon: ReactNode }[] =
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="12" cy="12" r="9" />
         <path d="M12 7v5l3 2" />
+      </svg>
+    ),
+  },
+  {
+    key: "ratio",
+    label: "Ratio",
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M19 5L5 19" />
+        <circle cx="7" cy="7" r="2.5" />
+        <circle cx="17" cy="17" r="2.5" />
       </svg>
     ),
   },
@@ -134,6 +145,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   const [section, setSection] = useState<AmcAnalyticsSection>("summary");
   const [slug, setSlug] = useState(AMC_TABS[0].slug);
   const [selections, setSelections] = useState<LedgerSelections | null>(null);
+  const fitControls = useFitControls(data?.defaults);
 
   // Same SWR key the Gold/Silver blend context already fetches, so no extra request.
   const { data: listed } = useSWR<{ amcs: { id: number; slug: string }[] }>("/api/listed-amcs", fetchJson, { revalidateOnFocus: false });
@@ -294,8 +306,16 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                   cmpInr={sheet?.slug === slug ? sheet.cmpInr : null}
                   cmpIsLive={sheet?.slug === slug ? sheet.cmpIsLive : false}
                 />
+              ) : section === "ratio" ? (
+                <RatioSection
+                  entry={entry}
+                  defaults={data?.defaults}
+                  controls={fitControls}
+                  cmpInr={sheet?.slug === slug ? sheet.cmpInr : null}
+                  cmpIsLive={sheet?.slug === slug ? sheet.cmpIsLive : false}
+                />
               ) : section === "regression" ? (
-                <RegressionSection entry={entry} defaults={data?.defaults} />
+                <RegressionSection entry={entry} defaults={data?.defaults} controls={fitControls} />
               ) : (
                 <ValuationModelSection
                   slug={slug}

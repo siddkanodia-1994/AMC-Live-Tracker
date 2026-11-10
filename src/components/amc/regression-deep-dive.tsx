@@ -46,18 +46,22 @@ function Tile({ pass, head, sub }: { pass: boolean; head: string; sub: string })
 // presentational component doesn't have -- those stay with each caller.
 // `showScatter` adds the driver -> price scatter below the Actual-vs-Model
 // chart; only the Stock Correlation tab opts in (user's choice).
+// `showRatioPanel={false}` drops the Price ÷ AUM panel; only the AMC
+// Analytics tab does that, since its own Ratio section covers it.
 export function RegressionDeepDive({
   result,
   tradingSymbol,
   maWindow,
   extraLagDays,
   showScatter = false,
+  showRatioPanel = true,
 }: {
   result: RegressionResult | null;
   tradingSymbol: string;
   maWindow: number;
   extraLagDays: number;
   showScatter?: boolean;
+  showRatioPanel?: boolean;
 }) {
   if (!result) {
     return <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">Not enough aligned AUM/price history to fit a regression for this AMC at this range.</div>;
@@ -69,7 +73,7 @@ export function RegressionDeepDive({
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div className={showRatioPanel ? "grid grid-cols-1 gap-3 md:grid-cols-2" : "grid grid-cols-1 gap-3"}>
         <div className="space-y-2 rounded-lg border bg-card p-4">
           <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Price vs AUM Fair Value</p>
           <div className="flex flex-wrap items-baseline gap-3">
@@ -110,40 +114,42 @@ export function RegressionDeepDive({
           )}
         </div>
 
-        <div className="space-y-2 rounded-lg border bg-card p-4">
-          <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Price ÷ AUM MA{maWindow}</p>
-          <div className="flex flex-wrap items-baseline gap-3">
-            <span className="font-mono text-2xl font-semibold tabular-nums">{result.currentRatio !== null ? result.currentRatio.toFixed(5) : "—"}</span>
-            <span className="text-xs text-muted-foreground">
-              mean {result.ratioMean !== null ? result.ratioMean.toFixed(5) : "—"} · σ {result.ratioStdDev !== null ? result.ratioStdDev.toFixed(5) : "—"}
-            </span>
-          </div>
-          {result.currentSigma !== null && result.ratioMean !== null && result.ratioStdDev !== null ? (
-            <>
+        {showRatioPanel && (
+          <div className="space-y-2 rounded-lg border bg-card p-4">
+            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Price ÷ AUM MA{maWindow}</p>
+            <div className="flex flex-wrap items-baseline gap-3">
+              <span className="font-mono text-2xl font-semibold tabular-nums">{result.currentRatio !== null ? result.currentRatio.toFixed(5) : "—"}</span>
+              <span className="text-xs text-muted-foreground">
+                mean {result.ratioMean !== null ? result.ratioMean.toFixed(5) : "—"} · σ {result.ratioStdDev !== null ? result.ratioStdDev.toFixed(5) : "—"}
+              </span>
+            </div>
+            {result.currentSigma !== null && result.ratioMean !== null && result.ratioStdDev !== null ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  {formatSigma(result.currentSigma)}: {result.currentSigma < 0 ? "low" : "high"} against its fit-window average
+                </p>
+                <div className="relative my-4 h-1.5 rounded-full bg-muted">
+                  <div
+                    className="absolute top-1/2 size-3 -translate-y-1/2 rounded-full border-2 border-background bg-foreground"
+                    style={{ left: `${Math.max(0, Math.min(100, ((result.currentSigma + 2) / 4) * 100))}%`, transform: "translate(-50%, -50%)" }}
+                  />
+                </div>
+                <div className="flex justify-between font-mono text-[10.5px] text-muted-foreground">
+                  <span>−2σ {(result.ratioMean - 2 * result.ratioStdDev).toFixed(5)}</span>
+                  <span>mean {result.ratioMean.toFixed(5)}</span>
+                  <span>+2σ {(result.ratioMean + 2 * result.ratioStdDev).toFixed(5)}</span>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">Not enough history to compute a stable ratio distribution.</p>
+            )}
+            {result.priceAtMeanRatio !== null && (
               <p className="text-sm text-muted-foreground">
-                {formatSigma(result.currentSigma)}: {result.currentSigma < 0 ? "low" : "high"} against its fit-window average
+                At the average ratio the price would be {formatPriceInr(result.priceAtMeanRatio)} (MA {formatCr(result.latestDriver)}).
               </p>
-              <div className="relative my-4 h-1.5 rounded-full bg-muted">
-                <div
-                  className="absolute top-1/2 size-3 -translate-y-1/2 rounded-full border-2 border-background bg-foreground"
-                  style={{ left: `${Math.max(0, Math.min(100, ((result.currentSigma + 2) / 4) * 100))}%`, transform: "translate(-50%, -50%)" }}
-                />
-              </div>
-              <div className="flex justify-between font-mono text-[10.5px] text-muted-foreground">
-                <span>−2σ {(result.ratioMean - 2 * result.ratioStdDev).toFixed(5)}</span>
-                <span>mean {result.ratioMean.toFixed(5)}</span>
-                <span>+2σ {(result.ratioMean + 2 * result.ratioStdDev).toFixed(5)}</span>
-              </div>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">Not enough history to compute a stable ratio distribution.</p>
-          )}
-          {result.priceAtMeanRatio !== null && (
-            <p className="text-sm text-muted-foreground">
-              At the average ratio the price would be {formatPriceInr(result.priceAtMeanRatio)} (MA {formatCr(result.latestDriver)}).
-            </p>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-2 md:grid-cols-5">

@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { mutate as globalMutate } from "swr";
+import { AumTrendChart } from "@/components/amc/aum-trend-chart";
 import { RegressionDeepDive } from "@/components/amc/regression-deep-dive";
 import { ValuationBandCharts } from "@/components/amc/valuation-band-charts";
 import {
@@ -16,10 +17,12 @@ import {
 import { computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
 import type { StockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
+import { RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
 import { trimToLastContinuousRun } from "@/lib/aum/series-math";
 import { formatLedgerInr, formatLedgerPct } from "@/lib/aum/period-ledger";
 import type { FortnightlyFieldName, FortnightlySheet } from "@/lib/aum/fortnightly-update";
 import { useAmcValuation } from "@/hooks/use-amc-valuation";
+import { computeRatioLadder, RATIO_LADDER_SDS, type RatioLadder } from "@/lib/valuation/ratio-ladder";
 import { computeTargetPrices, SCENARIO_KEYS, type TargetPriceTable, type ValuationMethodKey } from "@/lib/valuation/target-price";
 import {
   DEFAULT_BEST_FIT_AUM_DAYS,
@@ -256,26 +259,328 @@ export function LivePredictorSection({
   );
 }
 
-// ── Regression: the Regression tab's own deep-dive for this AMC ──────────
-export function RegressionSection({
+// ── Ratio and Regression share one set of controls ─────────────────────
+// Range and Moving avg re-fit both sections; AUM-only avg and Levels reach
+// the Ratio section only (the regression engine always uses the raw price).
+// Held in the AmcAnalytics shell so a choice survives switching sections
+// and AMCs. Never saved; Extra Lag stays on the saved setting.
+const RATIO_LADDER_LABELS: Record<(typeof RATIO_LADDER_SDS)[number], string> = {
+  2: "+2 SD",
+  1: "+1 SD",
+  0: "Mean",
+  [-1]: "−1 SD",
+  [-2]: "−2 SD",
+};
+
+function savedMaInput(maDays: number): string {
+  return maDays > 0 ? String(maDays) : "";
+}
+
+export interface FitControls {
+  range: RangeOption;
+  setRange: (r: RangeOption) => void;
+  maDaysInput: string;
+  setMaDaysInput: (v: string) => void;
+  /** Debounced, clamped window that drives the computation. */
+  maDays: number;
+  aumOnlyAveraging: boolean;
+  setAumOnlyAveraging: (v: boolean) => void;
+  levelsCorrelation: boolean;
+  setLevelsCorrelation: (v: boolean) => void;
+  onSaved: boolean;
+  savedLabel: string;
+  reset: () => void;
+}
+
+export function useFitControls(defaults: StockCorrelationDefaults | undefined): FitControls {
+  // null = still on the saved setting.
+  const [rangeChoice, setRangeChoice] = useState<RangeOption | null>(null);
+  const [maInputChoice, setMaInputChoice] = useState<string | null>(null);
+  const [aumOnlyChoice, setAumOnlyChoice] = useState<boolean | null>(null);
+  const [levelsChoice, setLevelsChoice] = useState<boolean | null>(null);
+  const maDaysInput = maInputChoice ?? (defaults ? savedMaInput(defaults.maDays) : "");
+  // Same clamp and ~300ms debounce as the Stock Correlation table.
+  const maDaysImmediate = Math.max(1, Math.min(250, parseInt(maDaysInput, 10) || 1));
+  const [maDays, setMaDays] = useState(maDaysImmediate);
+  useEffect(() => {
+    const timer = setTimeout(() => setMaDays(maDaysImmediate), 300);
+    return () => clearTimeout(timer);
+  }, [maDaysImmediate]);
+  const savedRange = defaults?.range ?? "3y";
+  const savedMa = defaults?.maDays ?? 0;
+  return {
+    range: rangeChoice ?? savedRange,
+    setRange: setRangeChoice,
+    maDaysInput,
+    setMaDaysInput: setMaInputChoice,
+    maDays,
+    aumOnlyAveraging: aumOnlyChoice ?? defaults?.aumOnlyAveraging ?? false,
+    setAumOnlyAveraging: setAumOnlyChoice,
+    levelsCorrelation: levelsChoice ?? defaults?.levelsCorrelation ?? false,
+    setLevelsCorrelation: setLevelsChoice,
+    onSaved: rangeChoice === null && maInputChoice === null && aumOnlyChoice === null && levelsChoice === null,
+    savedLabel: `${RANGE_OPTIONS.find((o) => o.value === savedRange)?.label ?? savedRange} · ${savedMa > 1 ? `${savedMa}D` : "Latest"}`,
+    reset: () => {
+      setRangeChoice(null);
+      setMaInputChoice(null);
+      setAumOnlyChoice(null);
+      setLevelsChoice(null);
+    },
+  };
+}
+
+function useFitResult(entry: AmcStockCorrelationEntry | undefined, defaults: StockCorrelationDefaults | undefined, c: FitControls) {
+  const { maDays, range } = c;
+  return useMemo(() => {
+    if (!entry || !defaults) return null;
+    return computeRegressionResult(entry.aumHistory, entry.stockPriceSeries, {
+      maWindow: maDays,
+      extraLagDays: defaults.extraLagDays as ExtraLagDays,
+      range,
+    });
+  }, [entry, defaults, maDays, range]);
+}
+
+function ToggleBox({ id, label, title, checked, onChange }: { id: string; label: string; title: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label htmlFor={id} title={title} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+      <input id={id} type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-3.5 w-3.5" />
+      {label}
+    </label>
+  );
+}
+
+function SavedOrReset({ controls }: { controls: FitControls }) {
+  return controls.onSaved ? (
+    <span className="text-xs text-muted-foreground">On the saved settings ({controls.savedLabel})</span>
+  ) : (
+    <button type="button" className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted" onClick={controls.reset}>
+      Back to saved ({controls.savedLabel})
+    </button>
+  );
+}
+
+// ── Ratio: the ratio ladder and the Stock Correlation "AUM vs. Share
+// Price" chart, opening on its Ratio view ──────────────────────────────
+export function RatioSection({
   entry,
   defaults,
+  controls,
+  cmpInr,
+  cmpIsLive,
 }: {
   entry: AmcStockCorrelationEntry | undefined;
   defaults: StockCorrelationDefaults | undefined;
+  controls: FitControls;
+  cmpInr: number | null;
+  cmpIsLive: boolean;
 }) {
-  const result = useSavedRegression(entry, defaults);
+  const { maDays, range, aumOnlyAveraging } = controls;
+  const ladder = useMemo(
+    () => (entry ? computeRatioLadder(entry.aumHistory, entry.stockPriceSeries, { maDays, range, aumOnlyAveraging }) : null),
+    [entry, maDays, range, aumOnlyAveraging]
+  );
+  if (!entry || !defaults) return null;
+  const lastPrice = entry.stockPriceSeries.at(-1)?.priceInr ?? null;
+  return (
+    <>
+      <RatioLadderPanel
+        ladder={ladder}
+        maDays={maDays}
+        aumOnlyAveraging={aumOnlyAveraging}
+        cmpInr={cmpInr ?? lastPrice}
+        cmpIsLive={cmpInr !== null && cmpIsLive}
+      />
+
+      <div className="aa-reused" style={{ marginTop: 16 }}>
+        <div className="space-y-2 rounded-lg border bg-card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium text-foreground">AUM vs. Share Price</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <ToggleBox
+                id="aa-aum-only-avg"
+                label="AUM-only avg"
+                title="Moving avg applies only to AUM; the ratio uses each day's raw share price instead of an averaged one"
+                checked={aumOnlyAveraging}
+                onChange={controls.setAumOnlyAveraging}
+              />
+              <ToggleBox
+                id="aa-levels-correlation"
+                label="Levels (no % chg)"
+                title="Corr/R² (Absolute view) use the two series' raw values directly instead of their day-over-day % change"
+                checked={controls.levelsCorrelation}
+                onChange={controls.setLevelsCorrelation}
+              />
+              <SavedOrReset controls={controls} />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Range and Moving avg here also re-fit the Regression section. AUM-only avg changes the ratio ladder and this
+            chart; Levels changes the Absolute view&apos;s Corr/R². None of these are saved, and the Valuation Model stays
+            on the saved settings.
+          </p>
+          <AumTrendChart
+            data={entry.aumHistory}
+            stockPriceSeries={entry.stockPriceSeries}
+            stockLabel={entry.tradingSymbol}
+            range={range}
+            onRangeChange={controls.setRange}
+            maDaysInput={controls.maDaysInput}
+            onMaDaysInputChange={controls.setMaDaysInput}
+            aumOnlyAveraging={aumOnlyAveraging}
+            levelsCorrelation={controls.levelsCorrelation}
+            showReportedAum={false}
+            initialView="ratio"
+          />
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Regression: the Regression tab's deep-dive (its ratio panel moved to
+// the Ratio section), with the shared Range / Moving avg ───────────────
+export function RegressionSection({
+  entry,
+  defaults,
+  controls,
+}: {
+  entry: AmcStockCorrelationEntry | undefined;
+  defaults: StockCorrelationDefaults | undefined;
+  controls: FitControls;
+}) {
+  const result = useFitResult(entry, defaults, controls);
   if (!entry || !defaults) return null;
   return (
     <div className="aa-reused">
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1" role="group" aria-label="Date range">
+          {RANGE_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => controls.setRange(o.value)}
+              className={
+                o.value === controls.range
+                  ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
+                  : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+              }
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        <label htmlFor="aa-regression-ma" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          Moving avg (days)
+          <input
+            id="aa-regression-ma"
+            type="number"
+            min={1}
+            max={250}
+            inputMode="numeric"
+            value={controls.maDaysInput}
+            onChange={(e) => controls.setMaDaysInput(e.target.value)}
+            className="h-7 w-16 rounded-md border bg-background px-2 text-xs text-foreground"
+          />
+        </label>
+        <SavedOrReset controls={controls} />
+        <span className="text-xs text-muted-foreground">Shared with the Ratio section; not saved.</span>
+      </div>
       <RegressionDeepDive
         result={result}
         tradingSymbol={entry.tradingSymbol}
-        maWindow={defaults.maDays}
+        maWindow={controls.maDays}
         extraLagDays={defaults.extraLagDays}
         showScatter
+        showRatioPanel={false}
       />
     </div>
+  );
+}
+
+// Price at each Price ÷ AUM level × today's AUM MA. Same numbers as the
+// chart's Ratio view bands; on the saved settings the Mean row is the
+// Valuation Model's Ratio Base.
+function RatioLadderPanel({
+  ladder,
+  maDays,
+  aumOnlyAveraging,
+  cmpInr,
+  cmpIsLive,
+}: {
+  ladder: RatioLadder | null;
+  maDays: number;
+  aumOnlyAveraging: boolean;
+  cmpInr: number | null;
+  cmpIsLive: boolean;
+}) {
+  const maLabel = maDays > 1 ? `AUM MA${maDays}` : "AUM";
+  const priceLabel = aumOnlyAveraging || maDays <= 1 ? "Price" : `Price MA${maDays}`;
+  return (
+    <section className="pl-panel vm" aria-label="Ratio analysis" style={{ marginTop: 16 }}>
+      <div className="pl-band">
+        Ratio Analysis{" "}
+        <span className="pl-band-unit">
+          {priceLabel} ÷ {maLabel} · ₹ per share · vs {cmpIsLive ? "live price" : "last close"} {rupees(cmpInr)}
+        </span>
+      </div>
+      {!ladder ? (
+        <p className="aa-note" style={{ padding: 12 }}>
+          Not enough history in this range to compute a stable ratio distribution.
+        </p>
+      ) : (
+        <div className="vm-grid">
+          <table className="vm-t">
+            <thead>
+              <tr>
+                <th scope="col">Level</th>
+                <th scope="col">Ratio</th>
+                <th scope="col">Price</th>
+              </tr>
+            </thead>
+            <tbody>
+              {RATIO_LADDER_SDS.map((k) => {
+                const ratio = ladder.meanRatio + k * ladder.stdDev;
+                const price = ratio * ladder.aumCr;
+                return (
+                  <tr key={k} className={k === 0 ? "vm-avg" : undefined}>
+                    <th scope="row">
+                      <b>{RATIO_LADDER_LABELS[k]}</b>
+                    </th>
+                    <td className="vm-c">
+                      <span className="vm-p">{ratio.toFixed(5)}</span>
+                    </td>
+                    <PriceCell price={price} upside={cmpInr ? price / cmpInr - 1 : null} />
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <table className="aa-kv">
+            <tbody>
+              <tr>
+                <th scope="row">Current ratio</th>
+                <td>{ladder.currentRatio.toFixed(5)}</td>
+              </tr>
+              <tr>
+                <th scope="row">Z-score</th>
+                <td>{ladder.zScore === null ? "—" : `${ladder.zScore >= 0 ? "+" : ""}${ladder.zScore.toFixed(2)}`}</td>
+              </tr>
+              <tr>
+                <th scope="row">Today&apos;s {maLabel}</th>
+                <td>₹{formatLedgerInr(ladder.aumCr)} Cr</td>
+              </tr>
+              <tr>
+                <th scope="row">Sessions</th>
+                <td>
+                  {ladder.n} · {ladder.from} → {ladder.to}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
