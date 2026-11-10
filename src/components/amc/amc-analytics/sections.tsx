@@ -15,6 +15,8 @@ import {
   type RegressionLine,
 } from "@/lib/amc-stock/aum-what-if";
 import { computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
+import { computePctChangeRegression } from "@/lib/amc-stock/pct-change-regression";
+import { PctChangeRegressionView } from "./pct-change-regression-view";
 import type { StockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
@@ -261,7 +263,8 @@ export function LivePredictorSection({
 
 // ── Ratio and Regression share one set of controls ─────────────────────
 // Range and Moving avg re-fit both sections; AUM-only avg and Levels reach
-// the Ratio section only (the regression engine always uses the raw price).
+// the Ratio section only (the regression engine always uses the raw price);
+// Levels also swaps the Regression section to the daily % change model.
 // Held in the AmcAnalytics shell so a choice survives switching sections
 // and AMCs. Never saved; Extra Lag stays on the saved setting.
 const RATIO_LADDER_LABELS: Record<(typeof RATIO_LADDER_SDS)[number], string> = {
@@ -416,7 +419,7 @@ export function RatioSection({
           </div>
           <p className="text-xs text-muted-foreground">
             Range and Moving avg here also re-fit the Regression section. AUM-only avg changes the ratio ladder and this
-            chart; Levels changes the Absolute view&apos;s Corr/R². None of these are saved, and the Valuation Model stays
+            chart; Levels changes the Absolute view&apos;s Corr/R² and switches the Regression section to the daily % change model. None of these are saved, and the Valuation Model stays
             on the saved settings.
           </p>
           <AumTrendChart
@@ -450,6 +453,15 @@ export function RegressionSection({
   controls: FitControls;
 }) {
   const result = useFitResult(entry, defaults, controls);
+  const { maDays, range, levelsCorrelation } = controls;
+  const pctResult = useMemo(() => {
+    if (!entry || !defaults || levelsCorrelation) return null;
+    return computePctChangeRegression(entry.aumHistory, entry.stockPriceSeries, {
+      maWindow: maDays,
+      extraLagDays: defaults.extraLagDays as ExtraLagDays,
+      range,
+    });
+  }, [entry, defaults, maDays, range, levelsCorrelation]);
   if (!entry || !defaults) return null;
   return (
     <div className="aa-reused">
@@ -483,17 +495,35 @@ export function RegressionSection({
             className="h-7 w-16 rounded-md border bg-background px-2 text-xs text-foreground"
           />
         </label>
+        <ToggleBox
+          id="aa-regression-levels"
+          label="Levels (no % chg)"
+          title="On: Price regressed on the AUM MA level. Off: the daily % change in the raw share price regressed on the daily % change in the AUM MA (fair value stays on the levels line)"
+          checked={levelsCorrelation}
+          onChange={controls.setLevelsCorrelation}
+        />
         <SavedOrReset controls={controls} />
         <span className="text-xs text-muted-foreground">Shared with the Ratio section; not saved.</span>
       </div>
       <RegressionDeepDive
         result={result}
         tradingSymbol={entry.tradingSymbol}
-        maWindow={controls.maDays}
+        maWindow={maDays}
         extraLagDays={defaults.extraLagDays}
         showScatter
         showRatioPanel={false}
+        fairValueOnly={!levelsCorrelation}
       />
+      {!levelsCorrelation && (
+        <div className="mt-3">
+          <PctChangeRegressionView
+            result={pctResult}
+            tradingSymbol={entry.tradingSymbol}
+            maWindow={maDays}
+            extraLagDays={defaults.extraLagDays}
+          />
+        </div>
+      )}
     </div>
   );
 }

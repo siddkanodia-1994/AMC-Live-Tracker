@@ -6,17 +6,17 @@ import type { RegressionResult } from "@/lib/amc-stock/regression-engine";
 import { RegressionChart } from "./regression-chart";
 import { RegressionScatterChart } from "./regression-scatter-chart";
 
-const MIN_SESSIONS = 60;
-const MIN_NW_T = 2;
+export const MIN_SESSIONS = 60;
+export const MIN_NW_T = 2;
 const MIN_DRIVER_VARIATION_PCT = 10;
-const DW_LOWER = 1.5;
-const DW_UPPER = 2.5;
+export const DW_LOWER = 1.5;
+export const DW_UPPER = 2.5;
 
 function formatSigma(sigma: number): string {
   return `${sigma >= 0 ? "+" : "−"}${Math.abs(sigma).toFixed(1)}σ`;
 }
 
-function Tile({ pass, head, sub }: { pass: boolean; head: string; sub: string }) {
+export function Tile({ pass, head, sub }: { pass: boolean; head: string; sub: string }) {
   return (
     <div
       className={
@@ -48,6 +48,8 @@ function Tile({ pass, head, sub }: { pass: boolean; head: string; sub: string })
 // chart; only the Stock Correlation tab opts in (user's choice).
 // `showRatioPanel={false}` drops the Price ÷ AUM panel; only the AMC
 // Analytics tab does that, since its own Ratio section covers it.
+// `fairValueOnly` stops after the fair-value panel(s); the AMC Analytics
+// tab uses it when its Levels toggle swaps in the % change model below.
 export function RegressionDeepDive({
   result,
   tradingSymbol,
@@ -55,6 +57,7 @@ export function RegressionDeepDive({
   extraLagDays,
   showScatter = false,
   showRatioPanel = true,
+  fairValueOnly = false,
 }: {
   result: RegressionResult | null;
   tradingSymbol: string;
@@ -62,6 +65,7 @@ export function RegressionDeepDive({
   extraLagDays: number;
   showScatter?: boolean;
   showRatioPanel?: boolean;
+  fairValueOnly?: boolean;
 }) {
   if (!result) {
     return <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">Not enough aligned AUM/price history to fit a regression for this AMC at this range.</div>;
@@ -152,47 +156,51 @@ export function RegressionDeepDive({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-        <Tile pass={result.n >= MIN_SESSIONS} head={`${result.n} sessions`} sub={`needs ≥ ${MIN_SESSIONS}`} />
-        <Tile
-          pass={Math.abs(result.neweyWest.tStat) >= MIN_NW_T}
-          head={`NW t = ${result.neweyWest.tStat.toFixed(2)}`}
-          sub={`significant (needs ≥${MIN_NW_T}), ${result.neweyWest.lags} lags`}
-        />
-        <Tile
-          pass={result.driverVariationPct >= MIN_DRIVER_VARIATION_PCT}
-          head={`AUM MA ${formatCr(result.driverMin)}–${formatCr(result.driverMax)}`}
-          sub={`moved ${result.driverVariationPct.toFixed(0)}% over the fit (needs ≥${MIN_DRIVER_VARIATION_PCT}%)`}
-        />
-        {result.holdout ? (
-          <Tile
-            pass={result.holdout.modelBeatsNaive}
-            head={`Holdout ${result.holdout.modelMapePct.toFixed(1)}% vs ${result.holdout.naiveMapePct.toFixed(1)}%`}
-            sub={`${result.holdout.modelBeatsNaive ? "beats" : "loses to"} "price unchanged" over the last ${result.holdout.holdoutSessions} sessions`}
-          />
-        ) : (
-          <Tile pass={false} head="Holdout" sub="Insufficient sessions for a holdout test" />
-        )}
-        <Tile
-          pass={result.durbinWatson !== null && result.durbinWatson >= DW_LOWER && result.durbinWatson <= DW_UPPER}
-          head={`Durbin–Watson ${result.durbinWatson !== null ? result.durbinWatson.toFixed(2) : "—"}`}
-          sub={result.durbinWatson !== null && result.durbinWatson >= DW_LOWER && result.durbinWatson <= DW_UPPER ? "no strong autocorrelation" : "errors autocorrelated: gaps persist for weeks"}
-        />
-      </div>
+      {!fairValueOnly && (
+        <>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+            <Tile pass={result.n >= MIN_SESSIONS} head={`${result.n} sessions`} sub={`needs ≥ ${MIN_SESSIONS}`} />
+            <Tile
+              pass={Math.abs(result.neweyWest.tStat) >= MIN_NW_T}
+              head={`NW t = ${result.neweyWest.tStat.toFixed(2)}`}
+              sub={`significant (needs ≥${MIN_NW_T}), ${result.neweyWest.lags} lags`}
+            />
+            <Tile
+              pass={result.driverVariationPct >= MIN_DRIVER_VARIATION_PCT}
+              head={`AUM MA ${formatCr(result.driverMin)}–${formatCr(result.driverMax)}`}
+              sub={`moved ${result.driverVariationPct.toFixed(0)}% over the fit (needs ≥${MIN_DRIVER_VARIATION_PCT}%)`}
+            />
+            {result.holdout ? (
+              <Tile
+                pass={result.holdout.modelBeatsNaive}
+                head={`Holdout ${result.holdout.modelMapePct.toFixed(1)}% vs ${result.holdout.naiveMapePct.toFixed(1)}%`}
+                sub={`${result.holdout.modelBeatsNaive ? "beats" : "loses to"} "price unchanged" over the last ${result.holdout.holdoutSessions} sessions`}
+              />
+            ) : (
+              <Tile pass={false} head="Holdout" sub="Insufficient sessions for a holdout test" />
+            )}
+            <Tile
+              pass={result.durbinWatson !== null && result.durbinWatson >= DW_LOWER && result.durbinWatson <= DW_UPPER}
+              head={`Durbin–Watson ${result.durbinWatson !== null ? result.durbinWatson.toFixed(2) : "—"}`}
+              sub={result.durbinWatson !== null && result.durbinWatson >= DW_LOWER && result.durbinWatson <= DW_UPPER ? "no strong autocorrelation" : "errors autocorrelated: gaps persist for weeks"}
+            />
+          </div>
 
-      <div className="space-y-1 rounded-lg border bg-card p-4">
-        <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Share Price: Actual vs Model</p>
-        <RegressionChart points={result.chartPoints} />
-      </div>
+          <div className="space-y-1 rounded-lg border bg-card p-4">
+            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Share Price: Actual vs Model</p>
+            <RegressionChart points={result.chartPoints} />
+          </div>
 
-      {showScatter && (
-        <div className="space-y-1 rounded-lg border bg-card p-4">
-          <p className="text-xs text-muted-foreground">
-            <span className="font-semibold tracking-wide uppercase">AUM MA{maWindow} → Price</span>
-            {" "}· each session, shaded by date · {lagLabel}
-          </p>
-          <RegressionScatterChart points={result.chartPoints} slope={result.slope} intercept={result.intercept} />
-        </div>
+          {showScatter && (
+            <div className="space-y-1 rounded-lg border bg-card p-4">
+              <p className="text-xs text-muted-foreground">
+                <span className="font-semibold tracking-wide uppercase">AUM MA{maWindow} → Price</span>
+                {" "}· each session, shaded by date · {lagLabel}
+              </p>
+              <RegressionScatterChart points={result.chartPoints} slope={result.slope} intercept={result.intercept} />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
