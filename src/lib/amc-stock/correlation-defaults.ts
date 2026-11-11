@@ -12,6 +12,7 @@ import {
   DEFAULT_VALUATION_RATIO_DAYS,
   isBestFitAumPct,
   isValuationAumDays,
+  isValuationAvgDays,
 } from "../valuation/valuation-settings";
 
 const SETTINGS_KEY = "stock_correlation_defaults";
@@ -41,11 +42,21 @@ export interface StockCorrelationDefaults {
   // average. Independent of maDays. Older saved rows lack it (5).
   whatIfAumDays: number;
   // AMC Analytics' Valuation Model (see src/lib/valuation/target-price.ts):
-  // the Ratio method's AUM average (history and today), the Best fit line's
-  // starting AUM, and its −/+ % move. Older saved rows lack them (45/45/10).
+  // the Ratio method's "Today's AUM" (multiplied into the mean ratio), the
+  // Best fit line's starting AUM, and its −/+ % move. Older saved rows lack
+  // them (45/45/10). valuationRatioDays once drove the ratio history too.
   valuationRatioDays: number;
   bestFitAumDays: number;
   bestFitAumPct: number;
+  // The Ratio's own period and the N-day avg AUM its mean and SD are built
+  // on, and the Best fit line's own period and moving average. Older saved
+  // rows lack them and fall back to what they used before: the saved range,
+  // valuationRatioDays (at least 1) and maDays -- so nothing moves until
+  // someone saves new ones.
+  valuationRatioRange: RangeOption;
+  valuationRatioHistoryDays: number;
+  bestFitRange: RangeOption;
+  bestFitMaDays: number;
 }
 
 const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
@@ -60,6 +71,10 @@ const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
   valuationRatioDays: DEFAULT_VALUATION_RATIO_DAYS,
   bestFitAumDays: DEFAULT_BEST_FIT_AUM_DAYS,
   bestFitAumPct: DEFAULT_BEST_FIT_AUM_PCT,
+  valuationRatioRange: "3y",
+  valuationRatioHistoryDays: DEFAULT_VALUATION_RATIO_DAYS,
+  bestFitRange: "3y",
+  bestFitMaDays: DEFAULT_VALUATION_RATIO_DAYS,
 };
 
 // The 8 listed AMCs the Stock Correlation table shows -- the only slugs an
@@ -106,18 +121,27 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
   if (!row) return FALLBACK_DEFAULTS;
   try {
     const parsed = JSON.parse(row.value) as Partial<StockCorrelationDefaults>;
+    const range = isRangeOption(parsed.range) ? parsed.range : FALLBACK_DEFAULTS.range;
+    const maDays = Number.isFinite(parsed.maDays) && (parsed.maDays as number) >= 0 ? Number(parsed.maDays) : FALLBACK_DEFAULTS.maDays;
+    const valuationRatioDays = isValuationAumDays(parsed.valuationRatioDays) ? parsed.valuationRatioDays : FALLBACK_DEFAULTS.valuationRatioDays;
     return {
-      range: isRangeOption(parsed.range) ? parsed.range : FALLBACK_DEFAULTS.range,
-      maDays: Number.isFinite(parsed.maDays) && (parsed.maDays as number) >= 0 ? Number(parsed.maDays) : FALLBACK_DEFAULTS.maDays,
+      range,
+      maDays,
       ratioBasis: isRatioBasis(parsed.ratioBasis) ? parsed.ratioBasis : FALLBACK_DEFAULTS.ratioBasis,
       aumOnlyAveraging: typeof parsed.aumOnlyAveraging === "boolean" ? parsed.aumOnlyAveraging : FALLBACK_DEFAULTS.aumOnlyAveraging,
       levelsCorrelation: typeof parsed.levelsCorrelation === "boolean" ? parsed.levelsCorrelation : FALLBACK_DEFAULTS.levelsCorrelation,
       extraLagDays: isExtraLagDays(parsed.extraLagDays) ? parsed.extraLagDays : FALLBACK_DEFAULTS.extraLagDays,
       aumInputs: sanitizeAumInputs(parsed.aumInputs) ?? FALLBACK_DEFAULTS.aumInputs,
       whatIfAumDays: isWhatIfAumDays(parsed.whatIfAumDays) ? parsed.whatIfAumDays : FALLBACK_DEFAULTS.whatIfAumDays,
-      valuationRatioDays: isValuationAumDays(parsed.valuationRatioDays) ? parsed.valuationRatioDays : FALLBACK_DEFAULTS.valuationRatioDays,
+      valuationRatioDays,
       bestFitAumDays: isValuationAumDays(parsed.bestFitAumDays) ? parsed.bestFitAumDays : FALLBACK_DEFAULTS.bestFitAumDays,
       bestFitAumPct: isBestFitAumPct(parsed.bestFitAumPct) ? parsed.bestFitAumPct : FALLBACK_DEFAULTS.bestFitAumPct,
+      valuationRatioRange: isRangeOption(parsed.valuationRatioRange) ? parsed.valuationRatioRange : range,
+      valuationRatioHistoryDays: isValuationAvgDays(parsed.valuationRatioHistoryDays)
+        ? parsed.valuationRatioHistoryDays
+        : Math.max(1, valuationRatioDays),
+      bestFitRange: isRangeOption(parsed.bestFitRange) ? parsed.bestFitRange : range,
+      bestFitMaDays: isValuationAvgDays(parsed.bestFitMaDays) ? parsed.bestFitMaDays : Math.max(1, Math.min(250, Math.round(maDays))),
     };
   } catch {
     return FALLBACK_DEFAULTS;

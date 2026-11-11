@@ -32,6 +32,10 @@ import {
   DEFAULT_BEST_FIT_AUM_PCT,
   DEFAULT_VALUATION_RATIO_DAYS,
   isBestFitAumPct,
+  isValuationAvgDays,
+  MAX_VALUATION_AVG_DAYS,
+  MIN_VALUATION_AVG_DAYS,
+  RATIO_TODAY_AUM_OPTIONS,
   VALUATION_AUM_DAYS_OPTIONS,
 } from "@/lib/valuation/valuation-settings";
 
@@ -622,26 +626,34 @@ const METHOD_ROWS: { key: ValuationMethodKey; name: string; how: (t: TargetPrice
     key: "ratio",
     name: "Ratio",
     how: (t, s) =>
-      `Price ÷ ${dayText(s.ratioDays)} equity AUM (3Y): −1 SD / Mean / +1 SD × today's ${dayText(s.ratioDays)} AUM (₹${formatLedgerInr(t.ratioAumCr)} Cr)`,
+      `Price ÷ ${dayText(s.ratioHistoryDays)} equity AUM (${rangeText(s.ratioRange)}${t.ratioFit ? `, ${t.ratioFit.sessions} sessions` : ""}): −1 SD / Mean / +1 SD × today's ${dayText(s.ratioTodayDays)} AUM (₹${formatLedgerInr(t.ratioAumCr)} Cr)`,
   },
   {
     key: "bestFit",
     name: "Best fit line",
     how: (t, s) =>
-      `Regression line at ${dayText(s.bestFitAumDays)} AUM (₹${formatLedgerInr(t.bestFitAumCr)} Cr) −${s.bestFitAumPct}% / as is / +${s.bestFitAumPct}%`,
+      `Line fitted on ${rangeText(s.bestFitRange)} with ${dayText(s.bestFitMaDays)} AUM${t.bestFitLine ? ` (R² ${t.bestFitLine.r2.toFixed(2)}, ${t.bestFitLine.sessions} sessions)` : ""}, read at ${dayText(s.bestFitAumDays)} AUM (₹${formatLedgerInr(t.bestFitAumCr)} Cr) −${s.bestFitAumPct}% / as is / +${s.bestFitAumPct}%`,
   },
   { key: "pe", name: "PE", how: () => "FY28E PAT × target PE ÷ shares, discounted 2 periods (FY27, FY26 rates)" },
   { key: "mcapSales", name: "Mcap / Sales", how: () => "FY28E revenue × Mcap / Sales ÷ shares, discounted 2 periods" },
 ];
 
 interface ValuationSettings {
-  ratioDays: number;
+  ratioRange: RangeOption;
+  ratioHistoryDays: number;
+  ratioTodayDays: number;
+  bestFitRange: RangeOption;
+  bestFitMaDays: number;
   bestFitAumDays: number;
   bestFitAumPct: number;
 }
 
 function dayText(days: number): string {
   return days === 0 ? "live" : `${days}D-avg`;
+}
+
+function rangeText(range: RangeOption): string {
+  return RANGE_OPTIONS.find((o) => o.value === range)?.label ?? range;
 }
 
 function PriceCell({ price, upside }: { price: number | null; upside: number | null }) {
@@ -964,7 +976,11 @@ export function ValuationModelSection({
   const [local, setLocal] = useState<Partial<ValuationSettings>>({});
   const [saving, setSaving] = useState(false);
   const settings: ValuationSettings = {
-    ratioDays: local.ratioDays ?? defaults?.valuationRatioDays ?? DEFAULT_VALUATION_RATIO_DAYS,
+    ratioRange: local.ratioRange ?? defaults?.valuationRatioRange ?? "3y",
+    ratioHistoryDays: local.ratioHistoryDays ?? defaults?.valuationRatioHistoryDays ?? DEFAULT_VALUATION_RATIO_DAYS,
+    ratioTodayDays: local.ratioTodayDays ?? defaults?.valuationRatioDays ?? DEFAULT_VALUATION_RATIO_DAYS,
+    bestFitRange: local.bestFitRange ?? defaults?.bestFitRange ?? "3y",
+    bestFitMaDays: local.bestFitMaDays ?? defaults?.bestFitMaDays ?? DEFAULT_VALUATION_RATIO_DAYS,
     bestFitAumDays: local.bestFitAumDays ?? defaults?.bestFitAumDays ?? DEFAULT_BEST_FIT_AUM_DAYS,
     bestFitAumPct: local.bestFitAumPct ?? defaults?.bestFitAumPct ?? DEFAULT_BEST_FIT_AUM_PCT,
   };
@@ -975,17 +991,32 @@ export function ValuationModelSection({
     return computeTargetPrices({
       aumHistory: entry.aumHistory,
       stockPriceSeries: entry.stockPriceSeries,
-      range: defaults.range,
-      maDays: defaults.maDays,
+      ratioRange: settings.ratioRange,
+      ratioHistoryDays: settings.ratioHistoryDays,
+      ratioTodayDays: settings.ratioTodayDays,
+      bestFitRange: settings.bestFitRange,
+      bestFitMaDays: settings.bestFitMaDays,
       extraLagDays: defaults.extraLagDays,
-      ratioDays: settings.ratioDays,
       bestFitAumDays: settings.bestFitAumDays,
       bestFitAumPct: settings.bestFitAumPct,
       manual: sheetForSlug.manual,
       mcapSalesSeries: withLiveValuationPoint(valuation?.points ?? [], entry.stockPriceSeries.at(-1), entry.stockPriceSeries).flatMap((p) => (p.mcapToSales === null ? [] : [{ date: p.date, value: p.mcapToSales }])),
       cmpInr,
     });
-  }, [entry, defaults, sheetForSlug, valuation, settings.ratioDays, settings.bestFitAumDays, settings.bestFitAumPct, cmpInr]);
+  }, [
+    entry,
+    defaults,
+    sheetForSlug,
+    valuation,
+    settings.ratioRange,
+    settings.ratioHistoryDays,
+    settings.ratioTodayDays,
+    settings.bestFitRange,
+    settings.bestFitMaDays,
+    settings.bestFitAumDays,
+    settings.bestFitAumPct,
+    cmpInr,
+  ]);
 
   async function saveField(field: FortnightlyFieldName, value: number | null) {
     if (!sheetForSlug) return;
@@ -1010,9 +1041,13 @@ export function ValuationModelSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...defaults,
-          valuationRatioDays: settings.ratioDays,
+          valuationRatioDays: settings.ratioTodayDays,
           bestFitAumDays: settings.bestFitAumDays,
           bestFitAumPct: settings.bestFitAumPct,
+          valuationRatioRange: settings.ratioRange,
+          valuationRatioHistoryDays: settings.ratioHistoryDays,
+          bestFitRange: settings.bestFitRange,
+          bestFitMaDays: settings.bestFitMaDays,
         }),
       });
       if (!res.ok) {
@@ -1124,6 +1159,12 @@ export function ValuationModelSection({
             </table>
 
             <table className="vm-t vm-inputs">
+              <colgroup>
+                <col className="vm-col-label" />
+                <col />
+                <col />
+                <col />
+              </colgroup>
               <thead>
                 <tr>
                   <th scope="col" colSpan={4}>
@@ -1132,24 +1173,80 @@ export function ValuationModelSection({
                 </tr>
               </thead>
               <tbody>
+                <tr className="vm-grp">
+                  <td colSpan={4}>Ratio</td>
+                </tr>
                 <tr>
                   <th scope="row">
-                    Ratio · AUM average <small>history and today</small>
+                    Period <small>window for the mean and SD</small>
                   </th>
                   <td colSpan={3}>
-                    <DaysSelect value={settings.ratioDays} onChange={(v) => setLocal((s) => ({ ...s, ratioDays: v }))} label="Ratio AUM average" />
+                    <RangeButtons value={settings.ratioRange} onChange={(v) => setLocal((s) => ({ ...s, ratioRange: v }))} label="Ratio period" />
                   </td>
                 </tr>
                 <tr>
                   <th scope="row">
-                    Best fit · AUM <small>line stays on the {defaults?.maDays}D avg</small>
+                    History AUM avg (days) <small>the mean and SD are built on</small>
                   </th>
                   <td colSpan={3}>
-                    <DaysSelect value={settings.bestFitAumDays} onChange={(v) => setLocal((s) => ({ ...s, bestFitAumDays: v }))} label="Best fit AUM" />
+                    <AvgDaysInput
+                      value={settings.ratioHistoryDays}
+                      onChange={(v) => setLocal((s) => ({ ...s, ratioHistoryDays: v }))}
+                      label="Ratio history AUM average (days)"
+                    />
                   </td>
                 </tr>
                 <tr>
-                  <th scope="row">Best fit · AUM −/+ (%)</th>
+                  <th scope="row">
+                    Today&apos;s AUM <small>multiplied into the mean ratio</small>
+                  </th>
+                  <td colSpan={3}>
+                    <DaysSelect
+                      value={settings.ratioTodayDays}
+                      options={RATIO_TODAY_AUM_OPTIONS}
+                      onChange={(v) => setLocal((s) => ({ ...s, ratioTodayDays: v }))}
+                      label="Ratio today's AUM"
+                    />
+                  </td>
+                </tr>
+                <tr className="vm-grp">
+                  <td colSpan={4}>Best fit</td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    Period <small>window the line is fitted on</small>
+                  </th>
+                  <td colSpan={3}>
+                    <RangeButtons value={settings.bestFitRange} onChange={(v) => setLocal((s) => ({ ...s, bestFitRange: v }))} label="Best fit period" />
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    Line moving avg (days) <small>the AUM avg the line is fitted on</small>
+                  </th>
+                  <td colSpan={3}>
+                    <AvgDaysInput
+                      value={settings.bestFitMaDays}
+                      onChange={(v) => setLocal((s) => ({ ...s, bestFitMaDays: v }))}
+                      label="Best fit line moving average (days)"
+                    />
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    AUM <small>where the line is read</small>
+                  </th>
+                  <td colSpan={3}>
+                    <DaysSelect
+                      value={settings.bestFitAumDays}
+                      options={VALUATION_AUM_DAYS_OPTIONS}
+                      onChange={(v) => setLocal((s) => ({ ...s, bestFitAumDays: v }))}
+                      label="Best fit AUM"
+                    />
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">AUM −/+ (%)</th>
                   <td colSpan={3}>
                     <input
                       className="vm-in"
@@ -1168,12 +1265,18 @@ export function ValuationModelSection({
                     <button type="button" className="aa-btn" disabled={saving} onClick={saveSettings}>
                       {saving ? "Saving…" : "Save as default"}
                     </button>{" "}
-                    <small>the two AUM choices and the ±% are shared settings</small>
+                    <small>every setting here is shared, for all AMCs and everyone</small>
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
+        )}
+        {table?.bestFitLine && table.bestFitLine.slope < 0 && (
+          <p className="aa-warn" style={{ paddingTop: 10 }}>
+            The {rangeText(settings.bestFitRange)} best fit line slopes down for this AMC (R² {table.bestFitLine.r2.toFixed(2)}), so its Bear sits
+            above its Bull: a weak fit for this period.
+          </p>
         )}
         <p className="aa-note" style={{ padding: "0 12px 12px" }}>
           PE, Mcap / Sales, PAT, revenue, shares and discount rates are edited in the Valuation · FY28E tables at the top.
@@ -1183,14 +1286,71 @@ export function ValuationModelSection({
   );
 }
 
-function DaysSelect({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
+function DaysSelect({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: number;
+  options: readonly { value: number; label: string }[];
+  onChange: (v: number) => void;
+  label: string;
+}) {
+  // A saved value outside this list (e.g. an older 15D) still shows.
+  const all = options.some((o) => o.value === value) ? options : [...options, { value, label: `${value}D avg` }];
   return (
     <select className="vm-sel" aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))}>
-      {VALUATION_AUM_DAYS_OPTIONS.map((o) => (
+      {all.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}
         </option>
       ))}
     </select>
+  );
+}
+
+function RangeButtons({ value, onChange, label }: { value: RangeOption; onChange: (v: RangeOption) => void; label: string }) {
+  return (
+    <div className="vm-seg" role="group" aria-label={label}>
+      {RANGE_OPTIONS.map((o) => (
+        <button key={o.value} type="button" aria-pressed={o.value === value} onClick={() => onChange(o.value)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// A whole number of days, 1–250; checked when you leave the box or press Enter.
+function AvgDaysInput({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const n = Number(draft.trim());
+    setDraft(null);
+    if (!isValuationAvgDays(n)) {
+      toast.error(`${label}: a whole number of days from ${MIN_VALUATION_AVG_DAYS} to ${MAX_VALUATION_AVG_DAYS}`);
+      return;
+    }
+    if (n !== value) onChange(n);
+  };
+  return (
+    <input
+      className="vm-in"
+      inputMode="numeric"
+      aria-label={label}
+      value={draft ?? String(value)}
+      onFocus={() => setDraft(String(value))}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") {
+          setDraft(null);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+    />
   );
 }

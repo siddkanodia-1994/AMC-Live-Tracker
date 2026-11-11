@@ -492,11 +492,14 @@
 }
 
 /* Valuation Model: the Target Price table and its inputs */
-.aa .vm-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
+/* The method table keeps its own row heights (no stretching to the
+   settings' height), and the settings' labels get room for one line. */
+.aa .vm-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); align-items: start; }
+.aa .vm-inputs .vm-col-label { width: 42%; }
 .aa .vm-t { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: fixed; }
 .aa .vm-t:first-child { border-right: 2px solid var(--pl-color-border); }
 .aa .vm-t thead th { background: var(--pl-ledger-head); color: var(--pl-on-dark); font-weight: 500; padding: 4px 8px; border: 1px solid var(--pl-ledger-grid); text-align: center; }
-.aa .vm-t thead th:first-child { width: 44%; }
+.aa .vm-t:not(.vm-inputs) thead th:first-child { width: 44%; }
 .aa .vm-t tbody th { text-align: left; font-weight: 400; padding: 7px 10px; border-bottom: 1px solid var(--pl-ledger-rule); color: var(--pl-ledger-cell); vertical-align: top; }
 .aa .vm-t tbody th b { display: block; color: var(--pl-ledger-cell-strong); }
 .aa .vm-t tbody th small { display: block; color: var(--pl-color-text-muted); font-size: 11px; line-height: 1.35; margin-top: 2px; }
@@ -584,3 +587,10 @@
 .aa .pl-tab.is-active .pl-tab-chg--neg { color: #ffe1e3; }
 .aa .aa-live { display: inline-flex; align-items: center; gap: 5px; color: var(--pl-chg-pos); font: 700 11px/1.2 var(--pl-font-condensed); letter-spacing: 0.08em; }
 .aa .aa-live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }
+
+/* Target Price settings: group rows and the period buttons */
+.aa .vm-grp td { background: #f3f3f1; font: 700 11px/1.2 var(--pl-font-condensed); letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-color-text-muted); padding: 6px 10px; text-align: left; }
+.aa .vm-seg { display: flex; flex-wrap: wrap; }
+.aa .vm-seg button { font: 500 12px/1.2 var(--pl-font-sans); padding: 5px 9px; margin: 0 -1px -1px 0; border: 1px solid var(--pl-color-border); background: var(--pl-color-bg-card); color: var(--pl-color-text); cursor: pointer; border-radius: 0; }
+.aa .vm-seg button[aria-pressed="true"] { background: var(--pl-ledger-head); border-color: var(--pl-ledger-head); color: var(--pl-on-dark); }
+.aa .vm-seg button:focus-visible { outline: 2px solid var(--pl-color-primary); outline-offset: 0; position: relative; }

@@ -42,10 +42,12 @@ const HDFC_MANUAL: TargetPriceInputs["manual"] = {
 function inputs(overrides: Partial<TargetPriceInputs> = {}): TargetPriceInputs {
   return {
     ...series(),
-    range: "3y",
-    maDays: 45,
+    ratioRange: "3y",
+    ratioHistoryDays: 45,
+    ratioTodayDays: 45,
+    bestFitRange: "3y",
+    bestFitMaDays: 45,
     extraLagDays: 0,
-    ratioDays: 45,
     bestFitAumDays: 45,
     bestFitAumPct: 10,
     manual: HDFC_MANUAL,
@@ -76,10 +78,32 @@ describe("computeTargetPrices", () => {
     expect(t.methods.ratio.base).toBeCloseTo(r.priceAtMeanRatio!, 6);
     expect(t.methods.ratio.bear).toBeCloseTo((r.ratioMean! - r.ratioStdDev!) * t.ratioAumCr!, 6);
     expect(t.methods.ratio.bull).toBeCloseTo((r.ratioMean! + r.ratioStdDev!) * t.ratioAumCr!, 6);
-    // A different N changes both the history and today's AUM.
-    const live = computeTargetPrices(inputs({ ratioDays: 0 }));
+    expect(t.ratioFit).toEqual({ sessions: r.n, mean: r.ratioMean, sd: r.ratioStdDev });
+    // Live today's AUM keeps the 45D-avg mean and SD, times the live AUM.
+    const live = computeTargetPrices(inputs({ ratioTodayDays: 0 }));
     expect(live.ratioAumCr).toBeCloseTo(inp.aumHistory.at(-1)!.liveAumCr, 6);
+    expect(live.methods.ratio.base).toBeCloseTo(r.ratioMean! * inp.aumHistory.at(-1)!.liveAumCr, 6);
     expect(live.methods.ratio.base).not.toBeCloseTo(t.methods.ratio.base!, 2);
+  });
+
+  it("Ratio: its own period and history average drive the mean and SD; today's AUM stays as picked", () => {
+    const inp = inputs({ ratioRange: "6m", ratioHistoryDays: 20, ratioTodayDays: 45 });
+    const t = computeTargetPrices(inp);
+    const r = computeRegressionResult(inp.aumHistory, inp.stockPriceSeries, { maWindow: 20, extraLagDays: 0, range: "6m" })!;
+    const aum45 = whatIfStartingAum(inp.aumHistory.map((d) => d.liveAumCr), 45)!;
+    expect(t.ratioAumCr).toBeCloseTo(aum45, 6);
+    expect(t.methods.ratio.base).toBeCloseTo(r.ratioMean! * aum45, 6);
+    expect(t.methods.ratio.bull).toBeCloseTo((r.ratioMean! + r.ratioStdDev!) * aum45, 6);
+    expect(t.ratioFit?.sessions).toBe(r.n);
+  });
+
+  it("Best fit: its own period and moving average", () => {
+    const inp = inputs({ bestFitRange: "1y", bestFitMaDays: 20, bestFitAumDays: 0 });
+    const t = computeTargetPrices(inp);
+    const line = computeRegressionResult(inp.aumHistory, inp.stockPriceSeries, { maWindow: 20, extraLagDays: 0, range: "1y" })!;
+    const aum = inp.aumHistory.at(-1)!.liveAumCr;
+    expect(t.methods.bestFit.base).toBeCloseTo(line.slope * aum + line.intercept, 6);
+    expect(t.bestFitLine).toEqual({ sessions: line.n, r2: line.r2, slope: line.slope });
   });
 
   it("Best fit: the saved-MA line at the chosen starting AUM, and at that AUM −/+ x%", () => {

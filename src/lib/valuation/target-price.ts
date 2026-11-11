@@ -3,12 +3,15 @@
 // every formula is the dashboard's existing one, called rather than copied:
 //
 //  - Ratio (as of today): the price ÷ N-day-avg equity AUM ratio's own
-//    history (mean, population SD -- regression-engine's ratio stats, the
-//    same ones Fortnightly's "fair value at mean" uses) applied to today's
-//    N-day-avg AUM: −1 SD / Mean / +1 SD. N applies to BOTH sides.
-//  - Best fit line (as of today): the Stock Correlation table's regression
-//    line (the saved Moving avg, normally 45D) at an N-day-avg AUM
-//    (whatIfStartingAum), and at that AUM −/+ x%.
+//    history over its own period (mean, population SD -- regression-engine's
+//    ratio stats, the same ones Fortnightly's "fair value at mean" uses)
+//    applied to today's AUM, picked separately (live or an M-day average):
+//    −1 SD / Mean / +1 SD. With M = N it is exactly the ratio's own N-day
+//    average, as before the two were split.
+//  - Best fit line (as of today): a price-on-AUM regression line over its
+//    own period and moving average (by default the Stock Correlation
+//    table's saved ones) at an N-day-avg AUM (whatIfStartingAum), and at
+//    that AUM −/+ x%.
 //  - PE: Fortnightly's own computeValuationBlock -- FY28E PAT × target PE ÷
 //    shares, discounted two periods ÷ ((1 + FY27 rate)(1 + FY26 rate)).
 //  - Mcap / Sales: the identical block with FY28E revenue in place of PAT
@@ -41,11 +44,14 @@ export type ValuationMethodKey = "ratio" | "bestFit" | "pe" | "mcapSales";
 export interface TargetPriceInputs {
   aumHistory: AumHistoryPoint[];
   stockPriceSeries: AmcStockPricePoint[];
-  /** The saved Stock Correlation settings the regression line is fitted with. */
-  range: RangeOption;
-  maDays: number;
+  /** Ratio: the period and N-day avg AUM the mean and SD come from, and today's AUM (0 = live). */
+  ratioRange: RangeOption;
+  ratioHistoryDays: number;
+  ratioTodayDays: number;
+  /** Best fit: the period and moving average the line is fitted on (lag from the saved Stock Correlation settings). */
+  bestFitRange: RangeOption;
+  bestFitMaDays: number;
   extraLagDays: number;
-  ratioDays: number;
   bestFitAumDays: number;
   bestFitAumPct: number;
   manual: Pick<
@@ -74,9 +80,12 @@ export interface TargetPriceTable {
   /** How many methods fed each Average cell. */
   averageCount: Record<ScenarioKey, number>;
   upside: Record<ValuationMethodKey | "average", Scenario>;
-  /** The AUMs used: the ratio's N-day average and the best-fit's starting AUM. */
+  /** The AUMs used: the ratio's today's AUM and the best-fit's starting AUM. */
   ratioAumCr: number | null;
   bestFitAumCr: number | null;
+  /** What each fit was built from, for the method descriptions. */
+  ratioFit: { sessions: number; mean: number; sd: number } | null;
+  bestFitLine: { sessions: number; r2: number; slope: number } | null;
   /** The Mcap / Sales multiples actually used, and which came from the 3Y band. */
   mcapSalesMultiples: Scenario;
   mcapSalesFromBand: Record<ScenarioKey, boolean>;
@@ -101,16 +110,19 @@ export function mcapSalesBand(series: { date: string; value: number }[]): { mean
 }
 
 export function computeTargetPrices(input: TargetPriceInputs): TargetPriceTable {
-  // Ratio: N-day-avg AUM on both sides; same-day pairing, as Fortnightly's ratio.
+  // Ratio: mean and SD of price ÷ N-day-avg AUM over the ratio's period
+  // (same-day pairing, as Fortnightly's ratio), times today's AUM. At the
+  // same M as N, whatIfStartingAum equals the regression's own unlagged
+  // N-day average (priceAtMeanRatio ÷ mean) -- checked to float precision.
   const ratioFit = computeRegressionResult(input.aumHistory, input.stockPriceSeries, {
-    maWindow: Math.max(1, input.ratioDays),
+    maWindow: Math.max(1, input.ratioHistoryDays),
     extraLagDays: 0 as ExtraLagDays,
-    range: input.range,
+    range: input.ratioRange,
   });
   const ratioMean = ratioFit?.ratioMean ?? null;
   const ratioSd = ratioFit?.ratioStdDev ?? null;
-  // priceAtMeanRatio = mean × today's (unlagged) N-day-avg AUM.
-  const ratioAumCr = ratioFit && ratioMean && ratioFit.priceAtMeanRatio !== null ? ratioFit.priceAtMeanRatio / ratioMean : null;
+  const aumSeries = trimToLastContinuousRun(input.aumHistory).map((d) => d.liveAumCr);
+  const ratioAumCr = ratioFit ? whatIfStartingAum(aumSeries, input.ratioTodayDays) : null;
   const ratio: Scenario =
     ratioMean !== null && ratioSd !== null && ratioAumCr !== null
       ? { bear: (ratioMean - ratioSd) * ratioAumCr, base: ratioMean * ratioAumCr, bull: (ratioMean + ratioSd) * ratioAumCr }
@@ -118,14 +130,11 @@ export function computeTargetPrices(input: TargetPriceInputs): TargetPriceTable 
 
   // Best fit: the table's own line, read at the chosen starting AUM.
   const line = computeRegressionResult(input.aumHistory, input.stockPriceSeries, {
-    maWindow: input.maDays,
+    maWindow: input.bestFitMaDays,
     extraLagDays: input.extraLagDays as ExtraLagDays,
-    range: input.range,
+    range: input.bestFitRange,
   });
-  const bestFitAumCr = whatIfStartingAum(
-    trimToLastContinuousRun(input.aumHistory).map((d) => d.liveAumCr),
-    input.bestFitAumDays
-  );
+  const bestFitAumCr = whatIfStartingAum(aumSeries, input.bestFitAumDays);
   const k = input.bestFitAumPct / 100;
   const bestFit: Scenario =
     line && bestFitAumCr !== null
@@ -198,6 +207,8 @@ export function computeTargetPrices(input: TargetPriceInputs): TargetPriceTable 
     },
     ratioAumCr: finiteOrNull(ratioAumCr),
     bestFitAumCr: finiteOrNull(bestFitAumCr),
+    ratioFit: ratioFit && ratioMean !== null && ratioSd !== null ? { sessions: ratioFit.n, mean: ratioMean, sd: ratioSd } : null,
+    bestFitLine: line ? { sessions: line.n, r2: line.r2, slope: line.slope } : null,
     mcapSalesMultiples: multiples,
     mcapSalesFromBand: fromBand,
     mcapSalesBand: band,

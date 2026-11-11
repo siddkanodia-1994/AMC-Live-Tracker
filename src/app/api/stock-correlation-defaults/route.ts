@@ -9,7 +9,14 @@ import {
 import { RANGE_OPTIONS } from "@/lib/aum/date-range";
 import { RATIO_BASIS_OPTIONS } from "@/lib/aum/series-math";
 import { EXTRA_LAG_OPTIONS } from "@/lib/amc-stock/regression-engine";
-import { isBestFitAumPct, isValuationAumDays, VALUATION_AUM_DAYS_OPTIONS } from "@/lib/valuation/valuation-settings";
+import {
+  isBestFitAumPct,
+  isValuationAumDays,
+  isValuationAvgDays,
+  MAX_VALUATION_AVG_DAYS,
+  MIN_VALUATION_AVG_DAYS,
+  VALUATION_AUM_DAYS_OPTIONS,
+} from "@/lib/valuation/valuation-settings";
 
 // Deliberately NOT wrapped in withAdminAuth -- unlike every other global
 // app-wide setting in this codebase, saving the Stock Correlation tab's
@@ -70,7 +77,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // The Valuation Model's three choices are optional. When a save omits
+  // The Valuation Model's choices are optional. When a save omits
   // them (the Stock Correlation table's own "Save as default" never sends
   // them), the stored values are kept rather than reset.
   const stored = await getStockCorrelationDefaults();
@@ -87,6 +94,24 @@ export async function POST(request: Request) {
   if (!isBestFitAumPct(bestFitAumPct)) {
     return NextResponse.json({ error: "bestFitAumPct must be a number from 0 to under 100" }, { status: 400 });
   }
+  const valuationRatioRange = body?.valuationRatioRange ?? stored.valuationRatioRange;
+  const bestFitRange = body?.bestFitRange ?? stored.bestFitRange;
+  const valuationRatioHistoryDays = body?.valuationRatioHistoryDays ?? stored.valuationRatioHistoryDays;
+  const bestFitMaDays = body?.bestFitMaDays ?? stored.bestFitMaDays;
+  const rangeChoices = RANGE_OPTIONS.map((o) => o.value).join(", ");
+  if (!RANGE_OPTIONS.some((o) => o.value === valuationRatioRange)) {
+    return NextResponse.json({ error: `valuationRatioRange must be one of ${rangeChoices}` }, { status: 400 });
+  }
+  if (!RANGE_OPTIONS.some((o) => o.value === bestFitRange)) {
+    return NextResponse.json({ error: `bestFitRange must be one of ${rangeChoices}` }, { status: 400 });
+  }
+  const dayRange = `a whole number of days from ${MIN_VALUATION_AVG_DAYS} to ${MAX_VALUATION_AVG_DAYS}`;
+  if (!isValuationAvgDays(valuationRatioHistoryDays)) {
+    return NextResponse.json({ error: `valuationRatioHistoryDays must be ${dayRange}` }, { status: 400 });
+  }
+  if (!isValuationAvgDays(bestFitMaDays)) {
+    return NextResponse.json({ error: `bestFitMaDays must be ${dayRange}` }, { status: 400 });
+  }
 
   const defaults = {
     range,
@@ -100,6 +125,10 @@ export async function POST(request: Request) {
     valuationRatioDays,
     bestFitAumDays,
     bestFitAumPct,
+    valuationRatioRange,
+    valuationRatioHistoryDays,
+    bestFitRange,
+    bestFitMaDays,
   };
   await setStockCorrelationDefaults(defaults);
   return NextResponse.json(defaults);
