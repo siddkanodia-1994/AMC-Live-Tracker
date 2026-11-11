@@ -55,7 +55,7 @@ function lineOf(result: ReturnType<typeof computeRegressionResult>): RegressionL
   return result ? { slope: result.slope, intercept: result.intercept, driverMin: result.driverMin, driverMax: result.driverMax } : null;
 }
 
-function Pct({ change }: { change: number | null }) {
+export function Pct({ change }: { change: number | null }) {
   const p = formatLedgerPct(change);
   return <span className={`pl-chg pl-chg--${p?.tone ?? "neu"}`}>{p?.text ?? "—"}</span>;
 }
@@ -651,7 +651,7 @@ function PriceCell({ price, upside }: { price: number | null; upside: number | n
 
 // A number box that saves on blur/Enter; blank saves null. `scale` maps the
 // shown value to the stored one (rates: shown in %, stored as a fraction).
-function SavedNumberInput({
+export function SavedNumberInput({
   value,
   onSave,
   ariaLabel,

@@ -14,6 +14,7 @@ import { toLedgerPoints } from "@/lib/aum/period-ledger-rows";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
 import { AumSummaryLedger, type LedgerSelectKey, type LedgerSelections } from "./aum-summary-ledger";
 import { AumPredictorSection, LivePredictorSection, RatioSection, RegressionSection, useFitControls, ValuationModelSection } from "./sections";
+import { SipScoreSection } from "./sip-score-section";
 
 // The ledger design system's typefaces, loaded for this tab only (the
 // variables are read by amc-analytics.css's --pl-font-* tokens).
@@ -44,7 +45,7 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 const COMPANY_BY_SLUG =new Map(Object.values(ACCORD_CODES).map((v) => [v.slug, v.company]));
 
-export type AmcAnalyticsSection = "summary" | "aum-predictor" | "live-predictor" | "ratio" | "regression" | "valuation";
+export type AmcAnalyticsSection = "summary" | "sip-score" | "aum-predictor" | "live-predictor" | "ratio" | "regression" | "valuation";
 
 const SECTIONS: { key: AmcAnalyticsSection; label: string; icon: ReactNode }[] = [
   {
@@ -54,6 +55,16 @@ const SECTIONS: { key: AmcAnalyticsSection; label: string; icon: ReactNode }[] =
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <rect x="3" y="4" width="18" height="16" />
         <path d="M3 9h18M3 14h18M9 4v16" />
+      </svg>
+    ),
+  },
+  {
+    key: "sip-score",
+    label: "SIP & Score",
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 20V14M10 20V9M16 20V12M22 20H2" />
+        <path d="M4 10l6-5 6 4 5-4" />
       </svg>
     ),
   },
@@ -313,6 +324,8 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                 ) : (
                   <p className="aa-note">No AUM history for this AMC.</p>
                 )
+              ) : section === "sip-score" ? (
+                <SipScoreSection slug={slug} sheet={sheet} />
               ) : section === "aum-predictor" ? (
                 <AumPredictorSection entry={entry} defaults={data?.defaults} />
               ) : section === "live-predictor" ? (
