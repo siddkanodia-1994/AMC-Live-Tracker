@@ -535,7 +535,6 @@
 .aa .vs-cap { margin: 0 0 6px; font-size: 12px; color: var(--pl-color-text-muted); }
 .aa .vs-cap b { color: var(--pl-ledger-cell-strong); margin-right: 4px; }
 .aa .vs-t { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; border: 2px solid #1a1a1a; font-variant-numeric: tabular-nums; }
-.aa .vs-t + .vs-t { margin-top: 12px; }
 .aa .vs-t th, .aa .vs-t td { padding: 7px 10px; border-bottom: 1px solid #e3e3e3; }
 .aa .vs-t thead th { font-weight: 600; border-bottom: 2px solid #1a1a1a; text-align: center; background: var(--pl-ledger-head); color: var(--pl-on-dark); }
 .aa .vs-t thead th:first-child { text-align: left; width: 40%; }
@@ -544,13 +543,23 @@
 .aa .vs-t thead .vs-bull { box-shadow: inset 0 -4px 0 #3c9a5f; }
 .aa .vs-t tbody th { text-align: left; font-weight: 400; color: var(--pl-ledger-cell); }
 .aa .vs-t tbody td { text-align: right; color: var(--pl-ledger-cell-strong); }
-.aa .vs-t .vs-mult { background: #e6f1dc; }
 .aa .vs-t .vs-strong th, .aa .vs-t .vs-strong td { font-weight: 700; border-top: 2px solid #1a1a1a; color: #1a1a1a; }
-.aa .vs-t .vs-up { background: #fbe3d8; }
-.aa .vs-t .vs-up td { font-weight: 600; }
 .aa .vs-t td.vs-in { background: #dceafb; padding: 4px 6px; }
 .aa .vs-t td.vs-in .vm-in { text-align: center; border-color: #9fc0ea; background: #eef5fd; }
 .aa .vs-t td.vs-in .vm-in.is-band { color: var(--pl-color-text-muted); }
+/* "Ledger grey": the multiple row is marked as input by a blue edge rather
+   than a tint; Upside sits on the settings' grey, badges bordered in their
+   own colour instead of the ledger red. */
+.aa .vs-t .vs-mult th { font-weight: 600; color: #151515; box-shadow: inset 4px 0 0 #2563eb; }
+.aa .vs-t .vs-mult td.vs-in { background: #fff; }
+.aa .vs-t .vs-mult td.vs-in .vm-in { font-weight: 600; }
+.aa .vs-t .vs-up { background: #f3f3f1; }
+.aa .vs-t .vs-up th { font: 700 12px/1.2 var(--pl-font-condensed); letter-spacing: 0.08em; text-transform: uppercase; color: #151515; }
+.aa .vs-t .vs-up td { font-weight: 600; }
+.aa .vs-t .vs-up .pl-chg--pos { border-color: #8fd19e; }
+.aa .vs-t .vs-up .pl-chg--neg { border-color: #f19ba5; }
+.aa .vs-t .vs-up .pl-chg--neu { border-color: #d0d0d0; }
+.aa .vs-t .vs-gap td { height: 10px; padding: 0; background: var(--pl-color-bg); border-top: 2px solid #1a1a1a; border-bottom: 2px solid #1a1a1a; }
 @media (max-width: 900px) { .aa .vs-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* SIP & Score: the Fortnightly SIP and AMC Score cards, two by two */

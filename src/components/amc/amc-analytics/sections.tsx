@@ -747,6 +747,16 @@ function ScenarioRow({ label, values, className, fmt = inr0 }: { label: string; 
   );
 }
 
+/** The band between the FY28 → FY27 → Current steps. One table, not three,
+ *  so every step shares the header's columns. */
+function GapRow() {
+  return (
+    <tr className="vs-gap" aria-hidden="true">
+      <td colSpan={4} />
+    </tr>
+  );
+}
+
 function UpsideRow({ values }: { values: Record<ScenarioKey, number | null> }) {
   return (
     <tr className="vs-up">
@@ -915,10 +925,7 @@ function ScenarioValuationTable({
           </tr>
           <ScenarioRow label="Price Target FY28" values={v.fy28TargetPriceInr} className="vs-strong" />
           <UpsideRow values={v.fy28UpsidePct} />
-        </tbody>
-      </table>
-      <table className="vs-t vs-sub">
-        <tbody>
+          <GapRow />
           <SharedInputRow
             label="Discount % (FY27)"
             value={m.discountRateFy27Pct}
@@ -929,10 +936,7 @@ function ScenarioValuationTable({
             fmt={pctFmt}
           />
           <ScenarioRow label="Target Price FY27" values={v.fy27DiscountedPriceInr} className="vs-strong" />
-        </tbody>
-      </table>
-      <table className="vs-t vs-sub">
-        <tbody>
+          <GapRow />
           <SharedInputRow
             label="Discount % (FY26)"
             value={m.discountRateFy26Pct}
