@@ -6,6 +6,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCr, formatPct, formatPriceInr, formatShortDate } from "@/lib/utils/format";
 import { useAmcStockCorrelations } from "@/hooks/use-amc-stock-correlations";
+import { useLiveCorrelationEntries } from "@/hooks/use-amc-live-prices";
+import type { LiveAumSnapshot } from "@/lib/aum/types";
 import {
   trimToLastContinuousRun,
   computeMovingAverage,
@@ -770,8 +772,13 @@ function zScoreClass(z: number): string {
   return "text-muted-foreground";
 }
 
-export function StockCorrelationTable() {
-  const { data, error, isLoading } = useAmcStockCorrelations();
+export function StockCorrelationTable({ liveAum }: { liveAum?: LiveAumSnapshot } = {}) {
+  const { data: loaded, error, isLoading } = useAmcStockCorrelations();
+  // Today's live share price and live AUM laid over each AMC's history, so
+  // Share Price, fair value, upside and the what-if columns follow the
+  // market every 45s instead of freezing at page load.
+  const { entries: liveEntries } = useLiveCorrelationEntries(loaded?.amcs, liveAum);
+  const data = useMemo(() => (loaded && liveEntries ? { ...loaded, amcs: liveEntries } : loaded), [loaded, liveEntries]);
   const [maDaysInput, setMaDaysInput] = useState("");
   // The text box itself always echoes maDaysInput instantly (below). The
   // clamped numeric value that actually drives computation is debounced
@@ -1320,7 +1327,12 @@ export function StockCorrelationTable() {
           </div>
           <RegressionDeepDive result={chartRegressionResult} tradingSymbol={chartEntry.tradingSymbol} maWindow={maDays} extraLagDays={extraLagDays} showScatter />
           {/* Valuation bands -- same AMC dropdown as above, but their own range toggle */}
-          <ValuationBandCharts slug={chartAmcSlug} amcOptions={valuationAmcOptions} onSlugChange={setChartAmcSlug} />
+          <ValuationBandCharts
+            slug={chartAmcSlug}
+            amcOptions={valuationAmcOptions}
+            onSlugChange={setChartAmcSlug}
+            priceSeries={data?.amcs.find((a) => a.slug === chartAmcSlug)?.stockPriceSeries}
+          />
         </details>
       )}
 

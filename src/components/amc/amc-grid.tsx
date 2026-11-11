@@ -1340,7 +1340,7 @@ export function AmcGrid({
           <EtfTabContent />
         </TabsContent>
         <TabsContent value="amc-stock-correlation" keepMounted>
-          <StockCorrelationTable />
+          <StockCorrelationTable liveAum={asOfDate ? undefined : data} />
         </TabsContent>
         <TabsContent value="amc-regression" keepMounted>
           <RegressionPanel />

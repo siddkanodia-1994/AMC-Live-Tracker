@@ -101,3 +101,31 @@ export function computeProvisionalFill(aceRows: ValuationAnchor[], prices: Price
     staleSince: firstQuarterEndBetween(anchor.date, later[later.length - 1].date),
   };
 }
+
+/**
+ * The price-updated days with today's point re-priced at the live share
+ * price: the held TTM EPS / sales per share are backed out of the latest
+ * earlier provisional day and its stored close, then divided into `live`.
+ * Leaves the points alone unless the series ends in provisional days (an
+ * Ace file covering today wins) and never rewrites anything after `live`.
+ */
+export function withLiveValuationPoint<T extends { date: string; pe: number | null; mcapToSales: number | null; provisional?: boolean }>(
+  points: T[],
+  live: PriceClose | undefined,
+  closes: PriceClose[]
+): T[] {
+  const last = points.at(-1);
+  if (!live || !last?.provisional || last.date > live.date) return points;
+  const closeOn = new Map(closes.map((c) => [c.date, c.priceInr]));
+  const ref = [...points].reverse().find((p) => p.provisional && p.date < live.date && (closeOn.get(p.date) ?? 0) > 0);
+  if (!ref) return points;
+  const scale = live.priceInr / closeOn.get(ref.date)!;
+  const today = {
+    ...last,
+    date: live.date,
+    pe: ref.pe === null ? null : ref.pe * scale,
+    mcapToSales: ref.mcapToSales === null ? null : ref.mcapToSales * scale,
+    provisional: true,
+  };
+  return last.date === live.date ? [...points.slice(0, -1), today] : [...points, today];
+}

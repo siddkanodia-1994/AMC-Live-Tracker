@@ -7,11 +7,15 @@ import { IBM_Plex_Sans, IBM_Plex_Sans_Condensed } from "next/font/google";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAmcStockCorrelations } from "@/hooks/use-amc-stock-correlations";
 import { useFortnightlySheet } from "@/hooks/use-fortnightly-update";
+import { useLiveCorrelationEntries } from "@/hooks/use-amc-live-prices";
+import { previousClose } from "@/lib/amc-stock/live-point";
+import { formatLedgerPct } from "@/lib/aum/period-ledger";
 import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
 import { ACCORD_CODES } from "@/lib/valuation/parse-valuation-workbook";
 import { buildPeriodLedger, LEDGER_WEEKDAYS, type LedgerWeekday, type PeriodLedger } from "@/lib/aum/period-ledger";
 import { toLedgerPoints } from "@/lib/aum/period-ledger-rows";
 import type { LiveAumSnapshot } from "@/lib/aum/types";
+import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { AumSummaryLedger, type LedgerSelectKey, type LedgerSelections } from "./aum-summary-ledger";
 import { AumPredictorSection, LivePredictorSection, RatioSection, RegressionSection, useFitControls, ValuationModelSection } from "./sections";
 import { SipScoreSection } from "./sip-score-section";
@@ -151,6 +155,23 @@ function istStamp(iso: string | undefined): string | null {
   return `${day} · ${time} IST`;
 }
 
+// The AMC tab's second line: today's price and its change on the last
+// close; the last stored close when there's no price for today yet.
+function TabPrice({ entry, price, date }: { entry: AmcStockCorrelationEntry | undefined; price: number | undefined; date: string | undefined }) {
+  const series = entry?.stockPriceSeries ?? [];
+  const today = price !== undefined && date !== undefined;
+  const shown = today ? price : series.at(-1)?.priceInr;
+  if (shown === undefined) return null;
+  const base = previousClose(series, today ? date : (series.at(-1)?.date ?? ""));
+  const chg = formatLedgerPct(base ? shown / base - 1 : null);
+  return (
+    <span className="pl-tab-px">
+      ₹{shown.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      {chg && <span className={`pl-tab-chg pl-tab-chg--${chg.tone}`}>{chg.text}</span>}
+    </span>
+  );
+}
+
 export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   const { data, error, isLoading } = useAmcStockCorrelations();
   const blendIds = useActiveGoldSilverBlendAmcIds();
@@ -167,6 +188,9 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   const amcId = amcIdBySlug.get(slug) ?? null;
   const blended = amcId !== null && blendIds.includes(amcId);
   const { data: sheet, mutate: mutateSheet } = useFortnightlySheet(amcId, null, false);
+  // Today's live share price (and live AUM) laid over every AMC's history,
+  // so all sections' charts, ratios, fits, targets and upsides follow it.
+  const { entries: liveEntries, points: livePoints, prices: livePrices } = useLiveCorrelationEntries(data?.amcs, liveAum);
 
   const tabs = useMemo(() => {
     const have = new Set((data?.amcs ?? []).map((a) => a.slug));
@@ -174,9 +198,9 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   }, [data]);
 
   const model = useMemo(() => {
-    const entry = data?.amcs.find((a) => a.slug === slug);
+    const entry = liveEntries?.find((a) => a.slug === slug);
     return entry ? buildPeriodLedger(toLedgerPoints(entry.aumHistory)) : null;
-  }, [data, slug]);
+  }, [liveEntries, slug]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- re-validate the shared picks against the newly built model
@@ -197,7 +221,13 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
     });
   };
 
-  const entry = data?.amcs.find((a) => a.slug === slug);
+  const entry = liveEntries?.find((a) => a.slug === slug);
+  // CMP: today's live price when there is one (after 15:30, the session's
+  // last price), else the Fortnightly snapshot's close as before.
+  const livePoint = livePoints.get(slug);
+  const sheetCmp = sheet?.slug === slug ? sheet.cmpInr : null;
+  const cmpInr = livePoint?.priceInr ?? sheetCmp;
+  const cmpIsLive = livePoint !== undefined && Boolean(livePrices?.marketOpen);
   const amcOptions = tabs.map((t) => ({ slug: t.slug, label: COMPANY_BY_SLUG.get(t.slug) ?? t.tab }));
   const live = liveAum?.amcs.find((a) => a.slug === slug);
   const tabLabel = tabs.find((t) => t.slug === slug)?.tab ?? "";
@@ -263,13 +293,11 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
               <span className="aa-chip-note">{istStamp(liveAum?.computedAt)}</span>
             </span>
           )}
-          {sheet?.cmpInr != null && sheet.slug === slug && (
+          {cmpInr != null && (
             <span className="aa-chip">
               <span className="aa-chip-key">{tradingSymbol}</span>
-              <span className="aa-chip-val">
-                ₹{sheet.cmpInr.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-              <span className="aa-chip-note">{sheet.cmpIsLive ? "live share price" : "last close"}</span>
+              <span className="aa-chip-val">₹{cmpInr.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              {cmpIsLive ? <span className="aa-live">LIVE</span> : <span className="aa-chip-note">{livePoint ? "close" : "last close"}</span>}
             </span>
           )}
         </div>
@@ -301,6 +329,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                     }}
                   >
                     {t.tab}
+                    <TabPrice entry={data?.amcs.find((a) => a.slug === t.slug)} price={livePoints.get(t.slug)?.priceInr} date={livePrices?.date} />
                   </button>
                 ))}
               </div>
@@ -327,22 +356,22 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
               ) : section === "sip-score" ? (
                 <SipScoreSection slug={slug} sheet={sheet} />
               ) : section === "aum-predictor" ? (
-                <AumPredictorSection entry={entry} defaults={data?.defaults} />
+                <AumPredictorSection entry={entry} defaults={data?.defaults} priceIsLive={cmpIsLive} />
               ) : section === "live-predictor" ? (
                 <LivePredictorSection
                   entry={entry}
                   defaults={data?.defaults}
                   liveAumCr={live?.liveAumCr ?? null}
-                  cmpInr={sheet?.slug === slug ? sheet.cmpInr : null}
-                  cmpIsLive={sheet?.slug === slug ? sheet.cmpIsLive : false}
+                  cmpInr={cmpInr}
+                  cmpIsLive={cmpIsLive}
                 />
               ) : section === "ratio" ? (
                 <RatioSection
                   entry={entry}
                   defaults={data?.defaults}
                   controls={fitControls}
-                  cmpInr={sheet?.slug === slug ? sheet.cmpInr : null}
-                  cmpIsLive={sheet?.slug === slug ? sheet.cmpIsLive : false}
+                  cmpInr={cmpInr}
+                  cmpIsLive={cmpIsLive}
                 />
               ) : section === "regression" ? (
                 <RegressionSection entry={entry} defaults={data?.defaults} controls={fitControls} />
@@ -353,6 +382,8 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                   defaults={data?.defaults}
                   sheet={sheet}
                   onSheetSaved={() => mutateSheet()}
+                  cmpInr={cmpInr}
+                  cmpIsLive={cmpIsLive}
                   amcOptions={amcOptions}
                   onSlugChange={setSlug}
                 />

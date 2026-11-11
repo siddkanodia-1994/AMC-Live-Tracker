@@ -573,3 +573,14 @@
 .aa .ss-t--amc th:nth-child(2) { width: 15%; }
 .aa .ss-t--amc th:nth-child(3), .aa .ss-t--amc th:nth-child(4) { width: 13%; }
 .aa .ss-t--amc th:nth-child(5), .aa .ss-t--amc th:nth-child(6) { width: 16%; }
+
+/* Live share prices: a second line on each AMC tab, and the strip's LIVE dot */
+.aa .pl-tab-px { display: block; margin-top: 1px; font: 500 11.5px/1.3 var(--pl-font-sans); letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
+.aa .pl-tab-chg { margin-left: 5px; font-size: 11px; font-weight: 600; }
+.aa .pl-tab-chg--pos { color: #7fe39a; }
+.aa .pl-tab-chg--neg { color: #ff9aa1; }
+.aa .pl-tab-chg--neu { color: #cfd2d8; }
+.aa .pl-tab.is-active .pl-tab-chg--pos { color: #d8ffe1; }
+.aa .pl-tab.is-active .pl-tab-chg--neg { color: #ffe1e3; }
+.aa .aa-live { display: inline-flex; align-items: center; gap: 5px; color: var(--pl-chg-pos); font: 700 11px/1.2 var(--pl-font-condensed); letter-spacing: 0.08em; }
+.aa .aa-live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }

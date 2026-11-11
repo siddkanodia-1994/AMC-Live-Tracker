@@ -7,6 +7,7 @@ import { useAmcValuation } from "@/hooks/use-amc-valuation";
 import { computeRangeCutoffDate, filterByCutoff, RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
 import { computeBands, formatDayMonthYear, niceYAxis, rangeTicks, type Bands } from "@/lib/valuation/bands";
 import type { ValuationPoint } from "@/lib/valuation/store";
+import { withLiveValuationPoint, type PriceClose } from "@/lib/valuation/provisional";
 import { ValuationUploadPanel } from "./valuation-upload-panel";
 
 // PE and Mcap/Sales band charts for the Stock Correlation tab, below the
@@ -220,6 +221,7 @@ export function ValuationBandCharts({
   amcOptions,
   onSlugChange,
   showUpload = true,
+  priceSeries,
 }: {
   slug: string;
   // The 8 listed AMCs, labelled by company name. Picking one calls
@@ -229,8 +231,16 @@ export function ValuationBandCharts({
   onSlugChange: (slug: string) => void;
   // The Ace Equity upload drop zone lives in Stock Correlation; AMC Analytics hides it.
   showUpload?: boolean;
+  // The AMC's share price history with today's live price on the end: the
+  // latest price-updated day is re-priced at it, so the bands' last point
+  // moves with the market. Omitted, the server's daily fill is shown as is.
+  priceSeries?: PriceClose[];
 }) {
   const { data, error, isLoading } = useAmcValuation(slug);
+  const points = useMemo(
+    () => (data ? withLiveValuationPoint(data.points, priceSeries?.at(-1), priceSeries ?? []) : []),
+    [data, priceSeries]
+  );
   // Kept across AMC switches: this component stays mounted, only `slug` changes.
   const [range, setRange] = useState<RangeOption>(DEFAULT_RANGE);
 
@@ -253,8 +263,8 @@ export function ValuationBandCharts({
   } else {
     body = (
       <div className="grid gap-4 lg:grid-cols-2">
-        <ValuationBandChart points={data.points} metric="pe" label="TTM PE (x)" companyName={data.companyName} range={range} />
-        <ValuationBandChart points={data.points} metric="mcapToSales" label="Mcap / Sales (x)" companyName={data.companyName} range={range} />
+        <ValuationBandChart points={points} metric="pe" label="TTM PE (x)" companyName={data.companyName} range={range} />
+        <ValuationBandChart points={points} metric="mcapToSales" label="Mcap / Sales (x)" companyName={data.companyName} range={range} />
       </div>
     );
   }

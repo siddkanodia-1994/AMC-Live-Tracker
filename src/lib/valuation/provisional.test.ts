@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeProvisionalFill, firstQuarterEndBetween } from "./provisional";
+import { computeProvisionalFill, firstQuarterEndBetween, withLiveValuationPoint } from "./provisional";
 
 describe("computeProvisionalFill", () => {
   it("holds the anchor's TTM EPS and sales per share and rescales by price (HDFC, 4 Nov 2026)", () => {
@@ -89,5 +89,39 @@ describe("firstQuarterEndBetween", () => {
     expect(firstQuarterEndBetween("2026-09-29", "2026-10-06")).toBe("2026-09-30");
     expect(firstQuarterEndBetween("2026-09-30", "2026-10-06")).toBeNull(); // anchor on the quarter-end itself
     expect(firstQuarterEndBetween("2026-11-04", "2027-04-02")).toBe("2026-12-31");
+  });
+});
+
+describe("withLiveValuationPoint", () => {
+  const closes = [
+    { date: "2026-11-06", priceInr: 2500 },
+    { date: "2026-11-09", priceInr: 2619.6 },
+  ];
+  const points = [
+    { date: "2026-11-05", pe: 40, mcapToSales: 20 },
+    { date: "2026-11-06", pe: 41, mcapToSales: 21, provisional: true },
+    { date: "2026-11-09", pe: 42.96, mcapToSales: 22, provisional: true },
+  ];
+
+  it("appends today re-priced from the latest earlier provisional day", () => {
+    const out = withLiveValuationPoint(points, { date: "2026-11-11", priceInr: 2692.8 }, closes);
+    expect(out).toHaveLength(4);
+    expect(out[3].date).toBe("2026-11-11");
+    expect(out[3].pe).toBeCloseTo((42.96 * 2692.8) / 2619.6, 10);
+    expect(out[3].mcapToSales).toBeCloseTo((22 * 2692.8) / 2619.6, 10);
+  });
+
+  it("replaces a stored today point instead of adding another", () => {
+    const withToday = [...points, { date: "2026-11-11", pe: 43.5, mcapToSales: 22.3, provisional: true }];
+    const out = withLiveValuationPoint(withToday, { date: "2026-11-11", priceInr: 2692.8 }, closes);
+    expect(out).toHaveLength(4);
+    expect(out[3].pe).toBeCloseTo((42.96 * 2692.8) / 2619.6, 10);
+  });
+
+  it("leaves real Ace data, no live price and later data untouched", () => {
+    const ace = points.slice(0, 1);
+    expect(withLiveValuationPoint(ace, { date: "2026-11-11", priceInr: 1 }, closes)).toBe(ace);
+    expect(withLiveValuationPoint(points, undefined, closes)).toBe(points);
+    expect(withLiveValuationPoint(points, { date: "2026-11-08", priceInr: 1 }, closes)).toBe(points);
   });
 });

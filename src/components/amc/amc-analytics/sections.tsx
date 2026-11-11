@@ -24,6 +24,7 @@ import { trimToLastContinuousRun } from "@/lib/aum/series-math";
 import { formatLedgerInr, formatLedgerPct } from "@/lib/aum/period-ledger";
 import { computeValuationBlock, type FortnightlyFieldName, type FortnightlyManualFields, type FortnightlySheet } from "@/lib/aum/fortnightly-update";
 import { useAmcValuation } from "@/hooks/use-amc-valuation";
+import { withLiveValuationPoint } from "@/lib/valuation/provisional";
 import { computeRatioLadder, RATIO_LADDER_SDS, type RatioLadder } from "@/lib/valuation/ratio-ladder";
 import { computeTargetPrices, SCENARIO_KEYS, type TargetPriceTable, type ValuationMethodKey } from "@/lib/valuation/target-price";
 import {
@@ -79,9 +80,12 @@ function Panel({ title, unit, children }: { title: string; unit?: string; childr
 export function AumPredictorSection({
   entry,
   defaults,
+  priceIsLive = false,
 }: {
   entry: AmcStockCorrelationEntry | undefined;
   defaults: StockCorrelationDefaults | undefined;
+  /** The history's last price is today's live one (the shell lays it on). */
+  priceIsLive?: boolean;
 }) {
   const result = useSavedRegression(entry, defaults);
   const line = lineOf(result);
@@ -187,7 +191,7 @@ export function AumPredictorSection({
             <td>{rupees(w?.targetPrice ?? null)}</td>
           </tr>
           <tr>
-            <th scope="row">Current price (last close)</th>
+            <th scope="row">{priceIsLive ? "Live share price" : "Current price (last close)"}</th>
             <td>{rupees(currentPrice)}</td>
           </tr>
           <tr>
@@ -942,6 +946,8 @@ export function ValuationModelSection({
   onSheetSaved,
   amcOptions,
   onSlugChange,
+  cmpInr,
+  cmpIsLive,
 }: {
   slug: string;
   entry: AmcStockCorrelationEntry | undefined;
@@ -950,6 +956,9 @@ export function ValuationModelSection({
   onSheetSaved: () => Promise<unknown>;
   amcOptions: { slug: string; label: string }[];
   onSlugChange: (slug: string) => void;
+  /** Today's live price when there is one, else the snapshot's close (see the shell). */
+  cmpInr: number | null;
+  cmpIsLive: boolean;
 }) {
   const { data: valuation } = useAmcValuation(slug);
   const [local, setLocal] = useState<Partial<ValuationSettings>>({});
@@ -973,10 +982,10 @@ export function ValuationModelSection({
       bestFitAumDays: settings.bestFitAumDays,
       bestFitAumPct: settings.bestFitAumPct,
       manual: sheetForSlug.manual,
-      mcapSalesSeries: (valuation?.points ?? []).flatMap((p) => (p.mcapToSales === null ? [] : [{ date: p.date, value: p.mcapToSales }])),
-      cmpInr: sheetForSlug.cmpInr,
+      mcapSalesSeries: withLiveValuationPoint(valuation?.points ?? [], entry.stockPriceSeries.at(-1), entry.stockPriceSeries).flatMap((p) => (p.mcapToSales === null ? [] : [{ date: p.date, value: p.mcapToSales }])),
+      cmpInr,
     });
-  }, [entry, defaults, sheetForSlug, valuation, settings.ratioDays, settings.bestFitAumDays, settings.bestFitAumPct]);
+  }, [entry, defaults, sheetForSlug, valuation, settings.ratioDays, settings.bestFitAumDays, settings.bestFitAumPct, cmpInr]);
 
   async function saveField(field: FortnightlyFieldName, value: number | null) {
     if (!sheetForSlug) return;
@@ -1039,11 +1048,11 @@ export function ValuationModelSection({
           </p>
         ) : (
           <AlignedScenarioGrid>
-            <ScenarioValuationTable kind="pe" manual={m} cmpInr={sheetForSlug?.cmpInr ?? null} editable={editable} saveField={saveField} />
+            <ScenarioValuationTable kind="pe" manual={m} cmpInr={cmpInr} editable={editable} saveField={saveField} />
             <ScenarioValuationTable
               kind="mcapSales"
               manual={m}
-              cmpInr={sheetForSlug?.cmpInr ?? null}
+              cmpInr={cmpInr}
               editable={editable}
               saveField={saveField}
               multiples={table?.mcapSalesMultiples}
@@ -1057,19 +1066,22 @@ export function ValuationModelSection({
             : "Showing a past Fortnightly snapshot: inputs are read-only here."}{" "}
           Grey Mcap / Sales multiples are the chart&apos;s 3Y −1 SD / Mean / +1 SD; type to override, clear to go back to the band.
           Target Price Current is the PE / Mcap / Sales row of the Target Price table below.
+          {cmpInr !== null && sheetForSlug?.cmpInr != null && cmpInr !== sheetForSlug.cmpInr
+            ? ` Upsides use today's price; the Fortnightly tab measures them against its snapshot close (₹${sheetForSlug.cmpInr.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}).`
+            : ""}
         </p>
       </section>
 
       <div className="aa-reused">
-        <ValuationBandCharts slug={slug} amcOptions={amcOptions} onSlugChange={onSlugChange} showUpload={false} />
+        <ValuationBandCharts slug={slug} amcOptions={amcOptions} onSlugChange={onSlugChange} showUpload={false} priceSeries={entry?.stockPriceSeries} />
       </div>
 
       <section className="pl-panel vm" aria-label="Target price" style={{ marginTop: 16 }}>
         <div className="pl-band">
           Target Price{" "}
           <span className="pl-band-unit">
-            ₹ per share · vs {sheetForSlug?.cmpIsLive ? "live price" : "last close"}{" "}
-            {sheetForSlug?.cmpInr != null ? `₹${sheetForSlug.cmpInr.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+            ₹ per share · vs {cmpIsLive ? "live price" : "last close"}{" "}
+            {cmpInr != null ? `₹${cmpInr.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
           </span>
         </div>
         {!table || !m ? (
