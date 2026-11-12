@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { mutate as globalMutate } from "swr";
 import { formatLedgerInr } from "@/lib/aum/period-ledger";
 import { getAmcAbbreviation, type FortnightlyFieldName, type FortnightlySheet } from "@/lib/aum/fortnightly-update";
-import { computeSipGrowth, computeSipShare, effectiveSipValues, type SipFive, type SipThirdRowBases } from "@/lib/aum/sip-growth";
+import { computeSipGrowth, effectiveSipValues, type SipFive, type SipThirdRowBases } from "@/lib/aum/sip-growth";
 import { sipByMonth, thirdRowMonthBases, thirdRowQuarterBases } from "@/lib/aum/industry-sip";
 import { useIndustryMonthlyFlows } from "@/hooks/use-industry-monthly-flows";
 import { Pct, SavedNumberInput } from "./sections";
@@ -48,8 +48,6 @@ function formatAnchorDate(isoDate: string): string {
   return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit", timeZone: "UTC" });
 }
 
-const pct1 = (x: number | null) => (x === null ? "—" : `${(x * 100).toFixed(1)}%`);
-
 type SaveField = (field: FortnightlyFieldName, value: number | string | null) => Promise<void>;
 
 function rowTitles(labels: readonly string[]): string[] {
@@ -60,16 +58,12 @@ function labelList(labels: { qtd: string; prevQ: string; prevQ2: string; yoyQ: s
   return [labels.qtd, labels.prevQ, labels.prevQ2, labels.yoyQ, labels.yoyQ2];
 }
 
-function AmcSipCard({ sheet, editable, saveField, share }: { sheet: FortnightlySheet; editable: boolean; saveField: SaveField; share: SipFive }) {
+// SIP / Eq AUM % and SIP share % live in the cross-AMC table below (and
+// the % is still typed on the Fortnightly tab's card).
+function AmcSipCard({ sheet, editable, saveField }: { sheet: FortnightlySheet; editable: boolean; saveField: SaveField }) {
   const m = sheet.manual;
-  const fields = [
-    ["sipAmcQtdValCr", "sipAmcQtdPct"],
-    ["sipAmcPrevQValCr", "sipAmcPrevQPct"],
-    ["sipAmcPrevQ2ValCr", "sipAmcPrevQ2Pct"],
-    ["sipAmcYoyQValCr", "sipAmcYoyQPct"],
-    ["sipAmcYoyQ2ValCr", "sipAmcYoyQ2Pct"],
-  ] as const;
-  const values = fields.map(([v]) => m[v]) as SipFive;
+  const fields = ["sipAmcQtdValCr", "sipAmcPrevQValCr", "sipAmcPrevQ2ValCr", "sipAmcYoyQValCr", "sipAmcYoyQ2ValCr"] as const;
+  const values = fields.map((v) => m[v]) as SipFive;
   const growth = computeSipGrowth(values);
   const titles = rowTitles(labelList(sheet.sipAmcLabels));
   const abbrev = getAmcAbbreviation(sheet.amcId);
@@ -108,19 +102,17 @@ function AmcSipCard({ sheet, editable, saveField, share }: { sheet: FortnightlyS
         </select>
       </div>
       <div className="ss-scroll">
-        <table className="ss-t ss-t--amc">
+        <table className="ss-t">
           <thead>
             <tr>
               <th scope="col">Period</th>
               <th scope="col">Val (Cr)</th>
               <th scope="col">QoQ %</th>
               <th scope="col">YoY %</th>
-              <th scope="col">SIP / Eq AUM %</th>
-              <th scope="col">SIP share %</th>
             </tr>
           </thead>
           <tbody>
-            {fields.map(([valField, pctField], i) => (
+            {fields.map((valField, i) => (
               <tr key={valField} className={i === 0 ? "ss-cur" : undefined}>
                 <th scope="row">{titles[i]}</th>
                 <td className={editable ? "ss-in" : undefined}>
@@ -132,20 +124,6 @@ function AmcSipCard({ sheet, editable, saveField, share }: { sheet: FortnightlyS
                 </td>
                 <td className="ss-chg">{i < 2 ? <Pct change={growth.step[i]} /> : null}</td>
                 <td className="ss-chg">{i < 2 ? <Pct change={growth.yoy[i]} /> : null}</td>
-                <td className={editable ? "ss-in" : undefined}>
-                  {editable ? (
-                    <SavedNumberInput
-                      value={m[pctField]}
-                      onSave={(x) => saveField(pctField, x)}
-                      ariaLabel={`${titles[i]} SIP as % of equity AUM`}
-                      decimals={2}
-                      scale={100}
-                    />
-                  ) : (
-                    pct1(m[pctField])
-                  )}
-                </td>
-                <td className="ss-share">{pct1(share[i])}</td>
               </tr>
             ))}
           </tbody>
@@ -395,15 +373,6 @@ export function SipScoreSection({ slug, sheet }: { slug: string; sheet: Fortnigh
     [m.sipIndustryMtdValCr, m.sipIndustryPrevMValCr, m.sipIndustryPrevM2ValCr, m.sipIndustryYoyMValCr, m.sipIndustryYoyM2ValCr],
     [mo?.values.mtd ?? null, mo?.values.prevM ?? null, mo?.values.prevM2 ?? null, mo?.values.yoyM ?? null, mo?.values.yoyM2 ?? null]
   );
-  const amcLabels = labelList(s.sipAmcLabels);
-  const industryLabels = q ? labelList(q.labels) : null;
-  const share = computeSipShare(
-    [m.sipAmcQtdValCr, m.sipAmcPrevQValCr, m.sipAmcPrevQ2ValCr, m.sipAmcYoyQValCr, m.sipAmcYoyQ2ValCr],
-    amcLabels,
-    industryQ,
-    industryLabels
-  );
-  const quartersDiffer = industryLabels !== null && industryLabels[0] !== amcLabels[0];
   // The third row's own QoQ / MoM and YoY compare with periods that aren't
   // on the card, straight from AMFI (an override on the row itself still counts).
   const byMonth = flows ? sipByMonth(flows.points) : null;
@@ -413,23 +382,17 @@ export function SipScoreSection({ slug, sheet }: { slug: string; sheet: Fortnigh
   return (
     <>
       <div className="ss-grid">
-        <AmcSipCard sheet={s} editable={editable} saveField={saveField} share={share} />
+        <AmcSipCard sheet={s} editable={editable} saveField={saveField} />
         <IndustrySipCard kind="quarter" sheet={s} editable={editable} saveField={saveField} effective={industryQ} thirdRowBases={quarterBases} />
         <IndustrySipCard kind="month" sheet={s} editable={editable} saveField={saveField} effective={industryM} thirdRowBases={monthBases} />
         <AmcScoreCard sheet={s} editable={editable} saveField={saveField} />
       </div>
-      {quartersDiffer && (
-        <p className="aa-warn" style={{ padding: 0, marginTop: 10 }}>
-          SIP share needs the same quarter on both quarterly cards: {getAmcAbbreviation(s.amcId)} is on {amcLabels[0]}, the industry card on{" "}
-          {industryLabels?.[0]}.
-        </p>
-      )}
       <p className="aa-note">
         {editable
           ? "Blue cells save to the latest Fortnightly AMC Update snapshot, so this tab and the Fortnightly tab always show the same numbers."
           : "Showing a past Fortnightly snapshot: inputs are read-only here."}{" "}
         Grey industry figures come from AMFI; type to override, clear to go back. The industry anchors and the estimate switch are shared
-        settings that change every AMC&apos;s cards. SIP share is the AMC&apos;s SIP ÷ industry SIP for the same quarter.
+        settings that change every AMC&apos;s cards.
       </p>
       <SipMatrix slug={slug} />
     </>

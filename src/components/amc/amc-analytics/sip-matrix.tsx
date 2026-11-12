@@ -164,7 +164,8 @@ export function SipMatrix({ slug }: { slug: string }) {
         industry={view.industry}
       />
       <p className="aa-note">
-        Typed on each AMC&apos;s SIP card (the latest 5 quarters); older quarters were filled in once from your sheet. SIP share needs the
+        SIP ₹ Cr is typed on the SIP card above and SIP / Eq AUM % on the Fortnightly tab&apos;s card (the latest 5 quarters); older quarters were
+        filled in once from your sheet. SIP share needs the
         AMC&apos;s SIP ₹ Cr for that quarter, so it&apos;s blank where only the % was entered. YoY compares the latest quarter with the same quarter a
         year earlier. The selected AMC&apos;s row is outlined.
       </p>
