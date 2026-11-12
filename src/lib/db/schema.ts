@@ -11,6 +11,7 @@ import {
   jsonb,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 
 // Static AMC identity — one row per AMC, ever. Written once on first import.
@@ -876,6 +877,33 @@ export const amcFortnightlyUpdate = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("amc_fortnightly_update_amc_date_idx").on(t.amcId, t.asOfDate)]
+);
+
+// Each listed AMC's quarterly SIP history, one row per fiscal quarter --
+// what AMC Analytics' cross-AMC SIP table reads. The Fortnightly cards keep
+// their own 5 slots; every card save also writes the slot's quarter here,
+// so history builds up as the latest quarter moves forward. Older quarters
+// came from a one-off backfill. Both columns nullable: a quarter can have
+// a % without a ₹ figure (or the other way round).
+export const amcSipQuarterly = pgTable(
+  "amc_sip_quarterly",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    // Indian fiscal year it ends in (2027 = FY27) and quarter (1 = Apr–Jun).
+    fiscalYear: integer("fiscal_year").notNull(),
+    quarter: integer("quarter").notNull(),
+    sipCr: numeric("sip_cr", { precision: 18, scale: 4 }),
+    // SIP / Eq AUM as a fraction (0.094 = 9.4%), as on the cards.
+    sipEqAumPct: numeric("sip_eq_aum_pct", { precision: 7, scale: 4 }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("amc_sip_quarterly_amc_fy_q_idx").on(t.amcId, t.fiscalYear, t.quarter),
+    check("amc_sip_quarterly_quarter_check", sql`${t.quarter} BETWEEN 1 AND 4`),
+  ]
 );
 
 // User-provided ground-truth monthly exit equity AUM for the 8

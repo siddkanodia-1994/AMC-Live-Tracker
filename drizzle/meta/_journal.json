@@ -253,6 +253,13 @@
       "when": 1794253181730,
       "tag": "0035_fortnightly_valuation_inputs",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794465286765,
+      "tag": "0036_amc_sip_quarterly",
+      "breakpoints": true
     }
   ]
 }

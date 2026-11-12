@@ -8,6 +8,7 @@ import { computeSipGrowth, computeSipShare, effectiveSipValues, type SipFive, ty
 import { sipByMonth, thirdRowMonthBases, thirdRowQuarterBases } from "@/lib/aum/industry-sip";
 import { useIndustryMonthlyFlows } from "@/hooks/use-industry-monthly-flows";
 import { Pct, SavedNumberInput } from "./sections";
+import { SIP_MATRIX_KEY, SipMatrix } from "./sip-matrix";
 
 // SIP & Score: the Fortnightly AMC Update tab's three SIP cards and its AMC
 // Score card, in the ledger look. Same sheet, same save routes, so an edit
@@ -25,6 +26,8 @@ function aroundOptions(selected: number): number[] {
 // Every cached Fortnightly sheet: the anchors and estimate switch are
 // shared by all AMCs, and the Fortnightly tab holds its own copy.
 function revalidateFortnightlySheets() {
+  // The cross-AMC SIP table reads the same card figures.
+  globalMutate(SIP_MATRIX_KEY);
   return globalMutate((key) => typeof key === "string" && key.startsWith("/api/fortnightly-update?"), undefined, { revalidate: true });
 }
 
@@ -428,6 +431,7 @@ export function SipScoreSection({ slug, sheet }: { slug: string; sheet: Fortnigh
         Grey industry figures come from AMFI; type to override, clear to go back. The industry anchors and the estimate switch are shared
         settings that change every AMC&apos;s cards. SIP share is the AMC&apos;s SIP ÷ industry SIP for the same quarter.
       </p>
+      <SipMatrix slug={slug} />
     </>
   );
 }
