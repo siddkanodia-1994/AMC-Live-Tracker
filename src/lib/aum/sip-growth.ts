@@ -6,9 +6,9 @@
 export type SipFive = [number | null, number | null, number | null, number | null, number | null];
 
 export interface SipGrowthRows {
-  /** Row-over-row step (QoQ or MoM): rows 0 and 1 only, like Fortnightly. */
+  /** Row-over-row step (QoQ or MoM): rows 0 and 1, plus row 2 when its bases are given. */
   step: SipFive;
-  /** Year on year: row 0 vs row 3, row 1 vs row 4. */
+  /** Year on year: row 0 vs row 3, row 1 vs row 4, row 2 vs its base. */
   yoy: SipFive;
 }
 
@@ -16,11 +16,17 @@ function change(current: number | null, base: number | null): number | null {
   return current !== null && base !== null && base !== 0 ? current / base - 1 : null;
 }
 
-export function computeSipGrowth(values: SipFive): SipGrowthRows {
+/** What row 2 compares against: the period before it, and the same period a year earlier. */
+export interface SipThirdRowBases {
+  prev: number | null;
+  yoy: number | null;
+}
+
+export function computeSipGrowth(values: SipFive, thirdRowBases?: SipThirdRowBases): SipGrowthRows {
   const [v0, v1, v2, v3, v4] = values;
   return {
-    step: [change(v0, v1), change(v1, v2), null, null, null],
-    yoy: [change(v0, v3), change(v1, v4), null, null, null],
+    step: [change(v0, v1), change(v1, v2), thirdRowBases ? change(v2, thirdRowBases.prev) : null, null, null],
+    yoy: [change(v0, v3), change(v1, v4), thirdRowBases ? change(v2, thirdRowBases.yoy) : null, null, null],
   };
 }
 

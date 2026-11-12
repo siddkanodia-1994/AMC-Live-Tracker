@@ -17,6 +17,16 @@ describe("computeSipGrowth", () => {
     expect(g.yoy.slice(2)).toEqual([null, null, null]);
   });
 
+  it("adds row 2's QoQ and YoY when its bases are given", () => {
+    // Industry Q4FY26 vs Q3FY26 and Q4FY25 (AMFI).
+    const g = computeSipGrowth(INDUSTRY, { prev: 89976, yoy: 78325 });
+    expect(g.step[2]).toBeCloseTo(92934 / 89976 - 1, 12);
+    expect(g.yoy[2]).toBeCloseTo(92934 / 78325 - 1, 12);
+    expect(g.step[0]).toBeCloseTo(96748 / 93850 - 1, 12);
+    expect(computeSipGrowth(INDUSTRY, { prev: null, yoy: 0 }).step[2]).toBeNull();
+    expect(computeSipGrowth(INDUSTRY, { prev: null, yoy: 0 }).yoy[2]).toBeNull();
+  });
+
   it("leaves a change blank when either side is missing or the base is zero", () => {
     const g = computeSipGrowth([100, null, 50, 0, 40]);
     expect(g.step).toEqual([null, null, null, null, null]);

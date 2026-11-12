@@ -4,7 +4,9 @@ import { toast } from "sonner";
 import { mutate as globalMutate } from "swr";
 import { formatLedgerInr } from "@/lib/aum/period-ledger";
 import { getAmcAbbreviation, type FortnightlyFieldName, type FortnightlySheet } from "@/lib/aum/fortnightly-update";
-import { computeSipGrowth, computeSipShare, effectiveSipValues, type SipFive } from "@/lib/aum/sip-growth";
+import { computeSipGrowth, computeSipShare, effectiveSipValues, type SipFive, type SipThirdRowBases } from "@/lib/aum/sip-growth";
+import { sipByMonth, thirdRowMonthBases, thirdRowQuarterBases } from "@/lib/aum/industry-sip";
+import { useIndustryMonthlyFlows } from "@/hooks/use-industry-monthly-flows";
 import { Pct, SavedNumberInput } from "./sections";
 
 // SIP & Score: the Fortnightly AMC Update tab's three SIP cards and its AMC
@@ -120,7 +122,7 @@ function AmcSipCard({ sheet, editable, saveField, share }: { sheet: FortnightlyS
                 <th scope="row">{titles[i]}</th>
                 <td className={editable ? "ss-in" : undefined}>
                   {editable ? (
-                    <SavedNumberInput value={m[valField]} onSave={(x) => saveField(valField, x)} ariaLabel={`${titles[i]} SIP`} decimals={0} />
+                    <SavedNumberInput value={m[valField]} onSave={(x) => saveField(valField, x)} ariaLabel={`${titles[i]} SIP`} decimals={0} grouped />
                   ) : (
                     formatLedgerInr(m[valField])
                   )}
@@ -156,12 +158,14 @@ function IndustrySipCard({
   editable,
   saveField,
   effective,
+  thirdRowBases,
 }: {
   kind: "quarter" | "month";
   sheet: FortnightlySheet;
   editable: boolean;
   saveField: SaveField;
   effective: SipFive;
+  thirdRowBases?: SipThirdRowBases;
 }) {
   const isQ = kind === "quarter";
   const m = sheet.manual;
@@ -175,7 +179,7 @@ function IndustrySipCard({
     : [mAuto?.values.mtd ?? null, mAuto?.values.prevM ?? null, mAuto?.values.prevM2 ?? null, mAuto?.values.yoyM ?? null, mAuto?.values.yoyM2 ?? null];
   const labels = isQ ? qAuto?.labels : mAuto?.labels;
   const estimate = isQ ? qAuto?.estimate : mAuto?.estimate;
-  const growth = computeSipGrowth(effective);
+  const growth = computeSipGrowth(effective, thirdRowBases);
   const titles = labels ? rowTitles(labelList(labels)) : ["Latest", "Previous", "Previous", "Last year", "Last year"];
   const estimateStep = estimate && effective[0] !== null && effective[0] !== 0 ? estimate.valueCr / effective[0] - 1 : null;
 
@@ -281,13 +285,14 @@ function IndustrySipCard({
                       decimals={0}
                       placeholder={formatLedgerInr(auto[i])}
                       muted={m[f] === null}
+                      grouped
                     />
                   ) : (
                     formatLedgerInr(effective[i])
                   )}
                 </td>
-                <td className="ss-chg">{i < 2 ? <Pct change={growth.step[i]} /> : null}</td>
-                <td className="ss-chg">{i < 2 ? <Pct change={growth.yoy[i]} /> : null}</td>
+                <td className="ss-chg">{i < 2 || (i === 2 && thirdRowBases) ? <Pct change={growth.step[i]} /> : null}</td>
+                <td className="ss-chg">{i < 2 || (i === 2 && thirdRowBases) ? <Pct change={growth.yoy[i]} /> : null}</td>
               </tr>
             ))}
             {estimate && (
@@ -364,6 +369,7 @@ function AmcScoreCard({ sheet, editable, saveField }: { sheet: FortnightlySheet;
 }
 
 export function SipScoreSection({ slug, sheet }: { slug: string; sheet: FortnightlySheet | undefined }) {
+  const { data: flows } = useIndustryMonthlyFlows();
   const sheetForSlug = sheet && sheet.slug === slug ? sheet : undefined;
   if (!sheetForSlug) {
     return <p className="aa-note">Loading the Fortnightly figures…</p>;
@@ -395,13 +401,18 @@ export function SipScoreSection({ slug, sheet }: { slug: string; sheet: Fortnigh
     industryLabels
   );
   const quartersDiffer = industryLabels !== null && industryLabels[0] !== amcLabels[0];
+  // The third row's own QoQ / MoM and YoY compare with periods that aren't
+  // on the card, straight from AMFI (an override on the row itself still counts).
+  const byMonth = flows ? sipByMonth(flows.points) : null;
+  const quarterBases = byMonth && q ? thirdRowQuarterBases(byMonth, { fy: q.anchorFy, q: q.anchorQuarter }) : undefined;
+  const monthBases = byMonth && mo ? thirdRowMonthBases(byMonth, mo.anchorYear, mo.anchorMonth) : undefined;
 
   return (
     <>
       <div className="ss-grid">
         <AmcSipCard sheet={s} editable={editable} saveField={saveField} share={share} />
-        <IndustrySipCard kind="quarter" sheet={s} editable={editable} saveField={saveField} effective={industryQ} />
-        <IndustrySipCard kind="month" sheet={s} editable={editable} saveField={saveField} effective={industryM} />
+        <IndustrySipCard kind="quarter" sheet={s} editable={editable} saveField={saveField} effective={industryQ} thirdRowBases={quarterBases} />
+        <IndustrySipCard kind="month" sheet={s} editable={editable} saveField={saveField} effective={industryM} thirdRowBases={monthBases} />
         <AmcScoreCard sheet={s} editable={editable} saveField={saveField} />
       </div>
       {quartersDiffer && (

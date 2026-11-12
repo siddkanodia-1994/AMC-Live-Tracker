@@ -675,6 +675,7 @@ export function SavedNumberInput({
   scale = 1,
   placeholder,
   muted,
+  grouped,
 }: {
   value: number | null;
   onSave: (v: number | null) => Promise<void>;
@@ -683,9 +684,12 @@ export function SavedNumberInput({
   scale?: number;
   placeholder?: string;
   muted?: boolean;
+  /** Show Indian digit grouping (14,400) until the cell is clicked. */
+  grouped?: boolean;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const shown = value === null ? "" : String(Number((value * scale).toFixed(decimals)));
+  const display = grouped && value !== null ? Number(shown).toLocaleString("en-IN", { maximumFractionDigits: decimals }) : shown;
   const commit = async () => {
     if (draft === null) return;
     const text = draft.replace(/,/g, "").trim();
@@ -709,7 +713,7 @@ export function SavedNumberInput({
       inputMode="decimal"
       aria-label={ariaLabel}
       placeholder={placeholder ?? "—"}
-      value={draft ?? shown}
+      value={draft ?? display}
       onFocus={() => setDraft(shown)}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
