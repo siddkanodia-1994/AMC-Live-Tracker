@@ -26,6 +26,7 @@ import { trimToLastContinuousRun } from "../aum/series-math";
 import { computeRangeCutoffDate, filterByCutoff, type RangeOption } from "../aum/date-range";
 import type { AumHistoryPoint, AmcStockPricePoint } from "../aum/history";
 import { computeBands } from "./bands";
+import { CUSTOM_AUM_DAYS } from "./valuation-settings";
 
 // The window the Mcap / Sales default multiples' band is read over (the chart's default).
 export const MCAP_SALES_BAND_RANGE: RangeOption = "3y";
@@ -44,10 +45,13 @@ export type ValuationMethodKey = "ratio" | "bestFit" | "pe" | "mcapSales";
 export interface TargetPriceInputs {
   aumHistory: AumHistoryPoint[];
   stockPriceSeries: AmcStockPricePoint[];
-  /** Ratio: the period and N-day avg AUM the mean and SD come from, and today's AUM (0 = live). */
+  /** Ratio: the period and N-day avg AUM the mean and SD come from, and today's AUM (0 = live, −1 = custom). */
   ratioRange: RangeOption;
   ratioHistoryDays: number;
   ratioTodayDays: number;
+  /** The typed AUM (₹ Cr) used when ratioTodayDays / bestFitAumDays is Custom. */
+  ratioCustomAumCr?: number | null;
+  bestFitCustomAumCr?: number | null;
   /** Best fit: the period and moving average the line is fitted on (lag from the saved Stock Correlation settings). */
   bestFitRange: RangeOption;
   bestFitMaDays: number;
@@ -98,6 +102,15 @@ function finiteOrNull(v: number | null | undefined): number | null {
   return v == null || !Number.isFinite(v) ? null : v;
 }
 
+/** Custom with nothing typed yet for this AMC starts from its 45-day average. */
+export const CUSTOM_AUM_FALLBACK_DAYS = 45;
+
+/** The AUM a Ratio / Best fit choice stands for: an N-day average, or the typed figure for Custom. */
+function chosenAum(series: number[], days: number, customCr: number | null | undefined): number | null {
+  if (days !== CUSTOM_AUM_DAYS) return whatIfStartingAum(series, days);
+  return customCr != null && Number.isFinite(customCr) && customCr > 0 ? customCr : whatIfStartingAum(series, CUSTOM_AUM_FALLBACK_DAYS);
+}
+
 function mapScenario(s: Scenario, fn: (v: number) => number | null): Scenario {
   return { bear: s.bear == null ? null : fn(s.bear), base: s.base == null ? null : fn(s.base), bull: s.bull == null ? null : fn(s.bull) };
 }
@@ -122,7 +135,7 @@ export function computeTargetPrices(input: TargetPriceInputs): TargetPriceTable 
   const ratioMean = ratioFit?.ratioMean ?? null;
   const ratioSd = ratioFit?.ratioStdDev ?? null;
   const aumSeries = trimToLastContinuousRun(input.aumHistory).map((d) => d.liveAumCr);
-  const ratioAumCr = ratioFit ? whatIfStartingAum(aumSeries, input.ratioTodayDays) : null;
+  const ratioAumCr = ratioFit ? chosenAum(aumSeries, input.ratioTodayDays, input.ratioCustomAumCr) : null;
   const ratio: Scenario =
     ratioMean !== null && ratioSd !== null && ratioAumCr !== null
       ? { bear: (ratioMean - ratioSd) * ratioAumCr, base: ratioMean * ratioAumCr, bull: (ratioMean + ratioSd) * ratioAumCr }
@@ -134,7 +147,7 @@ export function computeTargetPrices(input: TargetPriceInputs): TargetPriceTable 
     extraLagDays: input.extraLagDays as ExtraLagDays,
     range: input.bestFitRange,
   });
-  const bestFitAumCr = whatIfStartingAum(aumSeries, input.bestFitAumDays);
+  const bestFitAumCr = chosenAum(aumSeries, input.bestFitAumDays, input.bestFitCustomAumCr);
   const k = input.bestFitAumPct / 100;
   const bestFit: Scenario =
     line && bestFitAumCr !== null

@@ -28,6 +28,7 @@ import { withLiveValuationPoint } from "@/lib/valuation/provisional";
 import { computeRatioLadder, RATIO_LADDER_SDS, type RatioLadder } from "@/lib/valuation/ratio-ladder";
 import { computeTargetPrices, SCENARIO_KEYS, type TargetPriceTable, type ValuationMethodKey } from "@/lib/valuation/target-price";
 import {
+  CUSTOM_AUM_DAYS,
   DEFAULT_BEST_FIT_AUM_DAYS,
   DEFAULT_BEST_FIT_AUM_PCT,
   DEFAULT_VALUATION_RATIO_DAYS,
@@ -646,10 +647,13 @@ interface ValuationSettings {
   bestFitMaDays: number;
   bestFitAumDays: number;
   bestFitAumPct: number;
+  /** Each AMC's typed AUM (₹ Cr) for the Custom choice. */
+  ratioCustomAum: Record<string, number>;
+  bestFitCustomAum: Record<string, number>;
 }
 
 function dayText(days: number): string {
-  return days === 0 ? "live" : `${days}D-avg`;
+  return days === CUSTOM_AUM_DAYS ? "custom" : days === 0 ? "live" : `${days}D-avg`;
 }
 
 function rangeText(range: RangeOption): string {
@@ -991,7 +995,11 @@ export function ValuationModelSection({
     bestFitMaDays: local.bestFitMaDays ?? defaults?.bestFitMaDays ?? DEFAULT_VALUATION_RATIO_DAYS,
     bestFitAumDays: local.bestFitAumDays ?? defaults?.bestFitAumDays ?? DEFAULT_BEST_FIT_AUM_DAYS,
     bestFitAumPct: local.bestFitAumPct ?? defaults?.bestFitAumPct ?? DEFAULT_BEST_FIT_AUM_PCT,
+    ratioCustomAum: { ...defaults?.valuationRatioCustomAum, ...local.ratioCustomAum },
+    bestFitCustomAum: { ...defaults?.bestFitCustomAum, ...local.bestFitCustomAum },
   };
+  const ratioCustomCr = settings.ratioCustomAum[slug] ?? null;
+  const bestFitCustomCr = settings.bestFitCustomAum[slug] ?? null;
   const sheetForSlug = sheet && sheet.slug === slug ? sheet : undefined;
 
   const table = useMemo(() => {
@@ -1002,6 +1010,8 @@ export function ValuationModelSection({
       ratioRange: settings.ratioRange,
       ratioHistoryDays: settings.ratioHistoryDays,
       ratioTodayDays: settings.ratioTodayDays,
+      ratioCustomAumCr: ratioCustomCr,
+      bestFitCustomAumCr: bestFitCustomCr,
       bestFitRange: settings.bestFitRange,
       bestFitMaDays: settings.bestFitMaDays,
       extraLagDays: defaults.extraLagDays,
@@ -1023,8 +1033,32 @@ export function ValuationModelSection({
     settings.bestFitMaDays,
     settings.bestFitAumDays,
     settings.bestFitAumPct,
+    ratioCustomCr,
+    bestFitCustomCr,
     cmpInr,
   ]);
+
+  // Picking Custom starts this AMC's box at the AUM the previous choice gave.
+  const pickRatioDays = (v: number) =>
+    setLocal((s) => ({
+      ...s,
+      ratioTodayDays: v,
+      ...(v === CUSTOM_AUM_DAYS && ratioCustomCr === null && table?.ratioAumCr != null
+        ? { ratioCustomAum: { ...s.ratioCustomAum, [slug]: Math.round(table.ratioAumCr) } }
+        : {}),
+    }));
+  const pickBestFitDays = (v: number) =>
+    setLocal((s) => ({
+      ...s,
+      bestFitAumDays: v,
+      ...(v === CUSTOM_AUM_DAYS && bestFitCustomCr === null && table?.bestFitAumCr != null
+        ? { bestFitCustomAum: { ...s.bestFitCustomAum, [slug]: Math.round(table.bestFitAumCr) } }
+        : {}),
+    }));
+  // The figures saved with "Save as default": every AMC's typed one, plus
+  // the one on screen for this AMC when it's on Custom (even if untouched).
+  const customToSave = (map: Record<string, number>, days: number, shown: number | null | undefined) =>
+    days === CUSTOM_AUM_DAYS && map[slug] === undefined && shown != null ? { ...map, [slug]: Math.round(shown) } : map;
 
   async function saveField(field: FortnightlyFieldName, value: number | null) {
     if (!sheetForSlug) return;
@@ -1056,6 +1090,8 @@ export function ValuationModelSection({
           valuationRatioHistoryDays: settings.ratioHistoryDays,
           bestFitRange: settings.bestFitRange,
           bestFitMaDays: settings.bestFitMaDays,
+          valuationRatioCustomAum: customToSave(settings.ratioCustomAum, settings.ratioTodayDays, table?.ratioAumCr),
+          bestFitCustomAum: customToSave(settings.bestFitCustomAum, settings.bestFitAumDays, table?.bestFitAumCr),
         }),
       });
       if (!res.ok) {
@@ -1209,12 +1245,17 @@ export function ValuationModelSection({
                     Today&apos;s AUM <small>multiplied into the mean ratio</small>
                   </th>
                   <td colSpan={3}>
-                    <DaysSelect
-                      value={settings.ratioTodayDays}
-                      options={RATIO_TODAY_AUM_OPTIONS}
-                      onChange={(v) => setLocal((s) => ({ ...s, ratioTodayDays: v }))}
-                      label="Ratio today's AUM"
-                    />
+                    <div className="vm-inline">
+                      <DaysSelect value={settings.ratioTodayDays} options={RATIO_TODAY_AUM_OPTIONS} onChange={pickRatioDays} label="Ratio today's AUM" />
+                      {settings.ratioTodayDays === CUSTOM_AUM_DAYS && (
+                        <CustomAumInput
+                          key={slug}
+                          value={table?.ratioAumCr ?? null}
+                          onChange={(v) => setLocal((s) => ({ ...s, ratioCustomAum: { ...s.ratioCustomAum, [slug]: v } }))}
+                          label="Ratio custom AUM (₹ Cr)"
+                        />
+                      )}
+                    </div>
                   </td>
                 </tr>
                 <tr className="vm-grp">
@@ -1245,12 +1286,17 @@ export function ValuationModelSection({
                     AUM <small>where the line is read</small>
                   </th>
                   <td colSpan={3}>
-                    <DaysSelect
-                      value={settings.bestFitAumDays}
-                      options={VALUATION_AUM_DAYS_OPTIONS}
-                      onChange={(v) => setLocal((s) => ({ ...s, bestFitAumDays: v }))}
-                      label="Best fit AUM"
-                    />
+                    <div className="vm-inline">
+                      <DaysSelect value={settings.bestFitAumDays} options={VALUATION_AUM_DAYS_OPTIONS} onChange={pickBestFitDays} label="Best fit AUM" />
+                      {settings.bestFitAumDays === CUSTOM_AUM_DAYS && (
+                        <CustomAumInput
+                          key={slug}
+                          value={table?.bestFitAumCr ?? null}
+                          onChange={(v) => setLocal((s) => ({ ...s, bestFitCustomAum: { ...s.bestFitCustomAum, [slug]: v } }))}
+                          label="Best fit custom AUM (₹ Cr)"
+                        />
+                      )}
+                    </div>
                   </td>
                 </tr>
                 <tr>
@@ -1315,6 +1361,46 @@ function DaysSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+// The Custom choice's ₹ Cr box: Indian grouping until clicked; a figure
+// that isn't a positive AUM is refused and the last good one comes back.
+function CustomAumInput({ value, onChange, label }: { value: number | null; onChange: (v: number) => void; label: string }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = value === null ? "" : formatLedgerInr(value);
+  const commit = () => {
+    if (draft === null) return;
+    const next = parseAumInput(draft);
+    setDraft(null);
+    if (next === null) {
+      if (draft.trim() !== "") toast.error(`${label}: type an AUM in ₹ Cr, e.g. 4,80,000`);
+      return;
+    }
+    if (next !== value) onChange(next);
+  };
+  return (
+    <span className="vm-aum">
+      <input
+        className="vm-in"
+        inputMode="decimal"
+        aria-label={label}
+        value={draft ?? shown}
+        onFocus={(e) => {
+          setDraft(value === null ? "" : String(Math.round(value)));
+          e.currentTarget.select();
+        }}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") {
+            setDraft(null);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+    </span>
   );
 }
 

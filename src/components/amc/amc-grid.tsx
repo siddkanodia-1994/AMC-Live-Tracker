@@ -72,8 +72,9 @@ export function AmcGrid({
   const [asOfDate, setAsOfDate] = useState<string | null>(null);
   // Lifted (rather than Tabs' own uncontrolled defaultValue) so the toolbar
   // panel below the tab bar can conditionally show the Overview-only field
-  // boxes without duplicating tab-switch logic.
-  const [activeTab, setActiveTab] = useState("overview");
+  // boxes without duplicating tab-switch logic. The dashboard opens on AMC
+  // Analytics (user's choice, 2026-11-12).
+  const [activeTab, setActiveTab] = useState("amc-analytics");
   const { data, error, isLoading, mutate } = useLiveAum(initialData, asOfDate ?? undefined);
   // Shared by every refresh affordance on the page (the persistent button
   // outside the banner box, in whichever of its three states) -- no

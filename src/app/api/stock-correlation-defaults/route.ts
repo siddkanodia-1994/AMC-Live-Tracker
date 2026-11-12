@@ -112,6 +112,23 @@ export async function POST(request: Request) {
   if (!isValuationAvgDays(bestFitMaDays)) {
     return NextResponse.json({ error: `bestFitMaDays must be ${dayRange}` }, { status: 400 });
   }
+  // Per-AMC typed AUMs for the Custom choice; kept as stored when omitted,
+  // and rejected (not trimmed) when any entry is bad, like aumInputs.
+  const customMaps: Record<"valuationRatioCustomAum" | "bestFitCustomAum", Record<string, number>> = {
+    valuationRatioCustomAum: stored.valuationRatioCustomAum,
+    bestFitCustomAum: stored.bestFitCustomAum,
+  };
+  for (const key of ["valuationRatioCustomAum", "bestFitCustomAum"] as const) {
+    if (body?.[key] === undefined) continue;
+    const map = sanitizeAumInputs(body[key]);
+    if (map === null || Object.keys(map).length !== Object.keys(body[key] ?? {}).length) {
+      return NextResponse.json(
+        { error: `${key} must map listed AMC slugs to an AUM in ₹ cr between 0 and ${MAX_AUM_INPUT_CR.toLocaleString("en-IN")}` },
+        { status: 400 }
+      );
+    }
+    customMaps[key] = map;
+  }
 
   const defaults = {
     range,
@@ -129,6 +146,7 @@ export async function POST(request: Request) {
     valuationRatioHistoryDays,
     bestFitRange,
     bestFitMaDays,
+    ...customMaps,
   };
   await setStockCorrelationDefaults(defaults);
   return NextResponse.json(defaults);

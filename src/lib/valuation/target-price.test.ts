@@ -120,6 +120,28 @@ describe("computeTargetPrices", () => {
     expect(at45.methods.bestFit.base).toBeCloseTo(line.fairValueAtLatest, 6);
   });
 
+  it("Custom: Ratio and Best fit use their own typed AUM, unaffected by each other", () => {
+    const t = computeTargetPrices(inputs({ ratioTodayDays: -1, ratioCustomAumCr: 500000, bestFitAumDays: -1, bestFitCustomAumCr: 450000 }));
+    const base = computeTargetPrices(inputs());
+    const r = computeRegressionResult(inputs().aumHistory, inputs().stockPriceSeries, { maWindow: 45, extraLagDays: 0, range: "3y" })!;
+    expect(t.ratioAumCr).toBe(500000);
+    expect(t.methods.ratio.base).toBeCloseTo(r.ratioMean! * 500000, 6);
+    expect(t.bestFitAumCr).toBe(450000);
+    expect(t.methods.bestFit.base).toBeCloseTo(r.slope * 450000 + r.intercept, 6);
+    expect(t.methods.bestFit.bull).toBeCloseTo(r.slope * 450000 * 1.1 + r.intercept, 6);
+    // The other two methods don't move.
+    expect(t.methods.pe).toEqual(base.methods.pe);
+    expect(t.methods.mcapSales).toEqual(base.methods.mcapSales);
+  });
+
+  it("Custom with nothing typed starts from the 45-day average, never from the live value", () => {
+    const inp = inputs({ ratioTodayDays: -1, bestFitAumDays: -1, bestFitCustomAumCr: 0 });
+    const t = computeTargetPrices(inp);
+    const aum45 = whatIfStartingAum(inp.aumHistory.map((d) => d.liveAumCr), 45)!;
+    expect(t.ratioAumCr).toBeCloseTo(aum45, 6);
+    expect(t.bestFitAumCr).toBeCloseTo(aum45, 6);
+  });
+
   it("Mcap / Sales: blank multiples use the chart's −1 SD / Mean / +1 SD; typed ones override", () => {
     const band = mcapSalesBand([
       { date: "2026-10-01", value: 26 },

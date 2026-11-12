@@ -632,3 +632,11 @@
 
 /* AUM Predictor: the what-if and the live fair value, one under the other. */
 .aa .aa-stack { display: grid; gap: 16px; }
+
+/* Target Price settings: the Custom choice opens a ₹ Cr box beside its dropdown. */
+.aa .vm-inline { display: flex; gap: 8px; align-items: center; }
+.aa .vm-inline > .vm-sel, .aa .vm-inline > .vm-aum { flex: 1 1 50%; min-width: 0; }
+.aa .vm-aum { position: relative; display: block; }
+.aa .vm-aum .vm-in { border-color: #9fc0ea; background: #eef5fd; padding-left: 22px; padding-right: 26px; }
+.aa .vm-aum::before { content: "₹"; position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--pl-color-text-muted); font-size: 12px; pointer-events: none; }
+.aa .vm-aum::after { content: "Cr"; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: var(--pl-color-text-muted); font-size: 11px; pointer-events: none; }

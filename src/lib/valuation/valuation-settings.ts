@@ -4,6 +4,9 @@
 // correlation-defaults.ts through fortnightly-update.ts -- a shared leaf
 // module keeps that from becoming an import cycle.
 
+/** The "Custom" choice: an AUM typed in for each AMC instead of an N-day average. */
+export const CUSTOM_AUM_DAYS = -1;
+
 /** AUM averaging choices for the Ratio and Best fit inputs (0 = live, today's value). */
 export const VALUATION_AUM_DAYS_OPTIONS = [
   { value: 0, label: "Live" },
@@ -12,6 +15,7 @@ export const VALUATION_AUM_DAYS_OPTIONS = [
   { value: 15, label: "15D avg" },
   { value: 20, label: "20D avg" },
   { value: 45, label: "45D avg" },
+  { value: CUSTOM_AUM_DAYS, label: "Custom" },
 ] as const;
 
 export const DEFAULT_VALUATION_RATIO_DAYS = 45;
@@ -34,6 +38,7 @@ export const RATIO_TODAY_AUM_OPTIONS = [
   { value: 10, label: "10D avg" },
   { value: 20, label: "20D avg" },
   { value: 45, label: "45D avg" },
+  { value: CUSTOM_AUM_DAYS, label: "Custom" },
 ] as const;
 
 /** The two typed day boxes (Ratio history AUM avg, Best fit line moving avg). */

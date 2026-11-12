@@ -57,6 +57,10 @@ export interface StockCorrelationDefaults {
   valuationRatioHistoryDays: number;
   bestFitRange: RangeOption;
   bestFitMaDays: number;
+  // The AUM (AMC slug -> ₹ cr) each AMC's Ratio / Best fit uses when its
+  // choice above is Custom (CUSTOM_AUM_DAYS). Older saved rows have none ({}).
+  valuationRatioCustomAum: Record<string, number>;
+  bestFitCustomAum: Record<string, number>;
 }
 
 const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
@@ -75,6 +79,8 @@ const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
   valuationRatioHistoryDays: DEFAULT_VALUATION_RATIO_DAYS,
   bestFitRange: "3y",
   bestFitMaDays: DEFAULT_VALUATION_RATIO_DAYS,
+  valuationRatioCustomAum: {},
+  bestFitCustomAum: {},
 };
 
 // The 8 listed AMCs the Stock Correlation table shows -- the only slugs an
@@ -142,6 +148,8 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
         : Math.max(1, valuationRatioDays),
       bestFitRange: isRangeOption(parsed.bestFitRange) ? parsed.bestFitRange : range,
       bestFitMaDays: isValuationAvgDays(parsed.bestFitMaDays) ? parsed.bestFitMaDays : Math.max(1, Math.min(250, Math.round(maDays))),
+      valuationRatioCustomAum: sanitizeAumInputs(parsed.valuationRatioCustomAum) ?? {},
+      bestFitCustomAum: sanitizeAumInputs(parsed.bestFitCustomAum) ?? {},
     };
   } catch {
     return FALLBACK_DEFAULTS;
