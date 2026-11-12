@@ -21,7 +21,7 @@ import { AumPredictorSection, LivePredictorSection, RatioSection, RegressionSect
 import { SipScoreSection } from "./sip-score-section";
 import { IndustrySipView } from "./industry-sip-view";
 import { useIndustryMonthlyFlows } from "@/hooks/use-industry-monthly-flows";
-import { monthKey, monthLabel, monthShortLabel } from "@/lib/aum/industry-sip";
+import { monthKey, monthLabel } from "@/lib/aum/industry-sip";
 
 // The ledger design system's typefaces, loaded for this tab only (the
 // variables are read by amc-analytics.css's --pl-font-* tokens).
@@ -44,10 +44,6 @@ const AMC_TABS: { slug: string; tab: string }[] = [
   { slug: "motilal-oswal-mutual-fund", tab: "Motilal" },
 ];
 
-// The tab after Motilal: AMFI's industry-wide SIP, not an AMC, so it has
-// its own page and the section menu doesn't apply to it.
-const INDUSTRY_SIP = "industry-sip";
-
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Request failed with status ${res.status}`);
@@ -56,7 +52,7 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 const COMPANY_BY_SLUG =new Map(Object.values(ACCORD_CODES).map((v) => [v.slug, v.company]));
 
-export type AmcAnalyticsSection = "summary" | "sip-score" | "aum-predictor" | "live-predictor" | "ratio" | "regression" | "valuation";
+export type AmcAnalyticsSection = "summary" | "sip-score" | "industry-sip" | "aum-predictor" | "ratio" | "regression" | "valuation";
 
 const SECTIONS: { key: AmcAnalyticsSection; label: string; icon: ReactNode }[] = [
   {
@@ -80,21 +76,20 @@ const SECTIONS: { key: AmcAnalyticsSection; label: string; icon: ReactNode }[] =
     ),
   },
   {
+    key: "industry-sip",
+    label: "Industry SIP",
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 20h18M5 20V10M10 20V6M15 20v-8M20 20V4" />
+      </svg>
+    ),
+  },
+  {
     key: "aum-predictor",
     label: "AUM Predictor",
     icon: (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M2 12h4l3-7 4 14 3-7h6" />
-      </svg>
-    ),
-  },
-  {
-    key: "live-predictor",
-    label: "Live Predictor",
-    icon: (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 7v5l3 2" />
       </svg>
     ),
   },
@@ -184,9 +179,8 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   const blendIds = useActiveGoldSilverBlendAmcIds();
   const [section, setSection] = useState<AmcAnalyticsSection>("summary");
   const [slug, setSlug] = useState(AMC_TABS[0].slug);
-  // The AMC to go back to when a section is picked from the Industry SIP tab.
-  const [lastAmcSlug, setLastAmcSlug] = useState(AMC_TABS[0].slug);
-  const isIndustry = slug === INDUSTRY_SIP;
+  // AMFI's industry-wide SIP: not about one AMC, so the AMC tabs hide.
+  const isIndustry = section === "industry-sip";
   const { data: flows } = useIndustryMonthlyFlows();
   const latestFlow = flows?.points.length ? flows.points.reduce((a, b) => (a.monthEndDate > b.monthEndDate ? a : b)) : undefined;
   const [selections, setSelections] = useState<LedgerSelections | null>(null);
@@ -204,19 +198,10 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   // so all sections' charts, ratios, fits, targets and upsides follow it.
   const { entries: liveEntries, points: livePoints, prices: livePrices } = useLiveCorrelationEntries(data?.amcs, liveAum);
 
-  const amcTabs = useMemo(() => {
+  const tabs = useMemo(() => {
     const have = new Set((data?.amcs ?? []).map((a) => a.slug));
     return AMC_TABS.filter((t) => have.has(t.slug));
   }, [data]);
-  const tabs = useMemo(() => [...amcTabs, { slug: INDUSTRY_SIP, tab: "Industry SIP" }], [amcTabs]);
-  const pickTab = (next: string) => {
-    setSlug(next);
-    if (next !== INDUSTRY_SIP) setLastAmcSlug(next);
-  };
-  const pickSection = (next: AmcAnalyticsSection) => {
-    setSection(next);
-    if (isIndustry) setSlug(lastAmcSlug);
-  };
 
   const model = useMemo(() => {
     const entry = liveEntries?.find((a) => a.slug === slug);
@@ -249,7 +234,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   const sheetCmp = sheet?.slug === slug ? sheet.cmpInr : null;
   const cmpInr = livePoint?.priceInr ?? sheetCmp;
   const cmpIsLive = livePoint !== undefined && Boolean(livePrices?.marketOpen);
-  const amcOptions = amcTabs.map((t) => ({ slug: t.slug, label: COMPANY_BY_SLUG.get(t.slug) ?? t.tab }));
+  const amcOptions = tabs.map((t) => ({ slug: t.slug, label: COMPANY_BY_SLUG.get(t.slug) ?? t.tab }));
   const live = liveAum?.amcs.find((a) => a.slug === slug);
   const tabLabel = tabs.find((t) => t.slug === slug)?.tab ?? "";
   const company = COMPANY_BY_SLUG.get(slug) ?? data?.amcs.find((a) => a.slug === slug)?.overviewName ?? "";
@@ -258,10 +243,9 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   const tradingSymbol = data?.amcs.find((a) => a.slug === slug)?.tradingSymbol;
   const lastDate = model?.months.length ? data?.amcs.find((a) => a.slug === slug)?.aumHistory.at(-1)?.date : undefined;
   const active = SECTIONS.find((s) => s.key === section)!;
-  const pageTitle = isIndustry ? "Industry SIP" : active.label;
 
   return (
-    <div className={`aa ${plexSans.variable} ${plexCondensed.variable}${navCollapsed ? " is-nav-rail" : ""}${isIndustry ? " is-industry" : ""}`}>
+    <div className={`aa ${plexSans.variable} ${plexCondensed.variable}${navCollapsed ? " is-nav-rail" : ""}`}>
       <aside className="aa-side" id="aa-side">
         <div className="aa-brand">
           <span className="aa-brand-mark" aria-hidden="true">
@@ -292,9 +276,9 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                 <button
                   type="button"
                   className="aa-nav-btn"
-                  aria-current={s.key === section && !isIndustry ? "page" : undefined}
-                  title={isIndustry ? `${s.label} (back to ${amcTabs.find((t) => t.slug === lastAmcSlug)?.tab ?? "the AMC"})` : navCollapsed ? s.label : undefined}
-                  onClick={() => pickSection(s.key)}
+                  aria-current={s.key === section ? "page" : undefined}
+                  title={navCollapsed ? s.label : undefined}
+                  onClick={() => setSection(s.key)}
                 >
                   {s.icon}
                   <span className="aa-nav-label">{s.label}</span>
@@ -338,7 +322,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
             </>
           )}
         </div>
-        <h2 className="aa-title">{pageTitle}</h2>
+        <h2 className="aa-title">{active.label}</h2>
         <div className="aa-body">
           {error ? (
             <p className="aa-note">Could not load the AUM history: {error.message}</p>
@@ -346,7 +330,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
             <Skeleton className="h-96 w-full" />
           ) : (
             <div className="pl-ledger">
-              <div className="pl-tabs" role="tablist" aria-label="AMC">
+              <div className="pl-tabs" role="tablist" aria-label="AMC" hidden={isIndustry}>
                 {tabs.map((t) => (
                   <button
                     key={t.slug}
@@ -354,27 +338,19 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                     role="tab"
                     aria-selected={t.slug === slug}
                     tabIndex={t.slug === slug ? 0 : -1}
-                    className={`pl-tab${t.slug === slug ? " is-active" : ""}${t.slug === INDUSTRY_SIP ? " pl-tab--industry" : ""}`}
-                    onClick={() => pickTab(t.slug)}
+                    className={`pl-tab${t.slug === slug ? " is-active" : ""}`}
+                    onClick={() => setSlug(t.slug)}
                     onKeyDown={(e) => {
                       if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
                       const i = tabs.findIndex((x) => x.slug === slug) + (e.key === "ArrowRight" ? 1 : -1);
                       const next = tabs[(i + tabs.length) % tabs.length];
-                      pickTab(next.slug);
+                      setSlug(next.slug);
                       (e.currentTarget.parentElement?.children[(i + tabs.length) % tabs.length] as HTMLElement | undefined)?.focus();
                       e.preventDefault();
                     }}
                   >
                     {t.tab}
-                    {t.slug === INDUSTRY_SIP ? (
-                      latestFlow && (
-                        <span className="pl-tab-px">
-                          {monthShortLabel(monthKey(latestFlow.monthEndDate))} · ₹{Math.round(latestFlow.sipContributionsCr).toLocaleString("en-IN")}
-                        </span>
-                      )
-                    ) : (
-                      <TabPrice entry={data?.amcs.find((a) => a.slug === t.slug)} price={livePoints.get(t.slug)?.priceInr} date={livePrices?.date} />
-                    )}
+                    <TabPrice entry={data?.amcs.find((a) => a.slug === t.slug)} price={livePoints.get(t.slug)?.priceInr} date={livePrices?.date} />
                   </button>
                 ))}
               </div>
@@ -403,15 +379,17 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
               ) : section === "sip-score" ? (
                 <SipScoreSection slug={slug} sheet={sheet} />
               ) : section === "aum-predictor" ? (
-                <AumPredictorSection entry={entry} defaults={data?.defaults} priceIsLive={cmpIsLive} />
-              ) : section === "live-predictor" ? (
-                <LivePredictorSection
-                  entry={entry}
-                  defaults={data?.defaults}
-                  liveAumCr={live?.liveAumCr ?? null}
-                  cmpInr={cmpInr}
-                  cmpIsLive={cmpIsLive}
-                />
+                // The what-if, then today's live AUM through the same line.
+                <div className="aa-stack">
+                  <AumPredictorSection entry={entry} defaults={data?.defaults} priceIsLive={cmpIsLive} />
+                  <LivePredictorSection
+                    entry={entry}
+                    defaults={data?.defaults}
+                    liveAumCr={live?.liveAumCr ?? null}
+                    cmpInr={cmpInr}
+                    cmpIsLive={cmpIsLive}
+                  />
+                </div>
               ) : section === "ratio" ? (
                 <RatioSection
                   entry={entry}
@@ -432,7 +410,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                   cmpInr={cmpInr}
                   cmpIsLive={cmpIsLive}
                   amcOptions={amcOptions}
-                  onSlugChange={pickTab}
+                  onSlugChange={setSlug}
                 />
               )}
             </div>

@@ -7,10 +7,10 @@ import { buildIndustrySipLedger, monthKey, monthLabel, monthShortLabel, shiftMon
 import { formatLedgerInr, formatLedgerPct } from "@/lib/aum/period-ledger";
 import { Pct } from "./sections";
 
-// The Industry SIP tab (after Motilal): AMFI's monthly industry SIP as a
-// trend graph — the Summary tab's SIP Contributions Trend in the ledger
-// look — above a period ledger of sums. Industry-wide, so the section menu
-// doesn't apply while it's open.
+// The Industry SIP section (below SIP & Score): AMFI's monthly industry SIP
+// as a trend graph — the Summary tab's SIP Contributions Trend in the
+// ledger look — above a period ledger of sums. Industry-wide, so the AMC
+// tabs hide while it's open.
 
 type Range = "1y" | "3y" | "5y" | "all";
 const RANGES: { value: Range; label: string; months: number | null }[] = [
