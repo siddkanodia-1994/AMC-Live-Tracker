@@ -9,6 +9,8 @@ import { runEtfIngestion } from "@/lib/etf/ingest";
 import { runMcxIngestion } from "@/lib/mcx/ingest";
 import { runAmcStockIngestion } from "@/lib/amc-stock/ingest";
 import { createDailyFortnightlySnapshots } from "@/lib/aum/fortnightly-update";
+import { runAmfiMonthlyFlowIngestion } from "@/lib/aum/amfi-monthly-flows";
+import { getAllMonthlyFlows, upsertMonthlyFlow } from "@/lib/aum/industry-flows";
 import { getIstDateString } from "@/lib/utils/date";
 import { flushOpsRun, hasCompletedRunSince, runOpsStep, startOpsRun } from "@/lib/ops/run-log";
 
@@ -167,6 +169,23 @@ export async function GET(request: Request) {
     // anyone's holding, so a failure here has zero effect on the equity/
     // ETF/MCX pipelines above, and vice versa.
     await runOpsStep(run, "runAmcStockIngestion", () => runAmcStockIngestion());
+
+    // Best-effort, fully isolated: last month's industry SIP and equity net
+    // flows from AMFI's own Monthly Note (PDF) and Monthly Report (XLS),
+    // once it's the 8th or later and the month isn't stored yet -- a no-op
+    // (one small read) every other day. SIP revisions AMFI makes to the
+    // previous 6 months are applied too and show as a warning here.
+    await runOpsStep(
+      run,
+      "runAmfiMonthlyFlowIngestion",
+      () =>
+        runAmfiMonthlyFlowIngestion({
+          istDate: getIstDateString(),
+          existing: getAllMonthlyFlows,
+          upsert: (r) => upsertMonthlyFlow(r.monthEndDate, r.sipContributionsCr, r.equityNetFlowsCr),
+        }),
+      (r) => ({ summary: r.summary, details: { status: r.status, month: r.month, write: r.write, revisions: r.revisions } })
+    );
 
     // Final marker the retry-only run checks: "fail" when DHAN was fully
     // unavailable (e.g. expired token at 16:05) so a later retry -- after the
