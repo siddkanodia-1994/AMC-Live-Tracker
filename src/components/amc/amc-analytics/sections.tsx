@@ -16,6 +16,8 @@ import {
 } from "@/lib/amc-stock/aum-what-if";
 import { computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
 import { computePctChangeRegression } from "@/lib/amc-stock/pct-change-regression";
+import { computeModelRatioLadder, modelRatioPrice, type ModelRatioLadder } from "@/lib/amc-stock/model-ratio";
+import { ModelRatioChart } from "./model-ratio-chart";
 import { PctChangeRegressionView } from "./pct-change-regression-view";
 import { FitStatGrid } from "./fit-stat-strip";
 import { computeFitCorrelation } from "@/lib/amc-stock/fit-stats";
@@ -649,12 +651,19 @@ export function RegressionSection({
   entry,
   defaults,
   controls,
+  cmpInr,
+  cmpIsLive,
 }: {
   entry: AmcStockCorrelationEntry | undefined;
   defaults: StockCorrelationDefaults | undefined;
   controls: FitControls;
+  cmpInr: number | null;
+  cmpIsLive: boolean;
 }) {
   const result = useFitResult(entry, defaults, controls);
+  // Always the levels line, even when Levels is off and the cards above
+  // show the daily % change model: only it has a model price per session.
+  const modelRatio = useMemo(() => computeModelRatioLadder(result, cmpInr), [result, cmpInr]);
   const { maDays, range, levelsCorrelation } = controls;
   const pctResult = useMemo(() => {
     if (!entry || !defaults || levelsCorrelation) return null;
@@ -682,6 +691,7 @@ export function RegressionSection({
             extraLagDays={lag}
             showScatter
             showRatioPanel={false}
+            afterActualVsModel={<ModelRatioPanel ladder={modelRatio} cmpIsLive={cmpInr !== null && cmpIsLive} maDays={maDays} />}
             aside={
               result ? (
                 <FitStatGrid r={result.pearsonR} r2={result.r2} />
@@ -694,6 +704,7 @@ export function RegressionSection({
             tradingSymbol={entry.tradingSymbol}
             maWindow={maDays}
             extraLagDays={lag}
+            afterActualVsModel={<ModelRatioPanel ladder={modelRatio} cmpIsLive={cmpInr !== null && cmpIsLive} maDays={maDays} />}
             aside={
               pctResult ? (
                 <FitStatGrid r={pctResult.pearsonR} r2={pctResult.r2} />
@@ -702,6 +713,90 @@ export function RegressionSection({
           />
         )}
       </div>
+    </>
+  );
+}
+
+// Close ÷ the levels best-fit line, per session, with its mean and ±SD over
+// the fit window, then the price at each level (today's model value × the
+// ratio). Shown on the Regression sub-tab between Actual vs Model and the
+// scatter, whichever model the cards above use.
+function ModelRatioPanel({ ladder, cmpIsLive, maDays }: { ladder: ModelRatioLadder | null; cmpIsLive: boolean; maDays: number }) {
+  if (!ladder) return null;
+  const aumLabel = maDays > 1 ? `AUM MA${maDays}` : "AUM";
+  const z = ladder.zScore;
+  return (
+    <>
+      <div className="space-y-1 rounded-lg border bg-card p-4">
+        <p className="text-xs text-muted-foreground">
+          <span className="font-semibold tracking-wide uppercase">Share Price ÷ Model</span> · each session&apos;s close over the levels best-fit line (
+          {aumLabel}), with the mean and ±1 / ±2 SD of the fit window
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Above 1.00 the close was above the line, below 1.00 under it. Today {ladder.currentRatio.toFixed(4)}
+          {z === null ? "" : ` (${z >= 0 ? "+" : "−"}${Math.abs(z).toFixed(2)} SD)`}. The line is fitted on these same sessions, so the mean sits near
+          1.00; the SD lines show how far the price has typically strayed from it, not the odds of reaching a level.
+        </p>
+        <ModelRatioChart ladder={ladder} />
+      </div>
+      <section className="pl-panel vm" aria-label="Model ratio analysis">
+        <div className="pl-band">
+          Model Ratio Analysis{" "}
+          <span className="pl-band-unit">
+            Close ÷ Model · ₹ per share · today&apos;s model value {rupees(ladder.modelValue)} · vs {cmpIsLive ? "live price" : "last close"}{" "}
+            {rupees(ladder.currentPrice)}
+          </span>
+        </div>
+        <div className="vm-grid">
+          <table className="vm-t">
+            <thead>
+              <tr>
+                <th scope="col">Level</th>
+                <th scope="col">Ratio</th>
+                <th scope="col">Price</th>
+              </tr>
+            </thead>
+            <tbody>
+              {RATIO_LADDER_SDS.map((k) => {
+                const price = modelRatioPrice(ladder, k);
+                return (
+                  <tr key={k} className={k === 0 ? "vm-avg" : undefined}>
+                    <th scope="row">
+                      <b>{RATIO_LADDER_LABELS[k]}</b>
+                    </th>
+                    <td className="vm-c">
+                      <span className="vm-p">{(ladder.meanRatio + k * ladder.stdDev).toFixed(4)}</span>
+                    </td>
+                    <PriceCell price={price} upside={ladder.currentPrice ? price / ladder.currentPrice - 1 : null} />
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <table className="aa-kv">
+            <tbody>
+              <tr>
+                <th scope="row">Today&apos;s ratio</th>
+                <td>{ladder.currentRatio.toFixed(4)}</td>
+              </tr>
+              <tr>
+                <th scope="row">Z-score</th>
+                <td>{z === null ? "—" : `${z >= 0 ? "+" : "−"}${Math.abs(z).toFixed(2)}`}</td>
+              </tr>
+              <tr>
+                <th scope="row">Today&apos;s model value</th>
+                <td>{rupees(ladder.modelValue)}</td>
+              </tr>
+              <tr>
+                <th scope="row">Sessions</th>
+                <td>
+                  {ladder.n} · {ladder.from} → {ladder.to}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </>
   );
 }

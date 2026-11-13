@@ -400,7 +400,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                   cmpIsLive={cmpIsLive}
                 />
               ) : section === "regression" ? (
-                <RegressionSection entry={entry} defaults={data?.defaults} controls={fitControls} />
+                <RegressionSection entry={entry} defaults={data?.defaults} controls={fitControls} cmpInr={cmpInr} cmpIsLive={cmpIsLive} />
               ) : (
                 <ValuationModelSection
                   slug={slug}

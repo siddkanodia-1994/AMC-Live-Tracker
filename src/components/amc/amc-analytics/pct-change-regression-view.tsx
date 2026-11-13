@@ -55,6 +55,7 @@ export function PctChangeRegressionView({
   maWindow,
   extraLagDays,
   aside,
+  afterActualVsModel,
 }: {
   result: PctChangeRegressionResult | null;
   tradingSymbol: string;
@@ -62,6 +63,8 @@ export function PctChangeRegressionView({
   extraLagDays: number;
   /** The fit grid beside the target card. */
   aside?: React.ReactNode;
+  /** Shown between the Actual vs Model chart and the scatter. */
+  afterActualVsModel?: React.ReactNode;
 }) {
   if (!result) {
     return (
@@ -158,6 +161,8 @@ export function PctChangeRegressionView({
           </ResponsiveContainer>
         </div>
       </div>
+
+      {afterActualVsModel}
 
       <div className="space-y-1 rounded-lg border bg-card p-4">
         <p className="text-xs text-muted-foreground">

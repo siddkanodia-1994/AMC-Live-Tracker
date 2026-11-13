@@ -49,7 +49,8 @@ export function Tile({ pass, head, sub }: { pass: boolean; head: string; sub: st
 // `showRatioPanel={false}` drops the Price ÷ AUM panel; only the AMC
 // Analytics tab does that, since its own Ratio section covers it.
 // `aside` (AMC Analytics only) sits in a right-hand column of the fair
-// value card; without it the card is unchanged.
+// value card, and `afterActualVsModel` (AMC Analytics only) goes between the
+// Actual-vs-Model chart and the scatter; without them nothing changes.
 /** A card whose content gets an optional right-hand column (stacked below it on narrow screens). */
 export function AsideCard({ aside, children }: { aside?: React.ReactNode; children: React.ReactNode }) {
   if (!aside) return <div className="space-y-2 rounded-lg border bg-card p-4">{children}</div>;
@@ -69,6 +70,7 @@ export function RegressionDeepDive({
   showScatter = false,
   showRatioPanel = true,
   aside,
+  afterActualVsModel,
 }: {
   result: RegressionResult | null;
   tradingSymbol: string;
@@ -77,6 +79,7 @@ export function RegressionDeepDive({
   showScatter?: boolean;
   showRatioPanel?: boolean;
   aside?: React.ReactNode;
+  afterActualVsModel?: React.ReactNode;
 }) {
   if (!result) {
     return <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">Not enough aligned AUM/price history to fit a regression for this AMC at this range.</div>;
@@ -199,6 +202,8 @@ export function RegressionDeepDive({
         <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Share Price: Actual vs Model</p>
         <RegressionChart points={result.chartPoints} />
       </div>
+
+      {afterActualVsModel}
 
       {showScatter && (
         <div className="space-y-1 rounded-lg border bg-card p-4">
