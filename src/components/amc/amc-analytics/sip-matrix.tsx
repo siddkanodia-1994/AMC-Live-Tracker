@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { useIndustryMonthlyFlows } from "@/hooks/use-industry-monthly-flows";
 import { fiscalQuarterOf, quarterSip, sipByMonth, type FiscalQuarter } from "@/lib/aum/industry-sip";
 import { formatLedgerInr } from "@/lib/aum/period-ledger";
-import { matrixQuarters, yoyOfLatest, type SipQuarterValue } from "@/lib/aum/sip-quarterly-matrix";
+import { lastFilledIndex, matrixQuarters, yoyOfLatest, type SipQuarterValue } from "@/lib/aum/sip-quarterly-matrix";
 import { Pct } from "./sections";
 
 // SIP & Score's cross-AMC table: every listed AMC's SIP / Eq AUM % and SIP
@@ -52,6 +52,12 @@ function heatStyle(values: (number | null)[], v: number | null): React.CSSProper
   return { background: `rgba(8, 113, 30, ${(0.06 + t * 0.32).toFixed(2)})` };
 }
 
+// Which quarters the YoY cell compares (the row's last quarter with a figure).
+function yoyTitle(quarters: { label: string }[], values: (number | null)[]): string | undefined {
+  const i = lastFilledIndex(values);
+  return i >= 4 ? `${quarters[i].label} vs ${quarters[i - 4].label}` : undefined;
+}
+
 function Matrix({
   title,
   unit,
@@ -96,7 +102,7 @@ function Matrix({
                     {pct1(v)}
                   </td>
                 ))}
-                <td className="sm-chg">
+                <td className="sm-chg" title={yoyTitle(quarters, r.values)}>
                   <Pct change={yoyOfLatest(r.values)} />
                 </td>
               </tr>
@@ -166,8 +172,9 @@ export function SipMatrix({ slug }: { slug: string }) {
       <p className="aa-note">
         SIP ₹ Cr is typed on the SIP card above and SIP / Eq AUM % on the Fortnightly tab&apos;s card (the latest 5 quarters); older quarters were
         filled in once from your sheet. SIP share needs the
-        AMC&apos;s SIP ₹ Cr for that quarter, so it&apos;s blank where only the % was entered. YoY compares the latest quarter with the same quarter a
-        year earlier. The selected AMC&apos;s row is outlined.
+        AMC&apos;s SIP ₹ Cr for that quarter, so it&apos;s blank where only the % was entered. YoY compares each AMC&apos;s latest quarter with a figure
+        against the same quarter a year earlier, so until an AMC reports the newest quarter it uses the one before (hover a YoY cell to see
+        which). The selected AMC&apos;s row is outlined.
       </p>
     </div>
   );

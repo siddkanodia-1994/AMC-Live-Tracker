@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { isSipSlotField, matrixQuarters, overlayCardSlots, quarterKey, slotQuarter, yoyOfLatest } from "./sip-quarterly-matrix";
-import { getSipAmcPeriodLabels } from "./fortnightly-update";
+import { isSipSlotField, lastFilledIndex, matrixQuarters, overlayCardSlots, quarterKey, slotQuarter, yoyOfLatest } from "./sip-quarterly-matrix";
+import { getSipAmcPeriodLabels } from "./sip-industry-settings";
 import { quarterLabel } from "./industry-sip";
 
 const Q2FY27 = { fy: 2027, q: 2 };
@@ -75,5 +75,14 @@ describe("matrixQuarters and YoY", () => {
     expect(yoyOfLatest([0.089, 0.089, 0.09, 0.089, 0.09, 0.095])).toBeCloseTo(0.095 / 0.089 - 1, 12);
     expect(yoyOfLatest([0.1, 0.1, 0.1])).toBeNull();
     expect(yoyOfLatest([null, 1, 1, 1, 1])).toBeNull();
+  });
+
+  it("YoY falls back to the last quarter with a figure while the newest is blank", () => {
+    // Q1FY26 … Q3FY27, Q3FY27 not reported yet: Q2FY27 vs Q2FY26.
+    const hdfcShare = [0.149, 0.157, null, 0.158, 0.154, 0.149, null];
+    expect(lastFilledIndex(hdfcShare)).toBe(5);
+    expect(yoyOfLatest(hdfcShare)).toBeCloseTo(0.149 / 0.157 - 1, 12);
+    expect(yoyOfLatest([0.1, 0.1, 0.1, 0.1, null, null])).toBeNull();
+    expect(lastFilledIndex([null, null])).toBe(-1);
   });
 });

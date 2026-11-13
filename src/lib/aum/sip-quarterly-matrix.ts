@@ -72,9 +72,21 @@ export function matrixQuarters(last: FiscalQuarter): { key: string; label: strin
   });
 }
 
-/** Latest quarter vs the same quarter a year earlier (relative change). */
+/** Index of the row's last quarter with a figure; -1 when it has none. */
+export function lastFilledIndex(values: (number | null)[]): number {
+  for (let i = values.length - 1; i >= 0; i--) if (values[i] !== null) return i;
+  return -1;
+}
+
+/**
+ * The row's latest figure vs the same quarter a year earlier (relative
+ * change). Until an AMC reports the newest quarter (e.g. Q3 results in
+ * Jan/Feb), its last quarter with a figure is used instead.
+ */
 export function yoyOfLatest(values: (number | null)[]): number | null {
-  const a = values.at(-1) ?? null;
-  const b = values.length >= 5 ? values[values.length - 5] : null;
-  return a !== null && b !== null && b !== 0 ? a / b - 1 : null;
+  const i = lastFilledIndex(values);
+  if (i < 4) return null;
+  const a = values[i] as number;
+  const b = values[i - 4];
+  return b !== null && b !== 0 ? a / b - 1 : null;
 }
