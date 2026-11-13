@@ -19,7 +19,7 @@ import {
 // row selections are owned by the parent and shared by every AMC tab, as
 // the design specifies ("a choice made on one segment applies to every
 // segment"). A switch in the band hides the two weekday tables (on by
-// default, every visit) so the period table has the row to itself.
+// default, every visit); the period table keeps its usual width.
 
 export interface LedgerSelections {
   fy: string[];
@@ -158,7 +158,7 @@ export function AumSummaryLedger({
           Hide weekday tables
         </label>
       </div>
-      <div className={hideWeekdays ? "pl-row pl-row--single" : "pl-row"}>
+      <div className="pl-row">
         <table className="pl-period">
           <colgroup>
             <col className="pl-col-period" />
