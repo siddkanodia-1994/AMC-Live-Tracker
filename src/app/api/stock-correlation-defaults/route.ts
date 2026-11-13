@@ -13,6 +13,7 @@ import {
   isBestFitAumPct,
   isValuationAumDays,
   isValuationAvgDays,
+  isValuationWeights,
   MAX_VALUATION_AVG_DAYS,
   MIN_VALUATION_AVG_DAYS,
   VALUATION_AUM_DAYS_OPTIONS,
@@ -130,6 +131,12 @@ export async function POST(request: Request) {
     customMaps[key] = map;
   }
 
+  // The Target Price Average's weights; kept as stored when omitted.
+  const valuationWeights = body?.valuationWeights ?? stored.valuationWeights;
+  if (!isValuationWeights(valuationWeights)) {
+    return NextResponse.json({ error: "valuationWeights must give ratio, bestFit, pe and mcapSales each a whole % from 0 to 100" }, { status: 400 });
+  }
+
   const defaults = {
     range,
     maDays,
@@ -147,6 +154,7 @@ export async function POST(request: Request) {
     bestFitRange,
     bestFitMaDays,
     ...customMaps,
+    valuationWeights,
   };
   await setStockCorrelationDefaults(defaults);
   return NextResponse.json(defaults);

@@ -517,6 +517,12 @@
 .aa .vm-c .pl-chg { margin-top: 3px; padding: 1px 4px; font-size: 11.5px; }
 .aa .vm-avg th, .aa .vm-avg td { border-top: 2px solid var(--pl-ledger-head); background: #fafafa; }
 .aa .vm-avg .vm-p { font-weight: 700; color: var(--pl-ledger-cell-strong); }
+/* Target Price weights: a narrow column of % dropdowns, the total on the Average row. */
+.aa .vm-t th.vm-wcol, .aa .vm-t td.vm-wcol { width: 62px; padding-left: 4px; padding-right: 4px; text-align: center; vertical-align: middle; }
+.aa .vm-sel.vm-w { width: 54px; padding: 2px 2px 2px 4px; font-size: 12px; background: #fff; border-color: #6f9fdc; }
+.aa .vm-total { font-size: 12px; font-weight: 700; }
+.aa .vm-total--ok { color: #08711e; }
+.aa .vm-total--off { color: #a30c15; }
 .aa .vm-in { width: 100%; box-sizing: border-box; font: inherit; text-align: right; padding: 3px 6px; border: 1px solid var(--pl-color-border); background: var(--pl-color-bg-card); color: var(--pl-color-text); border-radius: 0; }
 .aa .vm-in:focus { outline: 2px solid var(--pl-color-primary); outline-offset: 0; }
 .aa .vm-in.is-band::placeholder { color: var(--pl-color-text-muted); font-style: italic; }

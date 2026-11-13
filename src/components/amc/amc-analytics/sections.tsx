@@ -34,12 +34,15 @@ import {
   DEFAULT_BEST_FIT_AUM_DAYS,
   DEFAULT_BEST_FIT_AUM_PCT,
   DEFAULT_VALUATION_RATIO_DAYS,
+  DEFAULT_VALUATION_WEIGHTS,
   isBestFitAumPct,
   isValuationAvgDays,
   MAX_VALUATION_AVG_DAYS,
   MIN_VALUATION_AVG_DAYS,
   RATIO_TODAY_AUM_OPTIONS,
   VALUATION_AUM_DAYS_OPTIONS,
+  VALUATION_WEIGHT_OPTIONS,
+  type ValuationWeights,
 } from "@/lib/valuation/valuation-settings";
 
 // The AMC Analytics tab's per-AMC sections beyond the AUM Summary ledger.
@@ -652,6 +655,8 @@ interface ValuationSettings {
   /** Each AMC's typed AUM (₹ Cr) for the Custom choice. */
   ratioCustomAum: Record<string, number>;
   bestFitCustomAum: Record<string, number>;
+  /** The Average's weight (%) per method, shared like the rest. */
+  weights: ValuationWeights;
 }
 
 function dayText(days: number): string {
@@ -660,6 +665,37 @@ function dayText(days: number): string {
 
 function rangeText(range: RangeOption): string {
   return RANGE_OPTIONS.find((o) => o.value === range)?.label ?? range;
+}
+
+function WeightSelect({ value, label, onChange }: { value: number; label: string; onChange: (v: number) => void }) {
+  return (
+    <select className="vm-sel vm-w" aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))}>
+      {VALUATION_WEIGHT_OPTIONS.map((o) => (
+        <option key={o} value={o}>
+          {o}%
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// The weights' total: green at 100%, red (and scaled to 100%) otherwise.
+function WeightTotal({ weights }: { weights: ValuationWeights }) {
+  const total = weights.ratio + weights.bestFit + weights.pe + weights.mcapSales;
+  return (
+    <span className={`vm-total vm-total--${total === 100 ? "ok" : "off"}`} title={total === 100 ? undefined : "Scaled to 100%"}>
+      {total}%
+    </span>
+  );
+}
+
+// What the Base Average was built from, after rescaling, e.g. "Ratio 35% · PE 50%".
+function weightMixText(t: TargetPriceTable): string {
+  const parts = METHOD_ROWS.flatMap((r) => {
+    const share = t.averageShares[r.key];
+    return share === null ? [] : [`${r.name} ${(Math.round(share * 1000) / 10).toString()}%`];
+  });
+  return parts.length ? parts.join(" · ") : "No method has a value and a weight";
 }
 
 function PriceCell({ price, upside }: { price: number | null; upside: number | null }) {
@@ -998,6 +1034,7 @@ export function ValuationModelSection({
     bestFitAumPct: local.bestFitAumPct ?? defaults?.bestFitAumPct ?? DEFAULT_BEST_FIT_AUM_PCT,
     ratioCustomAum: { ...defaults?.valuationRatioCustomAum, ...local.ratioCustomAum },
     bestFitCustomAum: { ...defaults?.bestFitCustomAum, ...local.bestFitCustomAum },
+    weights: local.weights ?? defaults?.valuationWeights ?? DEFAULT_VALUATION_WEIGHTS,
   };
   const ratioCustomCr = settings.ratioCustomAum[slug] ?? null;
   const bestFitCustomCr = settings.bestFitCustomAum[slug] ?? null;
@@ -1021,6 +1058,7 @@ export function ValuationModelSection({
       manual: sheetForSlug.manual,
       mcapSalesSeries: withLiveValuationPoint(valuation?.points ?? [], entry.stockPriceSeries.at(-1), entry.stockPriceSeries).flatMap((p) => (p.mcapToSales === null ? [] : [{ date: p.date, value: p.mcapToSales }])),
       cmpInr,
+      weights: settings.weights,
     });
   }, [
     entry,
@@ -1037,6 +1075,7 @@ export function ValuationModelSection({
     ratioCustomCr,
     bestFitCustomCr,
     cmpInr,
+    settings.weights,
   ]);
 
   // Picking Custom starts this AMC's box at the AUM the previous choice gave.
@@ -1084,6 +1123,7 @@ export function ValuationModelSection({
           bestFitMaDays: settings.bestFitMaDays,
           valuationRatioCustomAum: customToSave(settings.ratioCustomAum, settings.ratioTodayDays, table?.ratioAumCr),
           bestFitCustomAum: customToSave(settings.bestFitCustomAum, settings.bestFitAumDays, table?.bestFitAumCr),
+          valuationWeights: settings.weights,
         }),
       });
       if (!res.ok) {
@@ -1160,6 +1200,9 @@ export function ValuationModelSection({
               <thead>
                 <tr>
                   <th scope="col">Method</th>
+                  <th scope="col" className="vm-wcol">
+                    Weight
+                  </th>
                   <th scope="col">Bear</th>
                   <th scope="col">Base</th>
                   <th scope="col">Bull</th>
@@ -1172,6 +1215,13 @@ export function ValuationModelSection({
                       <b>{row.name}</b>
                       <small>{row.how(table, settings)}</small>
                     </th>
+                    <td className="vm-wcol">
+                      <WeightSelect
+                        value={settings.weights[row.key]}
+                        label={`${row.name} weight`}
+                        onChange={(v) => setLocal((s) => ({ ...s, weights: { ...settings.weights, [row.key]: v } }))}
+                      />
+                    </td>
                     {SCENARIO_KEYS.map((k) => (
                       <PriceCell key={k} price={table.methods[row.key][k]} upside={table.upside[row.key][k]} />
                     ))}
@@ -1179,9 +1229,12 @@ export function ValuationModelSection({
                 ))}
                 <tr className="vm-avg">
                   <th scope="row">
-                    <b>Average</b>
-                    <small>Of the methods with a value: {table.averageCount.base} of 4</small>
+                    <b>Weighted average</b>
+                    <small>{weightMixText(table)}</small>
                   </th>
+                  <td className="vm-wcol">
+                    <WeightTotal weights={settings.weights} />
+                  </td>
                   {SCENARIO_KEYS.map((k) => (
                     <PriceCell key={k} price={table.average[k]} upside={table.upside.average[k]} />
                   ))}

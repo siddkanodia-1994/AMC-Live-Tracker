@@ -48,3 +48,24 @@ export const MAX_VALUATION_AVG_DAYS = 250;
 export function isValuationAvgDays(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= MIN_VALUATION_AVG_DAYS && value <= MAX_VALUATION_AVG_DAYS;
 }
+
+/** The Target Price Average's weight (%) per method. */
+export interface ValuationWeights {
+  ratio: number;
+  bestFit: number;
+  pe: number;
+  mcapSales: number;
+}
+
+export const DEFAULT_VALUATION_WEIGHTS: ValuationWeights = { ratio: 35, bestFit: 10, pe: 50, mcapSales: 5 };
+
+/** The weight dropdown's choices: 0–100% in 5% steps. */
+export const VALUATION_WEIGHT_OPTIONS = Array.from({ length: 21 }, (_, i) => i * 5);
+
+export function isValuationWeights(value: unknown): value is ValuationWeights {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const w = value as Record<string, unknown>;
+  return (["ratio", "bestFit", "pe", "mcapSales"] as const).every(
+    (k) => typeof w[k] === "number" && Number.isInteger(w[k]) && (w[k] as number) >= 0 && (w[k] as number) <= 100
+  );
+}

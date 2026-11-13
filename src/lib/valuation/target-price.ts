@@ -17,7 +17,9 @@
 //  - Mcap / Sales: the identical block with FY28E revenue in place of PAT
 //    and the Mcap / Sales multiples in place of the PEs. A multiple left
 //    blank falls back to the Mcap / Sales chart's 3Y −1 SD / Mean / +1 SD.
-//  - Average: the mean of whichever methods have a value, per scenario.
+//  - Average: weighted by method (default 35 / 10 / 50 / 5), per scenario,
+//    over the methods with a value and a weight above 0 -- their weights are
+//    scaled back up to 100%, as is a set that doesn't add up to 100.
 
 import { computeRegressionResult, type ExtraLagDays } from "../amc-stock/regression-engine";
 import { whatIfStartingAum } from "../amc-stock/aum-what-if";
@@ -26,7 +28,7 @@ import { trimToLastContinuousRun } from "../aum/series-math";
 import { computeRangeCutoffDate, filterByCutoff, type RangeOption } from "../aum/date-range";
 import type { AumHistoryPoint, AmcStockPricePoint } from "../aum/history";
 import { computeBands } from "./bands";
-import { CUSTOM_AUM_DAYS } from "./valuation-settings";
+import { CUSTOM_AUM_DAYS, DEFAULT_VALUATION_WEIGHTS, type ValuationWeights } from "./valuation-settings";
 
 // The window the Mcap / Sales default multiples' band is read over (the chart's default).
 export const MCAP_SALES_BAND_RANGE: RangeOption = "3y";
@@ -71,6 +73,8 @@ export interface TargetPriceInputs {
   mcapSalesSeries: { date: string; value: number }[];
   /** Current share price -- live in market hours, else the last close. */
   cmpInr: number | null;
+  /** The Average's weight (%) per method; the default 35 / 10 / 50 / 5 when omitted. */
+  weights?: ValuationWeights;
 }
 
 export interface TargetPriceTable {
@@ -78,6 +82,8 @@ export interface TargetPriceTable {
   average: Scenario;
   /** How many methods fed each Average cell. */
   averageCount: Record<ScenarioKey, number>;
+  /** Each method's share of the Base Average after rescaling (null when it didn't count). */
+  averageShares: Record<ValuationMethodKey, number | null>;
   upside: Record<ValuationMethodKey | "average", Scenario>;
   /** The AUMs used: the ratio's today's AUM and the best-fit's starting AUM. */
   ratioAumCr: number | null;
@@ -190,15 +196,22 @@ export function computeTargetPrices(input: TargetPriceInputs): TargetPriceTable 
     mcapSales: mapScenario(mcapSales, finiteOrNull),
   };
 
+  const weights = input.weights ?? DEFAULT_VALUATION_WEIGHTS;
+  const methodKeys = Object.keys(methods) as ValuationMethodKey[];
+  const counted = (key: ScenarioKey) => methodKeys.filter((m) => methods[m][key] !== null && weights[m] > 0);
   const average = { ...EMPTY };
   const averageCount = { bear: 0, base: 0, bull: 0 };
   for (const key of SCENARIO_KEYS) {
-    const values = Object.values(methods)
-      .map((s) => s[key])
-      .filter((v): v is number => v !== null);
-    averageCount[key] = values.length;
-    average[key] = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+    const used = counted(key);
+    const total = used.reduce((a, m) => a + weights[m], 0);
+    averageCount[key] = used.length;
+    average[key] = total > 0 ? used.reduce((a, m) => a + methods[m][key]! * weights[m], 0) / total : null;
   }
+  const baseUsed = counted("base");
+  const baseTotal = baseUsed.reduce((a, m) => a + weights[m], 0);
+  const averageShares = Object.fromEntries(
+    methodKeys.map((m) => [m, baseUsed.includes(m) && baseTotal > 0 ? weights[m] / baseTotal : null])
+  ) as Record<ValuationMethodKey, number | null>;
 
   const cmp = input.cmpInr;
   const up = (s: Scenario) => mapScenario(s, (v) => (cmp === null || cmp === 0 ? null : v / cmp - 1));
@@ -206,6 +219,7 @@ export function computeTargetPrices(input: TargetPriceInputs): TargetPriceTable 
     methods,
     average,
     averageCount,
+    averageShares,
     upside: {
       ratio: up(methods.ratio),
       bestFit: up(methods.bestFit),

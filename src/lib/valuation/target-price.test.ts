@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeTargetPrices, mcapSalesBand, type TargetPriceInputs } from "./target-price";
+import { computeTargetPrices, mcapSalesBand, SCENARIO_KEYS, type TargetPriceInputs } from "./target-price";
 import { computeRegressionResult } from "../amc-stock/regression-engine";
 import { whatIfStartingAum } from "../amc-stock/aum-what-if";
 import type { AumHistoryPoint, AmcStockPricePoint } from "../aum/history";
@@ -162,7 +162,8 @@ describe("computeTargetPrices", () => {
   });
 
   it("drops a method with missing inputs from the Average and counts the rest", () => {
-    const t = computeTargetPrices(inputs()); // no FY28E revenue -> Mcap / Sales blank
+    const equal = { ratio: 25, bestFit: 25, pe: 25, mcapSales: 25 };
+    const t = computeTargetPrices(inputs({ weights: equal })); // no FY28E revenue -> Mcap / Sales blank
     expect(t.methods.mcapSales).toEqual({ bear: null, base: null, bull: null });
     expect(t.averageCount).toEqual({ bear: 3, base: 3, bull: 3 });
     const m = t.methods;
@@ -176,6 +177,30 @@ describe("computeTargetPrices", () => {
     );
     expect(noFortnightly.methods.pe).toEqual({ bear: null, base: null, bull: null });
     expect(noFortnightly.averageCount.base).toBe(2);
+  });
+
+  it("weights the Average 35 / 10 / 50 / 5 by default", () => {
+    const t = computeTargetPrices(inputs({ manual: { ...HDFC_MANUAL, revenueFy28eCr: 6000 } }));
+    const m = t.methods;
+    for (const k of SCENARIO_KEYS) {
+      expect(t.average[k]).toBeCloseTo(0.35 * m.ratio[k]! + 0.1 * m.bestFit[k]! + 0.5 * m.pe[k]! + 0.05 * m.mcapSales[k]!, 9);
+    }
+    expect(t.averageShares).toEqual({ ratio: 0.35, bestFit: 0.1, pe: 0.5, mcapSales: 0.05 });
+  });
+
+  it("rescales the weights of the methods that count back to 100%", () => {
+    // Mcap / Sales blank: 35 / 10 / 50 over 95.
+    const t = computeTargetPrices(inputs());
+    const m = t.methods;
+    expect(t.average.base).toBeCloseTo((35 * m.ratio.base! + 10 * m.bestFit.base! + 50 * m.pe.base!) / 95, 9);
+    expect(t.averageShares.mcapSales).toBeNull();
+    expect(t.averageShares.pe).toBeCloseTo(50 / 95, 12);
+    // A set that doesn't add up to 100, and a 0% method, scale the same way.
+    const odd = computeTargetPrices(inputs({ weights: { ratio: 40, bestFit: 0, pe: 40, mcapSales: 30 } }));
+    expect(odd.average.base).toBeCloseTo((odd.methods.ratio.base! + odd.methods.pe.base!) / 2, 9);
+    expect(odd.averageCount.base).toBe(2);
+    const none = computeTargetPrices(inputs({ weights: { ratio: 0, bestFit: 0, pe: 0, mcapSales: 0 } }));
+    expect(none.average).toEqual({ bear: null, base: null, bull: null });
   });
 
   it("returns no upside without a current price", () => {

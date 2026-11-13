@@ -10,9 +10,12 @@ import {
   DEFAULT_BEST_FIT_AUM_DAYS,
   DEFAULT_BEST_FIT_AUM_PCT,
   DEFAULT_VALUATION_RATIO_DAYS,
+  DEFAULT_VALUATION_WEIGHTS,
   isBestFitAumPct,
   isValuationAumDays,
   isValuationAvgDays,
+  isValuationWeights,
+  type ValuationWeights,
 } from "../valuation/valuation-settings";
 
 const SETTINGS_KEY = "stock_correlation_defaults";
@@ -61,6 +64,9 @@ export interface StockCorrelationDefaults {
   // choice above is Custom (CUSTOM_AUM_DAYS). Older saved rows have none ({}).
   valuationRatioCustomAum: Record<string, number>;
   bestFitCustomAum: Record<string, number>;
+  // The Target Price Average's weight (%) per method. Older saved rows lack
+  // it (35 / 10 / 50 / 5).
+  valuationWeights: ValuationWeights;
 }
 
 const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
@@ -81,6 +87,7 @@ const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
   bestFitMaDays: DEFAULT_VALUATION_RATIO_DAYS,
   valuationRatioCustomAum: {},
   bestFitCustomAum: {},
+  valuationWeights: DEFAULT_VALUATION_WEIGHTS,
 };
 
 // The 8 listed AMCs the Stock Correlation table shows -- the only slugs an
@@ -150,6 +157,7 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
       bestFitMaDays: isValuationAvgDays(parsed.bestFitMaDays) ? parsed.bestFitMaDays : Math.max(1, Math.min(250, Math.round(maDays))),
       valuationRatioCustomAum: sanitizeAumInputs(parsed.valuationRatioCustomAum) ?? {},
       bestFitCustomAum: sanitizeAumInputs(parsed.bestFitCustomAum) ?? {},
+      valuationWeights: isValuationWeights(parsed.valuationWeights) ? parsed.valuationWeights : FALLBACK_DEFAULTS.valuationWeights,
     };
   } catch {
     return FALLBACK_DEFAULTS;
