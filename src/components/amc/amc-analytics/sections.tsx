@@ -17,6 +17,8 @@ import {
 import { computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
 import { computePctChangeRegression } from "@/lib/amc-stock/pct-change-regression";
 import { PctChangeRegressionView } from "./pct-change-regression-view";
+import { FitStatStrip } from "./fit-stat-strip";
+import { computeFitCorrelation } from "@/lib/amc-stock/fit-stats";
 import type { StockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
@@ -289,6 +291,14 @@ const RATIO_LADDER_LABELS: Record<(typeof RATIO_LADDER_SDS)[number], string> = {
   [-2]: "−2 SD",
 };
 
+function rangeLabelOf(range: RangeOption): string {
+  return RANGE_OPTIONS.find((o) => o.value === range)?.label ?? range;
+}
+
+function aumSideLabel(maDays: number): string {
+  return maDays > 1 ? `AUM MA${maDays}` : "AUM";
+}
+
 function savedMaInput(maDays: number): string {
   return maDays > 0 ? String(maDays) : "";
 }
@@ -392,15 +402,29 @@ export function RatioSection({
   cmpInr: number | null;
   cmpIsLive: boolean;
 }) {
-  const { maDays, range, aumOnlyAveraging } = controls;
+  const { maDays, range, aumOnlyAveraging, levelsCorrelation } = controls;
   const ladder = useMemo(
     () => (entry ? computeRatioLadder(entry.aumHistory, entry.stockPriceSeries, { maDays, range, aumOnlyAveraging }) : null),
     [entry, maDays, range, aumOnlyAveraging]
   );
+  const extraLagDays = defaults?.extraLagDays ?? 0;
+  const fit = useMemo(
+    () =>
+      entry ? computeFitCorrelation(entry.aumHistory, entry.stockPriceSeries, { maDays, range, aumOnlyAveraging, levelsCorrelation, extraLagDays }) : null,
+    [entry, maDays, range, aumOnlyAveraging, levelsCorrelation, extraLagDays]
+  );
   if (!entry || !defaults) return null;
   const lastPrice = entry.stockPriceSeries.at(-1)?.priceInr ?? null;
+  const priceSide = aumOnlyAveraging || maDays <= 1 ? "raw price" : `price MA${maDays}`;
   return (
     <>
+      <FitStatStrip
+        r={fit?.r ?? null}
+        r2={fit?.r2 ?? null}
+        n={fit?.n ?? null}
+        rangeLabel={rangeLabelOf(range)}
+        third={{ label: "Basis", value: levelsCorrelation ? "Levels" : "Daily % chg", sub: `${priceSide} vs ${aumSideLabel(maDays)}` }}
+      />
       <RatioLadderPanel
         ladder={ladder}
         maDays={maDays}
@@ -518,6 +542,33 @@ export function RegressionSection({
         />
         <SavedOrReset controls={controls} />
         <span className="text-xs text-muted-foreground">Shared with the Ratio section; not saved.</span>
+      </div>
+      <div>
+        {levelsCorrelation ? (
+          <FitStatStrip
+            r={result?.pearsonR ?? null}
+            r2={result?.r2 ?? null}
+            n={result?.n ?? null}
+            rangeLabel={rangeLabelOf(range)}
+            third={{
+              label: "β (slope)",
+              value: result ? `₹${result.slope.toFixed(4)}` : "—",
+              sub: `₹ per share per ₹ Cr of ${aumSideLabel(maDays)}`,
+            }}
+          />
+        ) : (
+          <FitStatStrip
+            r={pctResult?.pearsonR ?? null}
+            r2={pctResult?.r2 ?? null}
+            n={pctResult?.n ?? null}
+            rangeLabel={rangeLabelOf(range)}
+            third={{
+              label: "β (slope)",
+              value: pctResult ? pctResult.beta.toFixed(3) : "—",
+              sub: `price % per 1% move in ${aumSideLabel(maDays)}`,
+            }}
+          />
+        )}
       </div>
       {levelsCorrelation ? (
         <RegressionDeepDive

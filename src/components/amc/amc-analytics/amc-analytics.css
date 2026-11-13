@@ -657,3 +657,19 @@
 .aa .sm-t tr.sm-sel th { box-shadow: inset 4px 0 0 var(--pl-color-primary); }
 .aa .sm-t tr.sm-sel th, .aa .sm-t tr.sm-sel td { border-top: 1px solid var(--pl-color-primary); border-bottom: 1px solid var(--pl-color-primary); }
 .aa .sm-t tr.sm-ind th, .aa .sm-t tr.sm-ind td { background: #f3f3f1; color: var(--pl-color-text-muted); font-style: italic; }
+
+/* Ratio / Regression stat strip: Corr, R², basis or slope, days. */
+.aa .aa-fit { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 760px; margin-bottom: 16px; background: var(--pl-color-bg-card); border: 1px solid var(--pl-color-border); }
+.aa .aa-fit-tile { padding: 10px 14px; border-right: 1px solid var(--pl-ledger-rule); min-width: 0; }
+.aa .aa-fit-tile:last-child { border-right: 0; }
+.aa .aa-fit-k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--pl-color-text-muted); }
+.aa .aa-fit-v { font-size: 24px; font-weight: 700; line-height: 1.25; margin-top: 2px; font-variant-numeric: tabular-nums; color: var(--pl-ledger-cell-strong); }
+.aa .aa-fit-v--sm { font-size: 16px; line-height: 1.85; }
+.aa .aa-fit-s { font-size: 11px; color: var(--pl-color-text-muted); margin-top: 2px; line-height: 1.35; }
+.aa .aa-fit-pos { color: #08711e; }
+.aa .aa-fit-neg { color: #a30c15; }
+.aa .aa-fit-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 2px; }
+.aa .aa-fit-badge--strong { background: #d6efdc; color: #08711e; }
+.aa .aa-fit-badge--moderate { background: #fbefd0; color: #8a5a00; }
+.aa .aa-fit-badge--weak { background: #f8d7da; color: #a30c15; }
+@media (max-width: 640px) { .aa .aa-fit { grid-template-columns: repeat(2, minmax(0, 1fr)); } .aa .aa-fit-tile:nth-child(2) { border-right: 0; } .aa .aa-fit-tile:nth-child(-n + 2) { border-bottom: 1px solid var(--pl-ledger-rule); } }
