@@ -390,8 +390,8 @@ export function SipScoreSection({ slug, inputs }: { slug: string; inputs: AmcAna
       <div className="ss-grid">
         <AmcSipCard sheet={s} editable={editable} saveField={saveField} />
         <IndustrySipCard kind="quarter" sheet={s} editable={editable} saveField={saveField} effective={industryQ} thirdRowBases={quarterBases} />
-        <IndustrySipCard kind="month" sheet={s} editable={editable} saveField={saveField} effective={industryM} thirdRowBases={monthBases} />
         <AmcScoreCard amcId={s.amcId} editable={editable} saveField={saveField} />
+        <IndustrySipCard kind="month" sheet={s} editable={editable} saveField={saveField} effective={industryM} thirdRowBases={monthBases} />
       </div>
       <p className="aa-note">
         Blue cells save straight away, to the same stored figures the Fortnightly AMC Update tab shows. Grey industry figures come from AMFI; type to override, clear to go back. The industry anchors and the estimate switch are shared
