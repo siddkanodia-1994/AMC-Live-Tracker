@@ -2,13 +2,11 @@ import { NextResponse } from "next/server";
 import { withErrorHandling } from "@/lib/api/with-error-handling";
 import {
   getFortnightlySheet,
-  saveFortnightlyField,
   MANUAL_FIELD_NAMES,
   VERDICT_TIERS,
   type FortnightlyFieldName,
 } from "@/lib/aum/fortnightly-update";
-import { mirrorSipSlotSave } from "@/lib/aum/sip-quarterly";
-import { isSipSlotField } from "@/lib/aum/sip-quarterly-matrix";
+import { saveSnapshotFieldWithHistory } from "@/lib/aum/sip-quarterly";
 
 export const GET = withErrorHandling(async (request: Request) => {
   const url = new URL(request.url);
@@ -97,14 +95,8 @@ export const POST = withErrorHandling(async (request: Request) => {
     return NextResponse.json({ error: "value must be a finite number or null" }, { status: 400 });
   }
 
-  await saveFortnightlyField(amcId, asOfDate, field, value);
-  // The AMC SIP card's figures also go into the per-quarter history that
-  // AMC Analytics' cross-AMC SIP table reads.
-  // The card save above already succeeded, so a failure here is logged, not returned.
-  if (isSipSlotField(field)) {
-    await mirrorSipSlotSave(amcId, asOfDate, field, typeof value === "number" ? value : null).catch((err) =>
-      console.error(`SIP history mirror failed for amc ${amcId} ${field}:`, err)
-    );
-  }
+  // An AMC SIP card figure also goes into the per-quarter history (AMC
+  // Analytics' cross-AMC SIP table), atomically with the cell itself.
+  await saveSnapshotFieldWithHistory(amcId, asOfDate, field, value);
   return NextResponse.json({ ok: true });
 });

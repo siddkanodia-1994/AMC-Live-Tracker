@@ -21,7 +21,7 @@
 
 import { computeRegressionResult, type ExtraLagDays } from "../amc-stock/regression-engine";
 import { whatIfStartingAum } from "../amc-stock/aum-what-if";
-import { computeValuationBlock, type FortnightlyManualFields } from "../aum/fortnightly-update";
+import { computeValuationBlock, type ValuationInputs } from "./valuation-block";
 import { trimToLastContinuousRun } from "../aum/series-math";
 import { computeRangeCutoffDate, filterByCutoff, type RangeOption } from "../aum/date-range";
 import type { AumHistoryPoint, AmcStockPricePoint } from "../aum/history";
@@ -42,6 +42,14 @@ export const SCENARIO_KEYS: ScenarioKey[] = ["bear", "base", "bull"];
 
 export type ValuationMethodKey = "ratio" | "bestFit" | "pe" | "mcapSales";
 
+/** The valuation inputs the PE and Mcap / Sales methods read (stored per AMC). */
+export interface TargetPriceManual extends Omit<ValuationInputs, "patFy26aCr"> {
+  revenueFy28eCr: number | null;
+  targetMcapSalesBear: number | null;
+  targetMcapSalesBase: number | null;
+  targetMcapSalesBull: number | null;
+}
+
 export interface TargetPriceInputs {
   aumHistory: AumHistoryPoint[];
   stockPriceSeries: AmcStockPricePoint[];
@@ -58,20 +66,7 @@ export interface TargetPriceInputs {
   extraLagDays: number;
   bestFitAumDays: number;
   bestFitAumPct: number;
-  manual: Pick<
-    FortnightlyManualFields,
-    | "noOfSharesCr"
-    | "patFy28eCr"
-    | "targetPeBear"
-    | "targetPeBase"
-    | "targetPeBull"
-    | "discountRateFy27Pct"
-    | "discountRateFy26Pct"
-    | "revenueFy28eCr"
-    | "targetMcapSalesBear"
-    | "targetMcapSalesBase"
-    | "targetMcapSalesBull"
-  >;
+  manual: TargetPriceManual;
   /** Daily Mcap / Sales (the band chart's own points, provisional days included). */
   mcapSalesSeries: { date: string; value: number }[];
   /** Current share price -- live in market hours, else the last close. */
@@ -228,48 +223,16 @@ export function computeTargetPrices(input: TargetPriceInputs): TargetPriceTable 
   };
 }
 
-// computeValuationBlock takes the whole manual-fields shape; only the
-// valuation fields matter to it, the rest are null here.
-function nullManual(): FortnightlyManualFields {
+// computeValuationBlock's inputs with nothing entered; callers spread theirs over it.
+function nullManual(): ValuationInputs {
   return {
-    noOfSharesCr: null,
     patFy26aCr: null,
-    patFy27eCr: null,
     patFy28eCr: null,
     targetPeBear: null,
     targetPeBase: null,
     targetPeBull: null,
+    noOfSharesCr: null,
     discountRateFy27Pct: null,
     discountRateFy26Pct: null,
-    revenueFy28eCr: null,
-    targetMcapSalesBear: null,
-    targetMcapSalesBase: null,
-    targetMcapSalesBull: null,
-    sipAmcQtdValCr: null,
-    sipAmcQtdPct: null,
-    sipAmcPrevQValCr: null,
-    sipAmcPrevQPct: null,
-    sipAmcPrevQ2ValCr: null,
-    sipAmcPrevQ2Pct: null,
-    sipAmcYoyQValCr: null,
-    sipAmcYoyQPct: null,
-    sipAmcYoyQ2ValCr: null,
-    sipAmcYoyQ2Pct: null,
-    sipAmcLatestFy: null,
-    sipAmcLatestQuarter: null,
-    sipIndustryMtdValCr: null,
-    sipIndustryPrevMValCr: null,
-    sipIndustryPrevM2ValCr: null,
-    sipIndustryYoyMValCr: null,
-    sipIndustryYoyM2ValCr: null,
-    sipIndustryQtrQtdValCr: null,
-    sipIndustryQtrPrevQValCr: null,
-    sipIndustryQtrPrevQ2ValCr: null,
-    sipIndustryQtrYoyQValCr: null,
-    sipIndustryQtrYoyQ2ValCr: null,
-    amcScoreAnchorDate: null,
-    summary: null,
-    verdictOverride: null,
-    verdictCustomText: null,
   };
 }

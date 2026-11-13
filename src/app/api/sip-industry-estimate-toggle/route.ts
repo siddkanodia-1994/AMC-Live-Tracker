@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withErrorHandling } from "@/lib/api/with-error-handling";
-import { getSipIndustryShowEstimate, setSipIndustryShowEstimate } from "@/lib/aum/fortnightly-update";
+import { getSipIndustryShowEstimate, setSipIndustryShowEstimate } from "@/lib/aum/sip-industry-settings";
 
 // A single GLOBAL, persisted toggle (not per-AMC, not per-browser) for the
 // "(Estimated)" next-period row both SIP Industry cards can show -- same

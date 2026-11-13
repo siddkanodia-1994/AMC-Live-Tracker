@@ -6,7 +6,7 @@ import useSWR from "swr";
 import { IBM_Plex_Sans, IBM_Plex_Sans_Condensed } from "next/font/google";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAmcStockCorrelations } from "@/hooks/use-amc-stock-correlations";
-import { useFortnightlySheet } from "@/hooks/use-fortnightly-update";
+import { useAmcAnalyticsInputs } from "@/hooks/use-amc-analytics-inputs";
 import { useLiveCorrelationEntries } from "@/hooks/use-amc-live-prices";
 import { previousClose } from "@/lib/amc-stock/live-point";
 import { formatLedgerPct } from "@/lib/aum/period-ledger";
@@ -193,7 +193,8 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   const amcIdBySlug = useMemo(() => new Map((listed?.amcs ?? []).map((a) => [a.slug, a.id])), [listed]);
   const amcId = amcIdBySlug.get(slug) ?? null;
   const blended = amcId !== null && blendIds.includes(amcId);
-  const { data: sheet, mutate: mutateSheet } = useFortnightlySheet(amcId, null, false);
+  // The valuation and SIP figures it shares with the Fortnightly tab (one AMC, one stored row).
+  const { data: inputs } = useAmcAnalyticsInputs(amcId);
   // Today's live share price (and live AUM) laid over every AMC's history,
   // so all sections' charts, ratios, fits, targets and upsides follow it.
   const { entries: liveEntries, points: livePoints, prices: livePrices } = useLiveCorrelationEntries(data?.amcs, liveAum);
@@ -229,10 +230,10 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
 
   const entry = liveEntries?.find((a) => a.slug === slug);
   // CMP: today's live price when there is one (after 15:30, the session's
-  // last price), else the Fortnightly snapshot's close as before.
+  // last price), else the last stored close the Overview prices come from.
   const livePoint = livePoints.get(slug);
-  const sheetCmp = sheet?.slug === slug ? sheet.cmpInr : null;
-  const cmpInr = livePoint?.priceInr ?? sheetCmp;
+  const lastClose = data?.amcs.find((a) => a.slug === slug)?.stockPriceSeries.at(-1)?.priceInr ?? null;
+  const cmpInr = livePoint?.priceInr ?? lastClose;
   const cmpIsLive = livePoint !== undefined && Boolean(livePrices?.marketOpen);
   const amcOptions = tabs.map((t) => ({ slug: t.slug, label: COMPANY_BY_SLUG.get(t.slug) ?? t.tab }));
   const live = liveAum?.amcs.find((a) => a.slug === slug);
@@ -377,7 +378,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                   <p className="aa-note">No AUM history for this AMC.</p>
                 )
               ) : section === "sip-score" ? (
-                <SipScoreSection slug={slug} sheet={sheet} />
+                <SipScoreSection slug={slug} inputs={inputs} />
               ) : section === "aum-predictor" ? (
                 // The what-if, then today's live AUM through the same line.
                 <div className="aa-stack">
@@ -405,8 +406,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                   slug={slug}
                   entry={entry}
                   defaults={data?.defaults}
-                  sheet={sheet}
-                  onSheetSaved={() => mutateSheet()}
+                  inputs={inputs}
                   cmpInr={cmpInr}
                   cmpIsLive={cmpIsLive}
                   amcOptions={amcOptions}

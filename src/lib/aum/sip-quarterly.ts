@@ -6,10 +6,10 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../db/client";
 import { amcFortnightlyUpdate, amcListedStock, amcs, amcSipQuarterly } from "../db/schema";
 import { getFiscalYearAndQuarter } from "./report-period";
-import { getAmcAbbreviation } from "./fortnightly-update";
+import { getAmcAbbreviation } from "./amc-names";
 import { getIstDateString } from "../utils/date";
 import type { FiscalQuarter } from "./industry-sip";
-import { overlayCardSlots, quarterKey, SIP_SLOT_FIELDS, slotQuarter, type SipColumn, type SipQuarterValue, type SipSlotField } from "./sip-quarterly-matrix";
+import { isSipSlotField, overlayCardSlots, quarterKey, SIP_SLOT_FIELDS, slotQuarter, type SipColumn, type SipQuarterValue } from "./sip-quarterly-matrix";
 
 const toNum = (v: string | null) => (v === null ? null : Number(v));
 
@@ -32,12 +32,30 @@ export async function upsertSipQuarter(amcId: number, quarter: FiscalQuarter, co
 }
 
 /**
- * After a card save: write the slot's quarter into the history too, using
- * the anchor that snapshot row has now. A blank card cell leaves the
+ * Save one manual cell on a Fortnightly snapshot row, and -- for an AMC SIP
+ * card figure -- the same figure into its quarter's history, in one atomic
+ * batch: both are written or neither is, so a failure comes back to the
+ * caller rather than leaving the two apart. A blank card cell leaves the
  * stored history alone (a cleared slot isn't a revision of that quarter).
  */
-export async function mirrorSipSlotSave(amcId: number, asOfDate: string, field: SipSlotField, value: number | null): Promise<void> {
-  if (value === null) return;
+export async function saveSnapshotFieldWithHistory(
+  amcId: number,
+  asOfDate: string,
+  field: string,
+  value: number | string | null
+): Promise<void> {
+  const dbValue = value === null ? null : String(value);
+  const snapshotWrite = db
+    .insert(amcFortnightlyUpdate)
+    .values({ amcId, asOfDate, [field]: dbValue })
+    .onConflictDoUpdate({
+      target: [amcFortnightlyUpdate.amcId, amcFortnightlyUpdate.asOfDate],
+      set: { [field]: dbValue, updatedAt: new Date() },
+    });
+  if (!isSipSlotField(field) || typeof value !== "number") {
+    await snapshotWrite;
+    return;
+  }
   const [row] = await db
     .select({
       asOfDate: amcFortnightlyUpdate.asOfDate,
@@ -46,9 +64,17 @@ export async function mirrorSipSlotSave(amcId: number, asOfDate: string, field: 
     })
     .from(amcFortnightlyUpdate)
     .where(and(eq(amcFortnightlyUpdate.amcId, amcId), eq(amcFortnightlyUpdate.asOfDate, asOfDate)));
-  if (!row) return;
+  const anchor = anchorOf(row ?? { asOfDate, sipAmcLatestFy: null, sipAmcLatestQuarter: null });
   const { slot, column } = SIP_SLOT_FIELDS[field];
-  await upsertSipQuarter(amcId, slotQuarter(anchorOf(row), slot), column, value);
+  const quarter = slotQuarter(anchor, slot);
+  const historyWrite = db
+    .insert(amcSipQuarterly)
+    .values({ amcId, fiscalYear: quarter.fy, quarter: quarter.q, [column]: dbValue })
+    .onConflictDoUpdate({
+      target: [amcSipQuarterly.amcId, amcSipQuarterly.fiscalYear, amcSipQuarterly.quarter],
+      set: { [column]: dbValue, updatedAt: new Date() },
+    });
+  await db.batch([snapshotWrite, historyWrite]);
 }
 
 export interface SipMatrixAmc {

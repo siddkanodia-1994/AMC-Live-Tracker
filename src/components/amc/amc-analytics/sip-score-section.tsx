@@ -1,18 +1,19 @@
 "use client";
 
 import { toast } from "sonner";
-import { mutate as globalMutate } from "swr";
 import { formatLedgerInr } from "@/lib/aum/period-ledger";
-import { getAmcAbbreviation, type FortnightlyFieldName, type FortnightlySheet } from "@/lib/aum/fortnightly-update";
+import { getAmcAbbreviation } from "@/lib/aum/amc-names";
+import type { AmcAnalyticsField, AmcAnalyticsInputs } from "@/lib/aum/amc-analytics-inputs";
+import { revalidateAmcInputs, saveAmcInput, useAmcAnalyticsScore } from "@/hooks/use-amc-analytics-inputs";
 import { computeSipGrowth, effectiveSipValues, type SipFive, type SipThirdRowBases } from "@/lib/aum/sip-growth";
 import { sipByMonth, thirdRowMonthBases, thirdRowQuarterBases } from "@/lib/aum/industry-sip";
 import { useIndustryMonthlyFlows } from "@/hooks/use-industry-monthly-flows";
 import { Pct, SavedNumberInput } from "./sections";
-import { SIP_MATRIX_KEY, SipMatrix } from "./sip-matrix";
+import { SipMatrix } from "./sip-matrix";
 
-// SIP & Score: the Fortnightly AMC Update tab's three SIP cards and its AMC
-// Score card, in the ledger look. Same sheet, same save routes, so an edit
-// here shows on the Fortnightly tab and the other way round.
+// SIP & Score: the AMC and industry SIP cards and the AMC Score card, in the
+// ledger look. The figures are the same stored ones the Fortnightly AMC
+// Update tab shows, so an edit here shows there and the other way round.
 
 const MONTH_ABBREV = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -23,21 +24,15 @@ function aroundOptions(selected: number): number[] {
   return options;
 }
 
-// Every cached Fortnightly sheet: the anchors and estimate switch are
-// shared by all AMCs, and the Fortnightly tab holds its own copy.
-function revalidateFortnightlySheets() {
-  // The cross-AMC SIP table reads the same card figures.
-  globalMutate(SIP_MATRIX_KEY);
-  return globalMutate((key) => typeof key === "string" && key.startsWith("/api/fortnightly-update?"), undefined, { revalidate: true });
-}
-
+// The industry anchors and estimate switch are shared by all AMCs: refresh
+// every AMC's figures (and the Fortnightly tab's copy) after a change.
 async function postJson(url: string, body: unknown) {
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error ?? "Failed to save");
   }
-  await revalidateFortnightlySheets();
+  await revalidateAmcInputs();
 }
 
 function saveShared(body: Record<string, unknown>, url = "/api/sip-industry-override") {
@@ -48,7 +43,7 @@ function formatAnchorDate(isoDate: string): string {
   return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit", timeZone: "UTC" });
 }
 
-type SaveField = (field: FortnightlyFieldName, value: number | string | null) => Promise<void>;
+type SaveField = (field: AmcAnalyticsField, value: number | string | null) => Promise<void>;
 
 function rowTitles(labels: readonly string[]): string[] {
   return [`Latest (${labels[0]})`, `Previous (${labels[1]})`, `Previous (${labels[2]})`, `Last year (${labels[3]})`, `Last year (${labels[4]})`];
@@ -60,7 +55,7 @@ function labelList(labels: { qtd: string; prevQ: string; prevQ2: string; yoyQ: s
 
 // SIP / Eq AUM % and SIP share % live in the cross-AMC table below (and
 // the % is still typed on the Fortnightly tab's card).
-function AmcSipCard({ sheet, editable, saveField }: { sheet: FortnightlySheet; editable: boolean; saveField: SaveField }) {
+function AmcSipCard({ sheet, editable, saveField }: { sheet: AmcAnalyticsInputs; editable: boolean; saveField: SaveField }) {
   const m = sheet.manual;
   const fields = ["sipAmcQtdValCr", "sipAmcPrevQValCr", "sipAmcPrevQ2ValCr", "sipAmcYoyQValCr", "sipAmcYoyQ2ValCr"] as const;
   const values = fields.map((v) => m[v]) as SipFive;
@@ -142,7 +137,7 @@ function IndustrySipCard({
   thirdRowBases,
 }: {
   kind: "quarter" | "month";
-  sheet: FortnightlySheet;
+  sheet: AmcAnalyticsInputs;
   editable: boolean;
   saveField: SaveField;
   effective: SipFive;
@@ -295,9 +290,12 @@ function IndustrySipCard({
   );
 }
 
-function AmcScoreCard({ sheet, editable, saveField }: { sheet: FortnightlySheet; editable: boolean; saveField: SaveField }) {
-  const card = sheet.amcScore;
-  const dates = sheet.amcScoreAvailableDates;
+// Loaded on its own (it comes from the external AMC Score project), so the
+// SIP cards never wait for it.
+function AmcScoreCard({ amcId, editable, saveField }: { amcId: number; editable: boolean; saveField: SaveField }) {
+  const { data, error } = useAmcAnalyticsScore(amcId);
+  const card = data?.card ?? null;
+  const dates = data?.availableDates ?? [];
   return (
     <section className="pl-panel ss-card">
       <div className="pl-band">
@@ -321,7 +319,15 @@ function AmcScoreCard({ sheet, editable, saveField }: { sheet: FortnightlySheet;
           </select>
         </div>
       )}
-      {card ? (
+      {!data && !error ? (
+        <p className="aa-note" style={{ padding: 12, margin: 0 }}>
+          Loading the AMC Score…
+        </p>
+      ) : error ? (
+        <p className="aa-note" style={{ padding: 12, margin: 0 }}>
+          The AMC Score is unavailable right now.
+        </p>
+      ) : card ? (
         <table className="ss-t">
           <thead>
             <tr>
@@ -349,17 +355,17 @@ function AmcScoreCard({ sheet, editable, saveField }: { sheet: FortnightlySheet;
   );
 }
 
-export function SipScoreSection({ slug, sheet }: { slug: string; sheet: FortnightlySheet | undefined }) {
+export function SipScoreSection({ slug, inputs }: { slug: string; inputs: AmcAnalyticsInputs | undefined }) {
   const { data: flows } = useIndustryMonthlyFlows();
-  const sheetForSlug = sheet && sheet.slug === slug ? sheet : undefined;
+  const sheetForSlug = inputs && inputs.slug === slug ? inputs : undefined;
   if (!sheetForSlug) {
-    return <p className="aa-note">Loading the Fortnightly figures…</p>;
+    return <p className="aa-note">Loading the SIP figures…</p>;
   }
   const s = sheetForSlug;
-  const editable = s.isLatest;
+  const editable = true;
 
-  async function saveField(field: FortnightlyFieldName, value: number | string | null) {
-    await postJson("/api/fortnightly-update", { amcId: s.amcId, asOfDate: s.asOfDate, field, value });
+  async function saveField(field: AmcAnalyticsField, value: number | string | null) {
+    await saveAmcInput(s.amcId, field, value);
   }
 
   const m = s.manual;
@@ -385,13 +391,10 @@ export function SipScoreSection({ slug, sheet }: { slug: string; sheet: Fortnigh
         <AmcSipCard sheet={s} editable={editable} saveField={saveField} />
         <IndustrySipCard kind="quarter" sheet={s} editable={editable} saveField={saveField} effective={industryQ} thirdRowBases={quarterBases} />
         <IndustrySipCard kind="month" sheet={s} editable={editable} saveField={saveField} effective={industryM} thirdRowBases={monthBases} />
-        <AmcScoreCard sheet={s} editable={editable} saveField={saveField} />
+        <AmcScoreCard amcId={s.amcId} editable={editable} saveField={saveField} />
       </div>
       <p className="aa-note">
-        {editable
-          ? "Blue cells save to the latest Fortnightly AMC Update snapshot, so this tab and the Fortnightly tab always show the same numbers."
-          : "Showing a past Fortnightly snapshot: inputs are read-only here."}{" "}
-        Grey industry figures come from AMFI; type to override, clear to go back. The industry anchors and the estimate switch are shared
+        Blue cells save straight away, to the same stored figures the Fortnightly AMC Update tab shows. Grey industry figures come from AMFI; type to override, clear to go back. The industry anchors and the estimate switch are shared
         settings that change every AMC&apos;s cards.
       </p>
       <SipMatrix slug={slug} />

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withErrorHandling } from "@/lib/api/with-error-handling";
-import { getSipIndustryAnchorOverride, setSipIndustryAnchorOverride, getLastRealMonthInQuarter } from "@/lib/aum/fortnightly-update";
+import { getSipIndustryAnchorOverride, setSipIndustryAnchorOverride, getLastRealMonthInQuarter } from "@/lib/aum/sip-industry-settings";
 import { getAllMonthlyFlows } from "@/lib/aum/industry-flows";
 
 // A single GLOBAL override (not per-AMC) of which month counts as "latest

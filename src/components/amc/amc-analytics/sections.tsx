@@ -22,7 +22,9 @@ import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summa
 import { RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
 import { trimToLastContinuousRun } from "@/lib/aum/series-math";
 import { formatLedgerInr, formatLedgerPct } from "@/lib/aum/period-ledger";
-import { computeValuationBlock, type FortnightlyFieldName, type FortnightlyManualFields, type FortnightlySheet } from "@/lib/aum/fortnightly-update";
+import { computeValuationBlock } from "@/lib/valuation/valuation-block";
+import type { AmcAnalyticsField, AmcAnalyticsInputs, AmcAnalyticsManual } from "@/lib/aum/amc-analytics-inputs";
+import { saveAmcInput } from "@/hooks/use-amc-analytics-inputs";
 import { useAmcValuation } from "@/hooks/use-amc-valuation";
 import { withLiveValuationPoint } from "@/lib/valuation/provisional";
 import { computeRatioLadder, RATIO_LADDER_SDS, type RatioLadder } from "@/lib/valuation/ratio-ladder";
@@ -732,7 +734,7 @@ export function SavedNumberInput({
   );
 }
 
-// ── Valuation Model: the Fortnightly tab's Bear / Base / Bull valuation,
+// ── Valuation Model: the Bear / Base / Bull valuation,
 // laid out like the user's reference "Valuation · FY28E" table: one for
 // PE (FY28E PAT) and one for Mcap / Sales (FY28E revenue). Same maths as
 // the Fortnightly card (computeValuationBlock), same inputs (the latest
@@ -858,10 +860,10 @@ function ScenarioValuationTable({
   band,
 }: {
   kind: "pe" | "mcapSales";
-  manual: FortnightlyManualFields;
+  manual: AmcAnalyticsManual;
   cmpInr: number | null;
   editable: boolean;
-  saveField: (field: FortnightlyFieldName, value: number | null) => Promise<void>;
+  saveField: (field: AmcAnalyticsField, value: number | null) => Promise<void>;
   /** Mcap / Sales only: the multiple each scenario uses (typed, else the chart band). */
   multiples?: Record<ScenarioKey, number | null>;
   band?: { mean: number; sd: number } | null;
@@ -966,8 +968,7 @@ export function ValuationModelSection({
   slug,
   entry,
   defaults,
-  sheet,
-  onSheetSaved,
+  inputs,
   amcOptions,
   onSlugChange,
   cmpInr,
@@ -976,8 +977,8 @@ export function ValuationModelSection({
   slug: string;
   entry: AmcStockCorrelationEntry | undefined;
   defaults: StockCorrelationDefaults | undefined;
-  sheet: FortnightlySheet | undefined;
-  onSheetSaved: () => Promise<unknown>;
+  /** The AMC's stored inputs (the same figures the Fortnightly tab shows). */
+  inputs: AmcAnalyticsInputs | undefined;
   amcOptions: { slug: string; label: string }[];
   onSlugChange: (slug: string) => void;
   /** Today's live price when there is one, else the snapshot's close (see the shell). */
@@ -1000,7 +1001,7 @@ export function ValuationModelSection({
   };
   const ratioCustomCr = settings.ratioCustomAum[slug] ?? null;
   const bestFitCustomCr = settings.bestFitCustomAum[slug] ?? null;
-  const sheetForSlug = sheet && sheet.slug === slug ? sheet : undefined;
+  const sheetForSlug = inputs && inputs.slug === slug ? inputs : undefined;
 
   const table = useMemo(() => {
     if (!entry || !defaults || !sheetForSlug) return null;
@@ -1060,18 +1061,9 @@ export function ValuationModelSection({
   const customToSave = (map: Record<string, number>, days: number, shown: number | null | undefined) =>
     days === CUSTOM_AUM_DAYS && map[slug] === undefined && shown != null ? { ...map, [slug]: Math.round(shown) } : map;
 
-  async function saveField(field: FortnightlyFieldName, value: number | null) {
+  async function saveField(field: AmcAnalyticsField, value: number | null) {
     if (!sheetForSlug) return;
-    const res = await fetch("/api/fortnightly-update", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amcId: sheetForSlug.amcId, asOfDate: sheetForSlug.asOfDate, field, value }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error ?? "Failed to save");
-    }
-    await onSheetSaved();
+    await saveAmcInput(sheetForSlug.amcId, field, value);
   }
 
   async function saveSettings() {
@@ -1109,7 +1101,7 @@ export function ValuationModelSection({
   }
 
   const m = sheetForSlug?.manual;
-  const editable = !!sheetForSlug?.isLatest;
+  const editable = !!sheetForSlug;
   const band = table?.mcapSalesBand ?? null;
 
   return (
@@ -1118,12 +1110,12 @@ export function ValuationModelSection({
         <div className="pl-band">
           Valuation · FY28E{" "}
           <span className="pl-band-unit">
-            Bear / Base / Bull · income ₹ Cr · targets ₹ per share · same inputs and maths as the Fortnightly AMC Update tab
+            Bear / Base / Bull · income ₹ Cr · targets ₹ per share · shared with the Fortnightly AMC Update tab
           </span>
         </div>
         {!m ? (
           <p className="aa-note" style={{ padding: 12 }}>
-            Loading the Fortnightly inputs…
+            Loading the valuation inputs…
           </p>
         ) : (
           <AlignedScenarioGrid>
@@ -1140,14 +1132,9 @@ export function ValuationModelSection({
           </AlignedScenarioGrid>
         )}
         <p className="aa-note" style={{ padding: "0 12px 12px" }}>
-          {editable
-            ? "Blue cells save to the latest Fortnightly AMC Update snapshot, so this tab and the Fortnightly tab always show the same numbers."
-            : "Showing a past Fortnightly snapshot: inputs are read-only here."}{" "}
-          Grey Mcap / Sales multiples are the chart&apos;s 3Y −1 SD / Mean / +1 SD; type to override, clear to go back to the band.
-          Target Price Current is the PE / Mcap / Sales row of the Target Price table below.
-          {cmpInr !== null && sheetForSlug?.cmpInr != null && cmpInr !== sheetForSlug.cmpInr
-            ? ` Upsides use today's price; the Fortnightly tab measures them against its snapshot close (₹${sheetForSlug.cmpInr.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}).`
-            : ""}
+          Blue cells save straight away, to the same stored figures the Fortnightly AMC Update tab shows. Grey Mcap / Sales multiples are the
+          chart&apos;s 3Y −1 SD / Mean / +1 SD; type to override, clear to go back to the band. Target Price Current is the PE / Mcap / Sales row
+          of the Target Price table below. Upsides use today&apos;s price (the last close outside market hours).
         </p>
       </section>
 
@@ -1165,7 +1152,7 @@ export function ValuationModelSection({
         </div>
         {!table || !m ? (
           <p className="aa-note" style={{ padding: 12 }}>
-            Loading the Fortnightly inputs…
+            Loading the valuation inputs…
           </p>
         ) : (
           <div className="vm-grid">
