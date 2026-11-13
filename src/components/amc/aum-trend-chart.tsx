@@ -249,6 +249,7 @@ export function AumTrendChart({
   levelsCorrelation = false,
   showReportedAum = true,
   initialView = "absolute",
+  hideRangeControls = false,
 }: {
   data: AumHistoryPoint[];
   mode?: "absolute" | "change";
@@ -287,6 +288,10 @@ export function AumTrendChart({
   // Which view the chart opens in. Defaults to Absolute everywhere; only
   // the AMC Analytics tab's Regression section opens on Ratio.
   initialView?: "absolute" | "ratio";
+  // Hides the Range buttons and Moving avg box when the caller shows its
+  // own (controlled) ones elsewhere. Only AMC Analytics' Ratio section does,
+  // from its sticky toolbar; everywhere else they stay.
+  hideRangeControls?: boolean;
 }) {
   const [showStockPrice, setShowStockPrice] = useState(true);
   // Which body/caption this chart currently renders -- "ratio" swaps the
@@ -494,7 +499,7 @@ export function AumTrendChart({
     [ratioSeries, ratioRefLines]
   );
   const ratioYTicks = useMemo(() => computeNiceTicks(ratioYDomain, 5), [ratioYDomain]);
-  const rangeSelector = (
+  const rangeSelector = hideRangeControls ? null : (
     <div className="flex items-center gap-1" role="group" aria-label="Date range">
       {RANGE_OPTIONS.map((o) => (
         <button
@@ -703,19 +708,23 @@ export function AumTrendChart({
         <div className="flex items-center gap-2">
           {rangeSelector}
           {chartViewToggle}
-          <label htmlFor="ma-days" className="text-xs text-muted-foreground">
-            Moving avg (days)
-          </label>
-          <input
-            id="ma-days"
-            type="number"
-            min={1}
-            max={250}
-            value={maDaysInput}
-            onChange={(e) => setMaDaysInput(e.target.value)}
-            placeholder="Off"
-            className="w-16 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40"
-          />
+          {!hideRangeControls && (
+            <>
+              <label htmlFor="ma-days" className="text-xs text-muted-foreground">
+                Moving avg (days)
+              </label>
+              <input
+                id="ma-days"
+                type="number"
+                min={1}
+                max={250}
+                value={maDaysInput}
+                onChange={(e) => setMaDaysInput(e.target.value)}
+                placeholder="Off"
+                className="w-16 rounded-md border bg-background px-2 py-1 text-xs hover:border-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/40"
+              />
+            </>
+          )}
           {hasStockPrice && chartView === "absolute" && (
             <button
               type="button"

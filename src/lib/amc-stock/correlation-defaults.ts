@@ -6,6 +6,7 @@ import { RATIO_BASIS_OPTIONS, type RatioBasis } from "../aum/series-math";
 import { EXTRA_LAG_OPTIONS } from "./regression-engine";
 import accordCodes from "../../../data/amc-accord-codes.json";
 import { DEFAULT_WHAT_IF_AUM_DAYS, isWhatIfAumDays, MAX_AUM_INPUT_CR } from "./aum-what-if";
+import { isFitMaDays } from "./fit-settings";
 import {
   DEFAULT_BEST_FIT_AUM_DAYS,
   DEFAULT_BEST_FIT_AUM_PCT,
@@ -67,6 +68,16 @@ export interface StockCorrelationDefaults {
   // The Target Price Average's weight (%) per method. Older saved rows lack
   // it (35 / 10 / 50 / 5).
   valuationWeights: ValuationWeights;
+  // AMC Analytics' Ratio and Regression sub-tabs: their own saved Range,
+  // Moving avg, AUM-only avg and Levels, so a save there never moves the
+  // Stock Correlation tab, Fortnightly Update or the Predictors (which keep
+  // the four fields above). Older saved rows lack them and fall back to
+  // those shared values. fitSavedAt is when they were last changed (ISO).
+  fitRange: RangeOption;
+  fitMaDays: number;
+  fitAumOnlyAveraging: boolean;
+  fitLevelsCorrelation: boolean;
+  fitSavedAt: string | null;
 }
 
 const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
@@ -88,6 +99,11 @@ const FALLBACK_DEFAULTS: StockCorrelationDefaults = {
   valuationRatioCustomAum: {},
   bestFitCustomAum: {},
   valuationWeights: DEFAULT_VALUATION_WEIGHTS,
+  fitRange: "3y",
+  fitMaDays: 1,
+  fitAumOnlyAveraging: false,
+  fitLevelsCorrelation: false,
+  fitSavedAt: null,
 };
 
 // The 8 listed AMCs the Stock Correlation table shows -- the only slugs an
@@ -137,12 +153,14 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
     const range = isRangeOption(parsed.range) ? parsed.range : FALLBACK_DEFAULTS.range;
     const maDays = Number.isFinite(parsed.maDays) && (parsed.maDays as number) >= 0 ? Number(parsed.maDays) : FALLBACK_DEFAULTS.maDays;
     const valuationRatioDays = isValuationAumDays(parsed.valuationRatioDays) ? parsed.valuationRatioDays : FALLBACK_DEFAULTS.valuationRatioDays;
+    const aumOnlyAveraging = typeof parsed.aumOnlyAveraging === "boolean" ? parsed.aumOnlyAveraging : FALLBACK_DEFAULTS.aumOnlyAveraging;
+    const levelsCorrelation = typeof parsed.levelsCorrelation === "boolean" ? parsed.levelsCorrelation : FALLBACK_DEFAULTS.levelsCorrelation;
     return {
       range,
       maDays,
       ratioBasis: isRatioBasis(parsed.ratioBasis) ? parsed.ratioBasis : FALLBACK_DEFAULTS.ratioBasis,
-      aumOnlyAveraging: typeof parsed.aumOnlyAveraging === "boolean" ? parsed.aumOnlyAveraging : FALLBACK_DEFAULTS.aumOnlyAveraging,
-      levelsCorrelation: typeof parsed.levelsCorrelation === "boolean" ? parsed.levelsCorrelation : FALLBACK_DEFAULTS.levelsCorrelation,
+      aumOnlyAveraging,
+      levelsCorrelation,
       extraLagDays: isExtraLagDays(parsed.extraLagDays) ? parsed.extraLagDays : FALLBACK_DEFAULTS.extraLagDays,
       aumInputs: sanitizeAumInputs(parsed.aumInputs) ?? FALLBACK_DEFAULTS.aumInputs,
       whatIfAumDays: isWhatIfAumDays(parsed.whatIfAumDays) ? parsed.whatIfAumDays : FALLBACK_DEFAULTS.whatIfAumDays,
@@ -158,6 +176,11 @@ export async function getStockCorrelationDefaults(): Promise<StockCorrelationDef
       valuationRatioCustomAum: sanitizeAumInputs(parsed.valuationRatioCustomAum) ?? {},
       bestFitCustomAum: sanitizeAumInputs(parsed.bestFitCustomAum) ?? {},
       valuationWeights: isValuationWeights(parsed.valuationWeights) ? parsed.valuationWeights : FALLBACK_DEFAULTS.valuationWeights,
+      fitRange: isRangeOption(parsed.fitRange) ? parsed.fitRange : range,
+      fitMaDays: isFitMaDays(parsed.fitMaDays) ? parsed.fitMaDays : Math.max(1, Math.min(250, Math.round(maDays))),
+      fitAumOnlyAveraging: typeof parsed.fitAumOnlyAveraging === "boolean" ? parsed.fitAumOnlyAveraging : aumOnlyAveraging,
+      fitLevelsCorrelation: typeof parsed.fitLevelsCorrelation === "boolean" ? parsed.fitLevelsCorrelation : levelsCorrelation,
+      fitSavedAt: typeof parsed.fitSavedAt === "string" && !Number.isNaN(Date.parse(parsed.fitSavedAt)) ? parsed.fitSavedAt : null,
     };
   } catch {
     return FALLBACK_DEFAULTS;

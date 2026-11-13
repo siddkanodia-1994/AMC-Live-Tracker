@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { mutate as globalMutate } from "swr";
 import { AumTrendChart } from "@/components/amc/aum-trend-chart";
-import { RegressionDeepDive } from "@/components/amc/regression-deep-dive";
+import { AsideCard, RegressionDeepDive } from "@/components/amc/regression-deep-dive";
 import { ValuationBandCharts } from "@/components/amc/valuation-band-charts";
 import {
   computeAumWhatIf,
@@ -17,12 +17,13 @@ import {
 import { computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
 import { computePctChangeRegression } from "@/lib/amc-stock/pct-change-regression";
 import { PctChangeRegressionView } from "./pct-change-regression-view";
-import { FitStatStrip } from "./fit-stat-strip";
+import { FitStatGrid } from "./fit-stat-strip";
 import { computeFitCorrelation } from "@/lib/amc-stock/fit-stats";
 import type { StockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
 import { trimToLastContinuousRun } from "@/lib/aum/series-math";
+import { formatPct, formatPriceInr, formatShortDateWithYear } from "@/lib/utils/format";
 import { formatLedgerInr, formatLedgerPct } from "@/lib/aum/period-ledger";
 import { computeValuationBlock } from "@/lib/valuation/valuation-block";
 import type { AmcAnalyticsField, AmcAnalyticsInputs, AmcAnalyticsManual } from "@/lib/aum/amc-analytics-inputs";
@@ -316,16 +317,30 @@ export interface FitControls {
   setLevelsCorrelation: (v: boolean) => void;
   onSaved: boolean;
   savedLabel: string;
+  /** When the saved view last changed (ISO), if it ever has. */
+  savedAt: string | null;
   reset: () => void;
+  saving: boolean;
+  /** "Save as default": this view becomes every visitor's Ratio / Regression opening view. */
+  save: () => Promise<void>;
 }
 
+// Ratio and Regression open on their own saved view (fit* settings), which
+// starts out as the Stock Correlation default and only moves when someone
+// saves here -- so a save never changes Stock Correlation, Fortnightly or
+// the Predictors.
 export function useFitControls(defaults: StockCorrelationDefaults | undefined): FitControls {
   // null = still on the saved setting.
   const [rangeChoice, setRangeChoice] = useState<RangeOption | null>(null);
   const [maInputChoice, setMaInputChoice] = useState<string | null>(null);
   const [aumOnlyChoice, setAumOnlyChoice] = useState<boolean | null>(null);
   const [levelsChoice, setLevelsChoice] = useState<boolean | null>(null);
-  const maDaysInput = maInputChoice ?? (defaults ? savedMaInput(defaults.maDays) : "");
+  const [saving, setSaving] = useState(false);
+  const savedRange = defaults?.fitRange ?? "3y";
+  const savedMa = defaults?.fitMaDays ?? 1;
+  const savedAumOnly = defaults?.fitAumOnlyAveraging ?? false;
+  const savedLevels = defaults?.fitLevelsCorrelation ?? false;
+  const maDaysInput = maInputChoice ?? (defaults ? savedMaInput(savedMa) : "");
   // Same clamp and ~300ms debounce as the Stock Correlation table.
   const maDaysImmediate = Math.max(1, Math.min(250, parseInt(maDaysInput, 10) || 1));
   const [maDays, setMaDays] = useState(maDaysImmediate);
@@ -333,26 +348,63 @@ export function useFitControls(defaults: StockCorrelationDefaults | undefined): 
     const timer = setTimeout(() => setMaDays(maDaysImmediate), 300);
     return () => clearTimeout(timer);
   }, [maDaysImmediate]);
-  const savedRange = defaults?.range ?? "3y";
-  const savedMa = defaults?.maDays ?? 0;
+  const range = rangeChoice ?? savedRange;
+  const aumOnlyAveraging = aumOnlyChoice ?? savedAumOnly;
+  const levelsCorrelation = levelsChoice ?? savedLevels;
+  const reset = () => {
+    setRangeChoice(null);
+    setMaInputChoice(null);
+    setAumOnlyChoice(null);
+    setLevelsChoice(null);
+  };
+  // Compared by value, so typing a setting back to the saved one counts as saved.
+  const onSaved = range === savedRange && maDaysImmediate === savedMa && aumOnlyAveraging === savedAumOnly && levelsCorrelation === savedLevels;
+
+  async function save() {
+    if (!defaults) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/stock-correlation-defaults", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...defaults,
+          fitRange: range,
+          fitMaDays: maDaysImmediate,
+          fitAumOnlyAveraging: aumOnlyAveraging,
+          fitLevelsCorrelation: levelsCorrelation,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Save failed");
+      }
+      await globalMutate((key) => typeof key === "string" && key.startsWith("/api/amc-stock-correlations"));
+      reset();
+      toast.success("Saved as the Ratio / Regression default for everyone");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return {
-    range: rangeChoice ?? savedRange,
+    range,
     setRange: setRangeChoice,
     maDaysInput,
     setMaDaysInput: setMaInputChoice,
     maDays,
-    aumOnlyAveraging: aumOnlyChoice ?? defaults?.aumOnlyAveraging ?? false,
+    aumOnlyAveraging,
     setAumOnlyAveraging: setAumOnlyChoice,
-    levelsCorrelation: levelsChoice ?? defaults?.levelsCorrelation ?? false,
+    levelsCorrelation,
     setLevelsCorrelation: setLevelsChoice,
-    onSaved: rangeChoice === null && maInputChoice === null && aumOnlyChoice === null && levelsChoice === null,
+    onSaved,
     savedLabel: `${RANGE_OPTIONS.find((o) => o.value === savedRange)?.label ?? savedRange} · ${savedMa > 1 ? `${savedMa}D` : "Latest"}`,
-    reset: () => {
-      setRangeChoice(null);
-      setMaInputChoice(null);
-      setAumOnlyChoice(null);
-      setLevelsChoice(null);
-    },
+    savedAt: defaults?.fitSavedAt ?? null,
+    reset,
+    saving,
+    save,
   };
 }
 
@@ -377,18 +429,87 @@ function ToggleBox({ id, label, title, checked, onChange }: { id: string; label:
   );
 }
 
-function SavedOrReset({ controls }: { controls: FitControls }) {
-  return controls.onSaved ? (
-    <span className="text-xs text-muted-foreground">On the saved settings ({controls.savedLabel})</span>
-  ) : (
-    <button type="button" className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted" onClick={controls.reset}>
-      Back to saved ({controls.savedLabel})
-    </button>
+function savedAtText(iso: string): string {
+  return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
+}
+
+// Ratio and Regression's shared Range / Moving avg / toggles and their
+// "Save as default", pinned under the page top while scrolling so it stays
+// beside whichever chart is in view.
+function FitToolbar({ controls, showAumOnly, levelsTitle }: { controls: FitControls; showAumOnly: boolean; levelsTitle: string }) {
+  // Pins just under the dashboard's own sticky page header, whose height
+  // changes when it wraps on narrow screens (ResizeObserver reports it once
+  // on observe, then on every change).
+  const [top, setTop] = useState(0);
+  useEffect(() => {
+    const header = document.querySelector("header.sticky");
+    if (!header) return;
+    const ro = new ResizeObserver(() => setTop(header.getBoundingClientRect().height));
+    ro.observe(header);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div className="aa-fitbar" style={{ top }} role="toolbar" aria-label="Ratio and Regression settings">
+      <div className="flex items-center gap-1" role="group" aria-label="Date range">
+        {RANGE_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={o.value === controls.range}
+            onClick={() => controls.setRange(o.value)}
+            className={
+              o.value === controls.range
+                ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
+                : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+            }
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <label htmlFor="aa-fit-ma" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        Moving avg (days)
+        <input
+          id="aa-fit-ma"
+          type="number"
+          min={1}
+          max={250}
+          inputMode="numeric"
+          value={controls.maDaysInput}
+          onChange={(e) => controls.setMaDaysInput(e.target.value)}
+          className="h-7 w-16 rounded-md border bg-background px-2 text-xs text-foreground"
+        />
+      </label>
+      {showAumOnly && (
+        <ToggleBox
+          id="aa-aum-only-avg"
+          label="AUM-only avg"
+          title="Moving avg applies only to AUM; the ratio uses each day's raw share price instead of an averaged one"
+          checked={controls.aumOnlyAveraging}
+          onChange={controls.setAumOnlyAveraging}
+        />
+      )}
+      <ToggleBox id="aa-fit-levels" label="Levels (no % chg)" title={levelsTitle} checked={controls.levelsCorrelation} onChange={controls.setLevelsCorrelation} />
+      <span className="aa-fitbar-sep" aria-hidden />
+      <button type="button" className="aa-btn" disabled={controls.onSaved || controls.saving} onClick={controls.save}>
+        {controls.saving ? "Saving…" : "Save as default"}
+      </button>
+      {controls.onSaved ? (
+        <span className="text-xs text-muted-foreground">
+          On the saved settings ({controls.savedLabel}){controls.savedAt ? ` · saved ${savedAtText(controls.savedAt)}` : ""}
+        </span>
+      ) : (
+        <button type="button" className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted" onClick={controls.reset}>
+          Back to saved ({controls.savedLabel})
+        </button>
+      )}
+    </div>
   );
 }
 
-// ── Ratio: the ratio ladder and the Stock Correlation "AUM vs. Share
-// Price" chart, opening on its Ratio view ──────────────────────────────
+// ── Ratio: the fit card (mean-ratio value + equation | fit grid), the
+// ratio ladder and the Stock Correlation "AUM vs. Share Price" chart,
+// opening on its Ratio view ──────────────────────────────────────────
 export function RatioSection({
   entry,
   defaults,
@@ -415,50 +536,54 @@ export function RatioSection({
   );
   if (!entry || !defaults) return null;
   const lastPrice = entry.stockPriceSeries.at(-1)?.priceInr ?? null;
+  const price = cmpInr ?? lastPrice;
+  const priceIsLive = cmpInr !== null && cmpIsLive;
   const priceSide = aumOnlyAveraging || maDays <= 1 ? "raw price" : `price MA${maDays}`;
   return (
     <>
-      <FitStatStrip
-        r={fit?.r ?? null}
-        r2={fit?.r2 ?? null}
-        n={fit?.n ?? null}
-        rangeLabel={rangeLabelOf(range)}
-        third={{ label: "Basis", value: levelsCorrelation ? "Levels" : "Daily % chg", sub: `${priceSide} vs ${aumSideLabel(maDays)}` }}
+      <FitToolbar
+        controls={controls}
+        showAumOnly
+        levelsTitle="Corr/R² use the two series' raw values directly instead of their day-over-day % change"
       />
-      <RatioLadderPanel
-        ladder={ladder}
-        maDays={maDays}
-        aumOnlyAveraging={aumOnlyAveraging}
-        cmpInr={cmpInr ?? lastPrice}
-        cmpIsLive={cmpInr !== null && cmpIsLive}
-      />
+      <div className="aa-reused">
+        <AsideCard
+          aside={
+            <FitStatGrid
+              r={fit?.r ?? null}
+              r2={fit?.r2 ?? null}
+              n={fit?.n ?? null}
+              rangeLabel={rangeLabelOf(range)}
+              from={ladder?.from ?? null}
+              to={ladder?.to ?? null}
+              extra={{
+                label: "Z-score",
+                value: ladder?.zScore == null ? "—" : `${ladder.zScore >= 0 ? "+" : "−"}${Math.abs(ladder.zScore).toFixed(2)}`,
+                sub: ladder ? `today's ratio ${ladder.currentRatio.toFixed(5)} vs its mean` : "",
+              }}
+              closing={{ label: "Basis", value: levelsCorrelation ? "Levels" : "Daily % chg", sub: `${priceSide} vs ${aumSideLabel(maDays)}` }}
+            />
+          }
+        >
+          <RatioFairValue
+            ladder={ladder}
+            price={price}
+            priceIsLive={priceIsLive}
+            maDays={maDays}
+            aumOnlyAveraging={aumOnlyAveraging}
+            rangeLabel={rangeLabelOf(range)}
+            tradingSymbol={entry.tradingSymbol}
+          />
+        </AsideCard>
+      </div>
+      <RatioLadderPanel ladder={ladder} maDays={maDays} aumOnlyAveraging={aumOnlyAveraging} cmpInr={price} cmpIsLive={priceIsLive} />
 
       <div className="aa-reused" style={{ marginTop: 16 }}>
         <div className="space-y-2 rounded-lg border bg-card p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-medium text-foreground">AUM vs. Share Price</p>
-            <div className="flex flex-wrap items-center gap-3">
-              <ToggleBox
-                id="aa-aum-only-avg"
-                label="AUM-only avg"
-                title="Moving avg applies only to AUM; the ratio uses each day's raw share price instead of an averaged one"
-                checked={aumOnlyAveraging}
-                onChange={controls.setAumOnlyAveraging}
-              />
-              <ToggleBox
-                id="aa-levels-correlation"
-                label="Levels (no % chg)"
-                title="Corr/R² (Absolute view) use the two series' raw values directly instead of their day-over-day % change"
-                checked={controls.levelsCorrelation}
-                onChange={controls.setLevelsCorrelation}
-              />
-              <SavedOrReset controls={controls} />
-            </div>
-          </div>
+          <p className="text-sm font-medium text-foreground">AUM vs. Share Price</p>
           <p className="text-xs text-muted-foreground">
-            Range and Moving avg here also re-fit the Regression section. AUM-only avg changes the ratio ladder and this
-            chart; Levels changes the Absolute view&apos;s Corr/R² and switches the Regression section to the daily % change model. None of these are saved, and the Valuation Model stays
-            on the saved settings.
+            Range, Moving avg, AUM-only avg and Levels come from the toolbar above and re-fit the Regression section too. Save as default stores them
+            for everyone, for Ratio and Regression only; Stock Correlation and the Valuation Model keep their own settings.
           </p>
           <AumTrendChart
             data={entry.aumHistory}
@@ -469,9 +594,10 @@ export function RatioSection({
             maDaysInput={controls.maDaysInput}
             onMaDaysInputChange={controls.setMaDaysInput}
             aumOnlyAveraging={aumOnlyAveraging}
-            levelsCorrelation={controls.levelsCorrelation}
+            levelsCorrelation={levelsCorrelation}
             showReportedAum={false}
             initialView="ratio"
+            hideRangeControls
           />
         </div>
       </div>
@@ -479,8 +605,65 @@ export function RatioSection({
   );
 }
 
+// Left half of the Ratio fit card: price vs the mean ratio × today's AUM MA,
+// written out as the equation it comes from.
+function RatioFairValue({
+  ladder,
+  price,
+  priceIsLive,
+  maDays,
+  aumOnlyAveraging,
+  rangeLabel,
+  tradingSymbol,
+}: {
+  ladder: RatioLadder | null;
+  price: number | null;
+  priceIsLive: boolean;
+  maDays: number;
+  aumOnlyAveraging: boolean;
+  rangeLabel: string;
+  tradingSymbol: string;
+}) {
+  const aumLabel = maDays > 1 ? `AUM MA${maDays}` : "AUM";
+  const priceLabel = aumOnlyAveraging || maDays <= 1 ? "Price" : `Price MA${maDays}`;
+  const fair = ladder ? ladder.meanRatio * ladder.aumCr : null;
+  const gap = fair && price !== null ? (price - fair) / fair : null;
+  return (
+    <>
+      <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Price vs Ratio Fair Value (mean)</p>
+      {!ladder || fair === null ? (
+        <p className="text-sm text-muted-foreground">Not enough history in this range to compute a stable ratio distribution.</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-baseline gap-3">
+            <span className="font-mono text-2xl font-semibold tabular-nums">{price === null ? "—" : formatPriceInr(price)}</span>
+            <span className="text-xs text-muted-foreground">vs mean-ratio value</span>
+            <span className="font-mono text-2xl font-semibold tabular-nums text-blue-600 dark:text-blue-400">{formatPriceInr(fair)}</span>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Price is{" "}
+            <span className={gap !== null && gap < 0 ? "font-semibold text-emerald-600 dark:text-emerald-400" : "font-semibold text-red-600 dark:text-red-400"}>
+              {gap === null ? "—" : `${formatPct(Math.abs(gap))} ${gap < 0 ? "below" : "above"}`}
+            </span>{" "}
+            the mean-ratio value. Today&apos;s ratio {ladder.currentRatio.toFixed(5)} is{" "}
+            {ladder.zScore === null ? "—" : `${ladder.zScore >= 0 ? "+" : "−"}${Math.abs(ladder.zScore).toFixed(2)}`} SD from its {rangeLabel} mean (−1 SD{" "}
+            {(ladder.meanRatio - ladder.stdDev).toFixed(5)} · +1 SD {(ladder.meanRatio + ladder.stdDev).toFixed(5)}).
+          </p>
+          <div className="overflow-x-auto rounded-md border bg-background px-3 py-2 font-mono text-xs whitespace-nowrap">
+            {priceLabel} = {ladder.meanRatio.toFixed(6)} × {aumLabel} = {ladder.meanRatio.toFixed(6)} × ₹{formatLedgerInr(ladder.aumCr)} Cr = {formatPriceInr(fair)}
+          </div>
+          <div className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+            n {ladder.n} sessions · mean of {priceLabel} ÷ {aumLabel} from {formatShortDateWithYear(ladder.from)} · {tradingSymbol}.NS{" "}
+            {priceIsLive ? "live price" : "last close"}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 // ── Regression: the Regression tab's deep-dive (its ratio panel moved to
-// the Ratio section), with the shared Range / Moving avg ───────────────
+// the Ratio section), with the fit grid beside the fair value card ──────
 export function RegressionSection({
   entry,
   defaults,
@@ -501,93 +684,63 @@ export function RegressionSection({
     });
   }, [entry, defaults, maDays, range, levelsCorrelation]);
   if (!entry || !defaults) return null;
+  const lag = defaults.extraLagDays;
+  const basis = `${maDays > 1 ? `MA${maDays}` : "Live"} · ${lag === 0 ? "same-day" : `lag ${lag}`}`;
   return (
-    <div className="aa-reused">
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1" role="group" aria-label="Date range">
-          {RANGE_OPTIONS.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => controls.setRange(o.value)}
-              className={
-                o.value === controls.range
-                  ? "rounded-md bg-foreground px-2 py-1 text-xs text-background"
-                  : "rounded-md border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-              }
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-        <label htmlFor="aa-regression-ma" className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          Moving avg (days)
-          <input
-            id="aa-regression-ma"
-            type="number"
-            min={1}
-            max={250}
-            inputMode="numeric"
-            value={controls.maDaysInput}
-            onChange={(e) => controls.setMaDaysInput(e.target.value)}
-            className="h-7 w-16 rounded-md border bg-background px-2 text-xs text-foreground"
-          />
-        </label>
-        <ToggleBox
-          id="aa-regression-levels"
-          label="Levels (no % chg)"
-          title="On: Price regressed on the AUM MA level. Off: the daily % change in the raw share price regressed on the daily % change in the AUM MA, with the target at live AUM vs its 45-day average"
-          checked={levelsCorrelation}
-          onChange={controls.setLevelsCorrelation}
-        />
-        <SavedOrReset controls={controls} />
-        <span className="text-xs text-muted-foreground">Shared with the Ratio section; not saved.</span>
-      </div>
-      <div>
+    <>
+      <FitToolbar
+        controls={controls}
+        showAumOnly={false}
+        levelsTitle="On: Price regressed on the AUM MA level. Off: the daily % change in the raw share price regressed on the daily % change in the AUM MA, with the target at live AUM vs its 45-day average"
+      />
+      <div className="aa-reused">
         {levelsCorrelation ? (
-          <FitStatStrip
-            r={result?.pearsonR ?? null}
-            r2={result?.r2 ?? null}
-            n={result?.n ?? null}
-            rangeLabel={rangeLabelOf(range)}
-            third={{
-              label: "β (slope)",
-              value: result ? `₹${result.slope.toFixed(4)}` : "—",
-              sub: `₹ per share per ₹ Cr of ${aumSideLabel(maDays)}`,
-            }}
+          <RegressionDeepDive
+            result={result}
+            tradingSymbol={entry.tradingSymbol}
+            maWindow={maDays}
+            extraLagDays={lag}
+            showScatter
+            showRatioPanel={false}
+            aside={
+              result ? (
+                <FitStatGrid
+                  r={result.pearsonR}
+                  r2={result.r2}
+                  n={result.n}
+                  rangeLabel={rangeLabelOf(range)}
+                  from={result.fittedFrom}
+                  to={result.fittedTo}
+                  extra={{ label: "β (slope)", value: `₹${result.slope.toFixed(4)}`, sub: `₹ per share per ₹ Cr of ${aumSideLabel(maDays)}` }}
+                  closing={{ label: "AUM basis", value: basis, sub: "raw price, levels" }}
+                />
+              ) : undefined
+            }
           />
         ) : (
-          <FitStatStrip
-            r={pctResult?.pearsonR ?? null}
-            r2={pctResult?.r2 ?? null}
-            n={pctResult?.n ?? null}
-            rangeLabel={rangeLabelOf(range)}
-            third={{
-              label: "β (slope)",
-              value: pctResult ? pctResult.beta.toFixed(3) : "—",
-              sub: `price % per 1% move in ${aumSideLabel(maDays)}`,
-            }}
+          <PctChangeRegressionView
+            result={pctResult}
+            tradingSymbol={entry.tradingSymbol}
+            maWindow={maDays}
+            extraLagDays={lag}
+            aside={
+              pctResult ? (
+                <FitStatGrid
+                  r={pctResult.pearsonR}
+                  r2={pctResult.r2}
+                  n={pctResult.n}
+                  rangeLabel={rangeLabelOf(range)}
+                  from={pctResult.fittedFrom}
+                  to={pctResult.fittedTo}
+                  extra={{ label: "β (slope)", value: pctResult.beta.toFixed(3), sub: `price % per 1% move in ${aumSideLabel(maDays)}` }}
+                  closing={{ label: "AUM basis", value: basis, sub: "raw price, daily % changes" }}
+                />
+              ) : undefined
+            }
           />
         )}
       </div>
-      {levelsCorrelation ? (
-        <RegressionDeepDive
-          result={result}
-          tradingSymbol={entry.tradingSymbol}
-          maWindow={maDays}
-          extraLagDays={defaults.extraLagDays}
-          showScatter
-          showRatioPanel={false}
-        />
-      ) : (
-        <PctChangeRegressionView
-          result={pctResult}
-          tradingSymbol={entry.tradingSymbol}
-          maWindow={maDays}
-          extraLagDays={defaults.extraLagDays}
-        />
-      )}
-    </div>
+    </>
   );
 }
 

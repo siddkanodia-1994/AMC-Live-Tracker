@@ -9,6 +9,7 @@ import {
 import { RANGE_OPTIONS } from "@/lib/aum/date-range";
 import { RATIO_BASIS_OPTIONS } from "@/lib/aum/series-math";
 import { EXTRA_LAG_OPTIONS } from "@/lib/amc-stock/regression-engine";
+import { resolveFitSettings } from "@/lib/amc-stock/fit-settings";
 import {
   isBestFitAumPct,
   isValuationAumDays,
@@ -137,6 +138,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "valuationWeights must give ratio, bestFit, pe and mcapSales each a whole % from 0 to 100" }, { status: 400 });
   }
 
+  // AMC Analytics' Ratio / Regression view; kept as stored when omitted.
+  const fit = resolveFitSettings(body, stored, new Date().toISOString());
+  if (!fit.ok) return NextResponse.json({ error: fit.error }, { status: 400 });
+
   const defaults = {
     range,
     maDays,
@@ -155,6 +160,7 @@ export async function POST(request: Request) {
     bestFitMaDays,
     ...customMaps,
     valuationWeights,
+    ...fit.value,
   };
   await setStockCorrelationDefaults(defaults);
   return NextResponse.json(defaults);

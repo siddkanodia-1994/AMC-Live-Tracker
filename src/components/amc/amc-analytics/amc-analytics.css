@@ -658,13 +658,27 @@
 .aa .sm-t tr.sm-sel th, .aa .sm-t tr.sm-sel td { border-top: 1px solid var(--pl-color-primary); border-bottom: 1px solid var(--pl-color-primary); }
 .aa .sm-t tr.sm-ind th, .aa .sm-t tr.sm-ind td { background: #f3f3f1; color: var(--pl-color-text-muted); font-style: italic; }
 
-/* Ratio / Regression stat strip: Corr, R², basis or slope, days. */
-.aa .aa-fit { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 760px; margin-bottom: 16px; background: var(--pl-color-bg-card); border: 1px solid var(--pl-color-border); }
-.aa .aa-fit-tile { padding: 10px 14px; border-right: 1px solid var(--pl-ledger-rule); min-width: 0; }
-.aa .aa-fit-tile:last-child { border-right: 0; }
+/* Ratio / Regression toolbar: Range, Moving avg, toggles and Save as
+   default, pinned to the top while scrolling past the charts. */
+.aa .aa-fitbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  margin-bottom: 14px; padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.96); backdrop-filter: blur(6px);
+  border: 1px solid var(--pl-color-border); box-shadow: 0 6px 18px rgba(16, 24, 40, 0.06);
+  font-family: var(--font-sans);
+}
+.aa .aa-fitbar .aa-btn { padding: 7px 12px; }
+.aa .aa-fitbar-sep { width: 1px; height: 20px; background: var(--pl-color-border); }
+@media (max-width: 640px) { .aa .aa-fitbar-sep { display: none; } }
+
+/* Ratio / Regression fit grid (right half of the top card): Period, Corr,
+   R², β or Z-score, Days, basis. */
+.aa .aa-fitgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.aa .aa-fit-tile { padding: 9px 12px; border: 1px solid var(--pl-ledger-rule); background: #fcfcfb; min-width: 0; }
 .aa .aa-fit-k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--pl-color-text-muted); }
-.aa .aa-fit-v { font-size: 24px; font-weight: 700; line-height: 1.25; margin-top: 2px; font-variant-numeric: tabular-nums; color: var(--pl-ledger-cell-strong); }
-.aa .aa-fit-v--sm { font-size: 16px; line-height: 1.85; }
+.aa .aa-fit-v { font-size: 22px; font-weight: 700; line-height: 1.25; margin-top: 2px; font-variant-numeric: tabular-nums; color: var(--pl-ledger-cell-strong); }
+.aa .aa-fit-v--sm { font-size: 15px; line-height: 1.85; }
 .aa .aa-fit-s { font-size: 11px; color: var(--pl-color-text-muted); margin-top: 2px; line-height: 1.35; }
 .aa .aa-fit-pos { color: #08711e; }
 .aa .aa-fit-neg { color: #a30c15; }
@@ -672,4 +686,3 @@
 .aa .aa-fit-badge--strong { background: #d6efdc; color: #08711e; }
 .aa .aa-fit-badge--moderate { background: #fbefd0; color: #8a5a00; }
 .aa .aa-fit-badge--weak { background: #f8d7da; color: #a30c15; }
-@media (max-width: 640px) { .aa .aa-fit { grid-template-columns: repeat(2, minmax(0, 1fr)); } .aa .aa-fit-tile:nth-child(2) { border-right: 0; } .aa .aa-fit-tile:nth-child(-n + 2) { border-bottom: 1px solid var(--pl-ledger-rule); } }

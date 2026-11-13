@@ -1,7 +1,7 @@
 "use client";
 
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from "recharts";
-import { DW_LOWER, DW_UPPER, MIN_NW_T, MIN_SESSIONS, Tile } from "@/components/amc/regression-deep-dive";
+import { AsideCard, DW_LOWER, DW_UPPER, MIN_NW_T, MIN_SESSIONS, Tile } from "@/components/amc/regression-deep-dive";
 import { dateShade } from "@/components/amc/regression-scatter-chart";
 import { PCT_TARGET_AVG_DAYS, type PctChangePoint, type PctChangeRegressionResult } from "@/lib/amc-stock/pct-change-regression";
 import { formatCr, formatPct, formatPriceInr, formatShortDateWithYear } from "@/lib/utils/format";
@@ -54,11 +54,14 @@ export function PctChangeRegressionView({
   tradingSymbol,
   maWindow,
   extraLagDays,
+  aside,
 }: {
   result: PctChangeRegressionResult | null;
   tradingSymbol: string;
   maWindow: number;
   extraLagDays: number;
+  /** The fit grid beside the target card. */
+  aside?: React.ReactNode;
 }) {
   if (!result) {
     return (
@@ -80,7 +83,7 @@ export function PctChangeRegressionView({
 
   return (
     <div className="space-y-3">
-      <div className="space-y-2 rounded-lg border bg-card p-4">
+      <AsideCard aside={aside}>
         <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Price vs AUM Target (daily % change)</p>
         {t ? (
           <>
@@ -113,7 +116,7 @@ export function PctChangeRegressionView({
           (the same daily changes as Stock Correlation&apos;s Corr/R² with AUM-only avg on), and target = today&apos;s price × (1 + the line&apos;s
           move at the live vs {PCT_TARGET_AVG_DAYS}-day average AUM gap).
         </p>
-      </div>
+      </AsideCard>
 
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         <Tile pass={result.n >= MIN_SESSIONS} head={`${result.n} daily changes`} sub={`needs ≥ ${MIN_SESSIONS}`} />

@@ -48,6 +48,19 @@ export function Tile({ pass, head, sub }: { pass: boolean; head: string; sub: st
 // chart; only the Stock Correlation tab opts in (user's choice).
 // `showRatioPanel={false}` drops the Price ÷ AUM panel; only the AMC
 // Analytics tab does that, since its own Ratio section covers it.
+// `aside` (AMC Analytics only) sits in a right-hand column of the fair
+// value card; without it the card is unchanged.
+/** A card whose content gets an optional right-hand column (stacked below it on narrow screens). */
+export function AsideCard({ aside, children }: { aside?: React.ReactNode; children: React.ReactNode }) {
+  if (!aside) return <div className="space-y-2 rounded-lg border bg-card p-4">{children}</div>;
+  return (
+    <div className="grid grid-cols-1 gap-4 rounded-lg border bg-card p-4 md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+      <div className="min-w-0 space-y-2">{children}</div>
+      <div className="min-w-0 border-t pt-3 md:border-t-0 md:border-l md:pt-0 md:pl-4">{aside}</div>
+    </div>
+  );
+}
+
 export function RegressionDeepDive({
   result,
   tradingSymbol,
@@ -55,6 +68,7 @@ export function RegressionDeepDive({
   extraLagDays,
   showScatter = false,
   showRatioPanel = true,
+  aside,
 }: {
   result: RegressionResult | null;
   tradingSymbol: string;
@@ -62,6 +76,7 @@ export function RegressionDeepDive({
   extraLagDays: number;
   showScatter?: boolean;
   showRatioPanel?: boolean;
+  aside?: React.ReactNode;
 }) {
   if (!result) {
     return <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">Not enough aligned AUM/price history to fit a regression for this AMC at this range.</div>;
@@ -74,7 +89,7 @@ export function RegressionDeepDive({
   return (
     <div className="space-y-3">
       <div className={showRatioPanel ? "grid grid-cols-1 gap-3 md:grid-cols-2" : "grid grid-cols-1 gap-3"}>
-        <div className="space-y-2 rounded-lg border bg-card p-4">
+        <AsideCard aside={aside}>
           <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Price vs AUM Fair Value</p>
           <div className="flex flex-wrap items-baseline gap-3">
             <span className="font-mono text-2xl font-semibold tabular-nums">{formatPriceInr(result.latestPrice)}</span>
@@ -112,7 +127,7 @@ export function RegressionDeepDive({
               {result.estimatedSessionCount} of {result.n} sessions include AUM from before 1 Jan 2026 — index-interpolated, not measured.
             </p>
           )}
-        </div>
+        </AsideCard>
 
         {showRatioPanel && (
           <div className="space-y-2 rounded-lg border bg-card p-4">
