@@ -339,13 +339,17 @@ export function useFitControls(defaults: StockCorrelationDefaults | undefined): 
   const savedAumOnly = defaults?.fitAumOnlyAveraging ?? false;
   const savedLevels = defaults?.fitLevelsCorrelation ?? false;
   const maDaysInput = maInputChoice ?? (defaults ? savedMaInput(savedMa) : "");
-  // Same clamp and ~300ms debounce as the Stock Correlation table.
+  // Same clamp and ~300ms debounce as the Stock Correlation table -- but
+  // only while someone is typing. On the saved value (first load, Back to
+  // saved, after a save) it applies at once, so the charts never draw a
+  // moment at MA 1 before the saved defaults arrive.
   const maDaysImmediate = Math.max(1, Math.min(250, parseInt(maDaysInput, 10) || 1));
-  const [maDays, setMaDays] = useState(maDaysImmediate);
+  const [typedMaDays, setTypedMaDays] = useState(maDaysImmediate);
   useEffect(() => {
-    const timer = setTimeout(() => setMaDays(maDaysImmediate), 300);
+    const timer = setTimeout(() => setTypedMaDays(maDaysImmediate), 300);
     return () => clearTimeout(timer);
   }, [maDaysImmediate]);
+  const maDays = maInputChoice === null ? maDaysImmediate : typedMaDays;
   const range = rangeChoice ?? savedRange;
   const aumOnlyAveraging = aumOnlyChoice ?? savedAumOnly;
   const levelsCorrelation = levelsChoice ?? savedLevels;
