@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   LEDGER_WEEKDAYS,
   LEDGER_WINDOWS,
@@ -17,7 +18,8 @@ import {
 // renderer so its stylesheet (amc-analytics.css) applies unchanged. The
 // row selections are owned by the parent and shared by every AMC tab, as
 // the design specifies ("a choice made on one segment applies to every
-// segment").
+// segment"). A switch in the band hides the two weekday tables (on by
+// default, every visit) so the period table has the row to itself.
 
 export interface LedgerSelections {
   fy: string[];
@@ -94,6 +96,7 @@ export function AumSummaryLedger({
   onSelect: (key: LedgerSelectKey, label: string) => void;
 }) {
   const lists: Record<LedgerPeriodKind, string[]> = { fy: model.fys, q: model.quarters, m: model.months };
+  const [hideWeekdays, setHideWeekdays] = useState(true);
 
   const selRows = (kind: LedgerPeriodKind) => {
     const labels = selections[kind];
@@ -150,8 +153,12 @@ export function AumSummaryLedger({
     <section className="pl-panel" aria-label={title}>
       <div className="pl-band">
         {title} <span className="pl-band-unit">{unitLine}</span>
+        <label className="pl-band-toggle">
+          <input type="checkbox" checked={hideWeekdays} onChange={(e) => setHideWeekdays(e.target.checked)} />
+          Hide weekday tables
+        </label>
       </div>
-      <div className="pl-row">
+      <div className={hideWeekdays ? "pl-row pl-row--single" : "pl-row"}>
         <table className="pl-period">
           <colgroup>
             <col className="pl-col-period" />
@@ -193,87 +200,91 @@ export function AumSummaryLedger({
           </tbody>
         </table>
 
-        <div className="pl-scroll pl-scroll--weekday">
-          <table className="pl-wire pl-wire--weekday">
-            <thead>
-              <tr>
-                <th scope="col">Week&gt;&gt;</th>
-                <th scope="col">{val}</th>
-                <th scope="col">Do {LEDGER_WINDOWS.dayShort}D</th>
-                <th scope="col">Do {LEDGER_WINDOWS.dayLong}D</th>
-              </tr>
-            </thead>
-            <tbody>
-              {LEDGER_WEEKDAYS.flatMap((d, i) => {
-                const x = model.day(d);
-                const rows = [
-                  <tr key={`${d}-main`} className="pl-w-main">
-                    <th scope="row">{d}</th>
-                    <td className="pl-w-val">{formatLedgerInr(x.latest.value)}</td>
-                    <DeltaCell change={x.doShort} />
-                    <DeltaCell change={x.doLong} />
-                  </tr>,
-                  <tr key={`${d}-s`} className="pl-w-detail">
-                    <td>{`Average of last ${LEDGER_WINDOWS.dayShort} ${d}s`}</td>
-                    <td className="pl-w-val">{formatLedgerInr(x.short.value)}</td>
-                    <td />
-                    <td />
-                  </tr>,
-                  <tr key={`${d}-l`} className="pl-w-detail">
-                    <td>{`Average of last ${LEDGER_WINDOWS.dayLong} ${d}s`}</td>
-                    <td className="pl-w-val">{formatLedgerInr(x.long.value)}</td>
-                    <td />
-                    <td />
-                  </tr>,
-                ];
-                return i === 0 ? rows : [spacer(`${d}-sp`), ...rows];
-              })}
-            </tbody>
-          </table>
-        </div>
+        {!hideWeekdays && (
+          <>
+            <div className="pl-scroll pl-scroll--weekday">
+              <table className="pl-wire pl-wire--weekday">
+                <thead>
+                  <tr>
+                    <th scope="col">Week&gt;&gt;</th>
+                    <th scope="col">{val}</th>
+                    <th scope="col">Do {LEDGER_WINDOWS.dayShort}D</th>
+                    <th scope="col">Do {LEDGER_WINDOWS.dayLong}D</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {LEDGER_WEEKDAYS.flatMap((d, i) => {
+                    const x = model.day(d);
+                    const rows = [
+                      <tr key={`${d}-main`} className="pl-w-main">
+                        <th scope="row">{d}</th>
+                        <td className="pl-w-val">{formatLedgerInr(x.latest.value)}</td>
+                        <DeltaCell change={x.doShort} />
+                        <DeltaCell change={x.doLong} />
+                      </tr>,
+                      <tr key={`${d}-s`} className="pl-w-detail">
+                        <td>{`Average of last ${LEDGER_WINDOWS.dayShort} ${d}s`}</td>
+                        <td className="pl-w-val">{formatLedgerInr(x.short.value)}</td>
+                        <td />
+                        <td />
+                      </tr>,
+                      <tr key={`${d}-l`} className="pl-w-detail">
+                        <td>{`Average of last ${LEDGER_WINDOWS.dayLong} ${d}s`}</td>
+                        <td className="pl-w-val">{formatLedgerInr(x.long.value)}</td>
+                        <td />
+                        <td />
+                      </tr>,
+                    ];
+                    return i === 0 ? rows : [spacer(`${d}-sp`), ...rows];
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-        <div className="pl-scroll pl-scroll--quarter">
-          <table className="pl-wire pl-wire--quarter">
-            <thead>
-              <tr>
-                <th scope="col">Quarter</th>
-                <th scope="col">{val}</th>
-                <th scope="col">QoQ</th>
-                <th scope="col">YoY</th>
-              </tr>
-            </thead>
-            <tbody>
-              {LEDGER_WEEKDAYS.flatMap((d, i) => {
-                const x = model.dayQuarter(d);
-                const latest = model.dayLast(d, 1);
-                const rows = [
-                  <tr key={`${d}-main`} className="pl-w-main">
-                    <th scope="row">{d}</th>
-                    <td className="pl-w-val">{formatLedgerInr(latest.value)}</td>
-                    <DeltaCell change={x.qoq} />
-                    <DeltaCell change={x.yoy} />
-                  </tr>,
-                  ...selections.wq[d].map((q, r) => (
-                    <tr key={`${d}-q${r}`} className="pl-w-detail">
-                      <td className="pl-c-sel">
-                        <PeriodSelect
-                          labels={model.quarters}
-                          value={q}
-                          ariaLabel={`${d}, quarter row ${r + 1}`}
-                          onChange={(l) => onSelect({ kind: "wq", day: d, row: r }, l)}
-                        />
-                      </td>
-                      <td className="pl-w-val">{formatLedgerInr(model.dayInQuarter(d, q).value)}</td>
-                      <td />
-                      <td />
-                    </tr>
-                  )),
-                ];
-                return i === 0 ? rows : [spacer(`${d}-sp`), ...rows];
-              })}
-            </tbody>
-          </table>
-        </div>
+            <div className="pl-scroll pl-scroll--quarter">
+              <table className="pl-wire pl-wire--quarter">
+                <thead>
+                  <tr>
+                    <th scope="col">Quarter</th>
+                    <th scope="col">{val}</th>
+                    <th scope="col">QoQ</th>
+                    <th scope="col">YoY</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {LEDGER_WEEKDAYS.flatMap((d, i) => {
+                    const x = model.dayQuarter(d);
+                    const latest = model.dayLast(d, 1);
+                    const rows = [
+                      <tr key={`${d}-main`} className="pl-w-main">
+                        <th scope="row">{d}</th>
+                        <td className="pl-w-val">{formatLedgerInr(latest.value)}</td>
+                        <DeltaCell change={x.qoq} />
+                        <DeltaCell change={x.yoy} />
+                      </tr>,
+                      ...selections.wq[d].map((q, r) => (
+                        <tr key={`${d}-q${r}`} className="pl-w-detail">
+                          <td className="pl-c-sel">
+                            <PeriodSelect
+                              labels={model.quarters}
+                              value={q}
+                              ariaLabel={`${d}, quarter row ${r + 1}`}
+                              onChange={(l) => onSelect({ kind: "wq", day: d, row: r }, l)}
+                            />
+                          </td>
+                          <td className="pl-w-val">{formatLedgerInr(model.dayInQuarter(d, q).value)}</td>
+                          <td />
+                          <td />
+                        </tr>
+                      )),
+                    ];
+                    return i === 0 ? rows : [spacer(`${d}-sp`), ...rows];
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
     </section>
   );
