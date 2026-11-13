@@ -296,10 +296,6 @@ function rangeLabelOf(range: RangeOption): string {
   return RANGE_OPTIONS.find((o) => o.value === range)?.label ?? range;
 }
 
-function aumSideLabel(maDays: number): string {
-  return maDays > 1 ? `AUM MA${maDays}` : "AUM";
-}
-
 function savedMaInput(maDays: number): string {
   return maDays > 0 ? String(maDays) : "";
 }
@@ -538,7 +534,6 @@ export function RatioSection({
   const lastPrice = entry.stockPriceSeries.at(-1)?.priceInr ?? null;
   const price = cmpInr ?? lastPrice;
   const priceIsLive = cmpInr !== null && cmpIsLive;
-  const priceSide = aumOnlyAveraging || maDays <= 1 ? "raw price" : `price MA${maDays}`;
   return (
     <>
       <FitToolbar
@@ -549,20 +544,7 @@ export function RatioSection({
       <div className="aa-reused">
         <AsideCard
           aside={
-            <FitStatGrid
-              r={fit?.r ?? null}
-              r2={fit?.r2 ?? null}
-              n={fit?.n ?? null}
-              rangeLabel={rangeLabelOf(range)}
-              from={ladder?.from ?? null}
-              to={ladder?.to ?? null}
-              extra={{
-                label: "Z-score",
-                value: ladder?.zScore == null ? "—" : `${ladder.zScore >= 0 ? "+" : "−"}${Math.abs(ladder.zScore).toFixed(2)}`,
-                sub: ladder ? `today's ratio ${ladder.currentRatio.toFixed(5)} vs its mean` : "",
-              }}
-              closing={{ label: "Basis", value: levelsCorrelation ? "Levels" : "Daily % chg", sub: `${priceSide} vs ${aumSideLabel(maDays)}` }}
-            />
+            <FitStatGrid r={fit?.r ?? null} r2={fit?.r2 ?? null} />
           }
         >
           <RatioFairValue
@@ -685,7 +667,6 @@ export function RegressionSection({
   }, [entry, defaults, maDays, range, levelsCorrelation]);
   if (!entry || !defaults) return null;
   const lag = defaults.extraLagDays;
-  const basis = `${maDays > 1 ? `MA${maDays}` : "Live"} · ${lag === 0 ? "same-day" : `lag ${lag}`}`;
   return (
     <>
       <FitToolbar
@@ -704,16 +685,7 @@ export function RegressionSection({
             showRatioPanel={false}
             aside={
               result ? (
-                <FitStatGrid
-                  r={result.pearsonR}
-                  r2={result.r2}
-                  n={result.n}
-                  rangeLabel={rangeLabelOf(range)}
-                  from={result.fittedFrom}
-                  to={result.fittedTo}
-                  extra={{ label: "β (slope)", value: `₹${result.slope.toFixed(4)}`, sub: `₹ per share per ₹ Cr of ${aumSideLabel(maDays)}` }}
-                  closing={{ label: "AUM basis", value: basis, sub: "raw price, levels" }}
-                />
+                <FitStatGrid r={result.pearsonR} r2={result.r2} />
               ) : undefined
             }
           />
@@ -725,16 +697,7 @@ export function RegressionSection({
             extraLagDays={lag}
             aside={
               pctResult ? (
-                <FitStatGrid
-                  r={pctResult.pearsonR}
-                  r2={pctResult.r2}
-                  n={pctResult.n}
-                  rangeLabel={rangeLabelOf(range)}
-                  from={pctResult.fittedFrom}
-                  to={pctResult.fittedTo}
-                  extra={{ label: "β (slope)", value: pctResult.beta.toFixed(3), sub: `price % per 1% move in ${aumSideLabel(maDays)}` }}
-                  closing={{ label: "AUM basis", value: basis, sub: "raw price, daily % changes" }}
-                />
+                <FitStatGrid r={pctResult.pearsonR} r2={pctResult.r2} />
               ) : undefined
             }
           />
