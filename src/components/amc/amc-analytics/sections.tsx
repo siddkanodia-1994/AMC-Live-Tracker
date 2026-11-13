@@ -504,8 +504,8 @@ function FitToolbar({ controls, showAumOnly, levelsTitle }: { controls: FitContr
 }
 
 // ── Ratio: the fit card (mean-ratio value + equation | fit grid), the
-// ratio ladder and the Stock Correlation "AUM vs. Share Price" chart,
-// opening on its Ratio view ──────────────────────────────────────────
+// Stock Correlation "AUM vs. Share Price" chart opening on its Ratio view,
+// then the ratio ladder ──────────────────────────────────────────────
 export function RatioSection({
   entry,
   defaults,
@@ -558,8 +558,6 @@ export function RatioSection({
           />
         </AsideCard>
       </div>
-      <RatioLadderPanel ladder={ladder} maDays={maDays} aumOnlyAveraging={aumOnlyAveraging} cmpInr={price} cmpIsLive={priceIsLive} />
-
       <div className="aa-reused" style={{ marginTop: 16 }}>
         <div className="space-y-2 rounded-lg border bg-card p-4">
           <p className="text-sm font-medium text-foreground">AUM vs. Share Price</p>
@@ -583,6 +581,7 @@ export function RatioSection({
           />
         </div>
       </div>
+      <RatioLadderPanel ladder={ladder} maDays={maDays} aumOnlyAveraging={aumOnlyAveraging} cmpInr={price} cmpIsLive={priceIsLive} />
     </>
   );
 }
