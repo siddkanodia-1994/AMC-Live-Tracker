@@ -260,6 +260,13 @@
       "when": 1794465286765,
       "tag": "0036_amc_sip_quarterly",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794901208963,
+      "tag": "0037_industry_historical_aum",
+      "breakpoints": true
     }
   ]
 }

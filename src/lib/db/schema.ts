@@ -966,6 +966,42 @@ export const amcHistoricalAumEstimate = pgTable(
   (t) => [uniqueIndex("amc_historical_aum_estimate_amc_date_idx").on(t.amcId, t.snapshotDate)]
 );
 
+// The whole industry's month-end exit equity AUM (₹ Cr) before the live
+// series starts (1 Jan 2026), from the user's "AUM Breakup" workbook's
+// Equity column -- the anchors industryHistoricalAumEstimate is bridged
+// between. Same shape as amcHistoricalAumAnchor, without an AMC.
+export const industryHistoricalAumAnchor = pgTable(
+  "industry_historical_aum_anchor",
+  {
+    id: serial("id").primaryKey(),
+    // "YYYY-MM", readability only.
+    reportMonth: text("report_month").notNull(),
+    // The month's last NIFTY_500 trading day -- what the compounding keys off.
+    monthEndDate: date("month_end_date").notNull(),
+    exitAumCr: numeric("exit_aum_cr", { precision: 18, scale: 4 }).notNull(),
+  },
+  (t) => [uniqueIndex("industry_historical_aum_anchor_month_idx").on(t.reportMonth)]
+);
+
+// Daily industry equity AUM modelled between those anchors with the same
+// method as amcHistoricalAumEstimate (NIFTY_500 compounding plus a
+// multiplicative ramp onto each month-end). Kept apart from
+// liveAumDailySnapshot for the same reason: only getIndustryAumHistory and
+// the range export's Industry Total read it, never the live-data readers
+// or getCanonicalSnapshotDateBounds().
+export const industryHistoricalAumEstimate = pgTable(
+  "industry_historical_aum_estimate",
+  {
+    id: serial("id").primaryKey(),
+    snapshotDate: date("snapshot_date").notNull(),
+    estimatedAumCr: numeric("estimated_aum_cr", { precision: 18, scale: 4 }).notNull(),
+    rawCompoundedAumCr: numeric("raw_compounded_aum_cr", { precision: 18, scale: 4 }).notNull(),
+    anchorMonthEndDate: date("anchor_month_end_date").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("industry_historical_aum_estimate_date_idx").on(t.snapshotDate)]
+);
+
 // Shared run ledger for the daily cron, the GitHub Actions ops probe and the
 // Claude Code agent loops (data-ops / ingest / analyst / dev). One row per
 // node outcome -- e.g. one row per cron step with its timing and warnings

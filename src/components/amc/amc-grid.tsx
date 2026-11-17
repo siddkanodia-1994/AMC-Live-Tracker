@@ -165,6 +165,10 @@ export function AmcGrid({
   const [rangeFrom, setRangeFrom] = useState<string | null>(null);
   const [rangeTo, setRangeTo] = useState<string | null>(null);
   const [isDownloadingRange, setIsDownloadingRange] = useState(false);
+  // The export's Industry Total row reaches back through the modelled
+  // history (May 2022), which is history's first point; the AMC rows are
+  // live-only and simply empty before it.
+  const rangeMinDate = history[0]?.date ?? data?.minSnapshotDate ?? undefined;
   // Collapsed by default to keep the toolbar clean -- stays expanded once
   // opened (doesn't auto-collapse after a download), same as every other
   // disclosure in this toolbar (e.g. the Averaging Windows "Custom" toggle).
@@ -930,6 +934,11 @@ export function AmcGrid({
           </CardHeader>
           <CardContent>
             <AumTrendChart data={history} mode={chartMode} />
+            {history.some((p) => p.reportPeriod === "") && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Before 1 Jan 2026, industry AUM is modelled from month-end exit AUM using NIFTY 500 daily moves.
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1143,7 +1152,7 @@ export function AmcGrid({
                       <input
                         type="date"
                         value={rangeFrom ?? ""}
-                        min={data.minSnapshotDate ?? undefined}
+                        min={rangeMinDate}
                         max={rangeTo ?? data.maxSnapshotDate ?? undefined}
                         onChange={(e) => setRangeFrom(e.target.value || null)}
                         className={dateInputClass}
@@ -1153,7 +1162,7 @@ export function AmcGrid({
                       <input
                         type="date"
                         value={rangeTo ?? ""}
-                        min={rangeFrom ?? data.minSnapshotDate ?? undefined}
+                        min={rangeFrom ?? rangeMinDate}
                         max={data.maxSnapshotDate ?? undefined}
                         onChange={(e) => setRangeTo(e.target.value || null)}
                         className={dateInputClass}

@@ -1,6 +1,14 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcHistoricalAumEstimate, amcManualNetFlow, amcPeriods, amcs, isinDailyPrice, liveAumDailySnapshot } from "../db/schema";
+import {
+  amcHistoricalAumEstimate,
+  amcManualNetFlow,
+  amcPeriods,
+  amcs,
+  industryHistoricalAumEstimate,
+  isinDailyPrice,
+  liveAumDailySnapshot,
+} from "../db/schema";
 import { addDaysToDateString, getIstDateString } from "../utils/date";
 import { firstDayOfNextMonth, lastDayOfReportMonth, nextReportPeriod } from "./report-period";
 import { getEtfDailyAumByAmcIds, getGoldSilverAumOnOrBefore } from "../etf/average-aum";
@@ -836,7 +844,31 @@ export interface AumHistoryRangeRow {
   date: string;
   amcName: string; // "Industry Total" for the aggregate row
   liveAumCr: number;
-  reportedAumCr: number;
+  // null on the industry's modelled (pre-live) dates.
+  reportedAumCr: number | null;
+}
+
+/**
+ * The industry's modelled daily equity AUM before the live series
+ * (industry_historical_aum_estimate, May 2022 → Dec 2025), optionally
+ * bounded. Fails soft to [] -- e.g. before the table's migration has run --
+ * so it can never blank the live series it's prepended to.
+ */
+async function getIndustryEstimatePoints(fromDate?: string, toDate?: string): Promise<{ date: string; liveAumCr: number }[]> {
+  try {
+    const conditions = [
+      fromDate ? gte(industryHistoricalAumEstimate.snapshotDate, fromDate) : undefined,
+      toDate ? lte(industryHistoricalAumEstimate.snapshotDate, toDate) : undefined,
+    ].filter((c) => c !== undefined);
+    return await db
+      .select({ date: industryHistoricalAumEstimate.snapshotDate, liveAumCr: sql<number>`${industryHistoricalAumEstimate.estimatedAumCr}::float` })
+      .from(industryHistoricalAumEstimate)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(asc(industryHistoricalAumEstimate.snapshotDate));
+  } catch (err) {
+    console.error("industry_historical_aum_estimate unavailable", err);
+    return [];
+  }
 }
 
 /**
@@ -890,6 +922,12 @@ export async function getAumHistoryRangeAllAmcs(fromDate: string, toDate: string
     liveAumCr: r.liveAumCr,
     reportedAumCr: r.reportedAumCr,
   }));
+  // Before the live series, the Industry Total row is the modelled history
+  // (only dates the live sum doesn't cover, so the two never overlap).
+  const firstLiveDate = totalRows[0]?.date ?? (await getFirstCanonicalDate());
+  for (const e of await getIndustryEstimatePoints(fromDate, toDate)) {
+    if (!firstLiveDate || e.date < firstLiveDate) rows.push({ date: e.date, amcName: "Industry Total", liveAumCr: e.liveAumCr, reportedAumCr: null });
+  }
   for (const r of perAmcRows) rows.push(r);
 
   rows.sort((a, b) => {
@@ -902,6 +940,28 @@ export async function getAumHistoryRangeAllAmcs(fromDate: string, toDate: string
 }
 
 export async function getIndustryAumHistory(): Promise<AumHistoryPoint[]> {
+  const [live, estimates] = await Promise.all([getLiveIndustryAumHistory(), getIndustryEstimatePoints()]);
+  // The modelled May 2022 → Dec 2025 history goes in front of the live sum,
+  // cut at its first day so the two can never overlap. reportedAumCr null
+  // there, as for the 8 AMCs' estimates (the Reported line isn't drawn).
+  const firstLive = live[0]?.date;
+  const before = estimates
+    .filter((e) => !firstLive || e.date < firstLive)
+    .map((e) => ({ date: e.date, liveAumCr: e.liveAumCr, reportedAumCr: null, reportPeriod: "" }));
+  return [...before, ...live];
+}
+
+async function getFirstCanonicalDate(): Promise<string | null> {
+  const [row] = await db
+    .select({ date: liveAumDailySnapshot.snapshotDate })
+    .from(liveAumDailySnapshot)
+    .where(eq(liveAumDailySnapshot.isCanonical, true))
+    .orderBy(asc(liveAumDailySnapshot.snapshotDate))
+    .limit(1);
+  return row?.date ?? null;
+}
+
+async function getLiveIndustryAumHistory(): Promise<AumHistoryPoint[]> {
   const rows = await db
     .select({
       date: liveAumDailySnapshot.snapshotDate,
