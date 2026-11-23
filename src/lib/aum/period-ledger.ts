@@ -11,8 +11,8 @@
 //
 // Rolling windows count OBSERVED days, not calendar days: "Last 5 Days" is
 // the latest five rows whatever dates they fall on. Callers pass observed
-// days only -- holidays absent (never zero), special sessions (Muhurat, DR
-// test days) removed first (see period-ledger-rows.ts).
+// days only -- holidays absent (never zero), special sessions (pre-2026
+// Muhurat, DR test days) removed first (see period-ledger-rows.ts).
 
 export const LEDGER_MONTHS = [
   "January", "February", "March", "April", "May", "June",

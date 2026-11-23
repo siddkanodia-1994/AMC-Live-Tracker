@@ -6,8 +6,9 @@ import type { LedgerPoint } from "./period-ledger";
 // a value for them (the modelled pre-2026 history follows NIFTY 500 rows),
 // so they are dropped here. Full trading days that happen to fall on a
 // weekend -- 20 Jan 2024 and the Budget days 1 Feb 2025 / 1 Feb 2026 --
-// are normal days and stay. Muhurat sessions from 2026 on are never
-// written as trading days in the first place (see market-hours.ts).
+// are normal days and stay. Muhurat from 2026 on counts, by choice: the
+// Sun 8 Nov 2026 session came in with the Oct-26 import's catch-up (DHAN
+// history has it, though market-hours.ts keeps it out of live pricing).
 export const LEDGER_SPECIAL_SESSIONS: ReadonlySet<string> = new Set([
   "2023-11-12", // Muhurat (Sunday)
   "2024-03-02", // DR test session (Saturday)

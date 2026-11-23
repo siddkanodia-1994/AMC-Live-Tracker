@@ -371,7 +371,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
                     <p className="aa-note">
                       Every figure is the average daily {aumKindInline} over the window (sum of daily values ÷ trading
                       days){lastDate ? `, data to ${lastDate}` : ""}. Before 1 Jan 2026, AUM is modelled from month-end anchors.
-                      Muhurat and DR test sessions are left out.
+                      Muhurat before 2026 and DR test sessions are left out.
                     </p>
                   </>
                 ) : (
