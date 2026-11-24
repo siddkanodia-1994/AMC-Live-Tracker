@@ -906,6 +906,27 @@ export const amcSipQuarterly = pgTable(
   ]
 );
 
+// AMC Analytics' Valuation Model estimates for fiscal years the Fortnightly
+// snapshot has no column for (FY29 onward): PAT and revenue, ₹ Cr, one
+// current figure per AMC and year -- not a dated snapshot. FY26A–FY28E
+// stay in amc_fortnightly_update's own columns, so the Fortnightly tab and
+// this table never hold the same figure twice (see valuation/target-year.ts).
+export const amcValuationEstimate = pgTable(
+  "amc_valuation_estimate",
+  {
+    id: serial("id").primaryKey(),
+    amcId: integer("amc_id")
+      .notNull()
+      .references(() => amcs.id, { onDelete: "cascade" }),
+    // Indian fiscal year it ends in (2029 = FY29).
+    fiscalYear: integer("fiscal_year").notNull(),
+    patCr: numeric("pat_cr", { precision: 18, scale: 4 }),
+    revenueCr: numeric("revenue_cr", { precision: 18, scale: 4 }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("amc_valuation_estimate_amc_fy_idx").on(t.amcId, t.fiscalYear)]
+);
+
 // User-provided ground-truth monthly exit equity AUM for the 8
 // amc_listed_stock AMCs, covering 2022-12 through 2025-12 -- the period
 // before any real monthly holdings import exists (earliest real

@@ -50,3 +50,28 @@ export async function saveAmcInput(amcId: number, field: AmcAnalyticsField, valu
   }
   await revalidateAmcInputs();
 }
+
+export const valuationTargetFyKey = "/api/amc-analytics/target-year";
+
+/** The Valuation Model's shared target year (2029 = FY29E). */
+export function useValuationTargetFy() {
+  return useSWR<{ fiscalYear: number }>(valuationTargetFyKey, fetcher, { revalidateOnFocus: false });
+}
+
+async function postJson(url: string, body: unknown): Promise<void> {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? "Failed to save");
+  }
+}
+
+export async function saveValuationTargetFy(fiscalYear: number): Promise<void> {
+  await postJson(valuationTargetFyKey, { fiscalYear });
+}
+
+/** Save one year's PAT or revenue (FY26–FY28 onto the Fortnightly row, later years their own table), then refresh. */
+export async function saveValuationEstimate(amcId: number, fiscalYear: number, kind: "pat" | "revenue", value: number | null): Promise<void> {
+  await postJson("/api/amc-analytics/estimate", { amcId, fiscalYear, kind, value });
+  await revalidateAmcInputs();
+}

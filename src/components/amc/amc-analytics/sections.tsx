@@ -28,8 +28,11 @@ import { trimToLastContinuousRun } from "@/lib/aum/series-math";
 import { formatPct, formatPriceInr, formatShortDateWithYear } from "@/lib/utils/format";
 import { formatLedgerInr, formatLedgerPct } from "@/lib/aum/period-ledger";
 import { computeValuationBlock } from "@/lib/valuation/valuation-block";
+import { DEFAULT_TARGET_FY, fyLabel, manualForTargetYear, targetYearOptions, type EstimateKind } from "@/lib/valuation/target-year";
+import { getFiscalYearAndQuarter } from "@/lib/aum/report-period";
+import { getIstDateString } from "@/lib/utils/date";
 import type { AmcAnalyticsField, AmcAnalyticsInputs, AmcAnalyticsManual } from "@/lib/aum/amc-analytics-inputs";
-import { saveAmcInput } from "@/hooks/use-amc-analytics-inputs";
+import { saveAmcInput, saveValuationEstimate, saveValuationTargetFy, useValuationTargetFy } from "@/hooks/use-amc-analytics-inputs";
 import { useAmcValuation } from "@/hooks/use-amc-valuation";
 import { withLiveValuationPoint } from "@/lib/valuation/provisional";
 import { computeRatioLadder, RATIO_LADDER_SDS, type RatioLadder } from "@/lib/valuation/ratio-ladder";
@@ -892,7 +895,7 @@ function RatioLadderPanel({
 }
 
 // ── Valuation Model: band charts, then the 4-method Target Price table ───
-const METHOD_ROWS: { key: ValuationMethodKey; name: string; how: (t: TargetPriceTable, s: ValuationSettings) => string }[] = [
+const METHOD_ROWS: { key: ValuationMethodKey; name: string; how: (t: TargetPriceTable, s: ValuationSettings, fy: number) => string }[] = [
   {
     key: "ratio",
     name: "Ratio",
@@ -905,8 +908,12 @@ const METHOD_ROWS: { key: ValuationMethodKey; name: string; how: (t: TargetPrice
     how: (t, s) =>
       `Line fitted on ${rangeText(s.bestFitRange)} with ${dayText(s.bestFitMaDays)} AUM${t.bestFitLine ? ` (R² ${t.bestFitLine.r2.toFixed(2)}, ${t.bestFitLine.sessions} sessions)` : ""}, read at ${dayText(s.bestFitAumDays)} AUM (₹${formatLedgerInr(t.bestFitAumCr)} Cr) −${s.bestFitAumPct}% / as is / +${s.bestFitAumPct}%`,
   },
-  { key: "pe", name: "PE", how: () => "FY28E PAT × target PE ÷ shares, discounted 2 periods (FY27, FY26 rates)" },
-  { key: "mcapSales", name: "Mcap / Sales", how: () => "FY28E revenue × Mcap / Sales ÷ shares, discounted 2 periods" },
+  {
+    key: "pe",
+    name: "PE",
+    how: (_t, _s, fy) => `${fyLabel(fy)}E PAT × target PE ÷ shares, discounted 2 periods (${fyLabel(fy - 1)}, ${fyLabel(fy - 2)} rates)`,
+  },
+  { key: "mcapSales", name: "Mcap / Sales", how: (_t, _s, fy) => `${fyLabel(fy)}E revenue × Mcap / Sales ÷ shares, discounted 2 periods` },
 ];
 
 interface ValuationSettings {
@@ -1037,9 +1044,11 @@ export function SavedNumberInput({
 
 // ── Valuation Model: the Bear / Base / Bull valuation,
 // laid out like the user's reference "Valuation · FY28E" table: one for
-// PE (FY28E PAT) and one for Mcap / Sales (FY28E revenue). Same maths as
-// the Fortnightly card (computeValuationBlock), same inputs (the latest
-// Fortnightly snapshot), so the three places always agree.
+// PE (target-year PAT) and one for Mcap / Sales (target-year revenue). Same
+// maths as the Fortnightly card (computeValuationBlock), same inputs (the
+// latest Fortnightly snapshot, plus amc_valuation_estimate past FY28), so
+// at FY28E the three places always agree. The target year moves every
+// year label; the two discount rates stay per step (target-year.ts).
 type ScenarioKey = (typeof SCENARIO_KEYS)[number];
 const SCENARIO_LABEL: Record<ScenarioKey, string> = { bear: "Bear", base: "Base", bull: "Bull" };
 
@@ -1058,7 +1067,7 @@ function ScenarioRow({ label, values, className, fmt = inr0 }: { label: string; 
   );
 }
 
-/** The band between the FY28 → FY27 → Current steps. One table, not three,
+/** The band between the target → target − 1 → Current steps. One table, not three,
  *  so every step shares the header's columns. */
 function GapRow() {
   return (
@@ -1159,17 +1168,23 @@ function ScenarioValuationTable({
   saveField,
   multiples,
   band,
+  targetFy,
+  saveEstimate,
 }: {
   kind: "pe" | "mcapSales";
+  /** The inputs with the target year's PAT / revenue in the FY28E slots (manualForTargetYear). */
   manual: AmcAnalyticsManual;
   cmpInr: number | null;
   editable: boolean;
   saveField: (field: AmcAnalyticsField, value: number | null) => Promise<void>;
+  targetFy: number;
+  saveEstimate: (kind: EstimateKind, value: number | null) => Promise<void>;
   /** Mcap / Sales only: the multiple each scenario uses (typed, else the chart band). */
   multiples?: Record<ScenarioKey, number | null>;
   band?: { mean: number; sd: number } | null;
 }) {
   const isPe = kind === "pe";
+  const [t0, t1, t2] = [fyLabel(targetFy), fyLabel(targetFy - 1), fyLabel(targetFy - 2)];
   const earnings = isPe ? m.patFy28eCr : m.revenueFy28eCr;
   const v = computeValuationBlock(
     isPe
@@ -1187,7 +1202,7 @@ function ScenarioValuationTable({
   return (
     <div className="vs-block">
       <p className="vs-cap">
-        <b>{isPe ? "PE method" : "Mcap / Sales method"}</b> {isPe ? "FY28E PAT × target PE" : "FY28E revenue × Mcap / Sales multiple"} ÷ shares, discounted to today
+        <b>{isPe ? "PE method" : "Mcap / Sales method"}</b> {isPe ? `${t0}E PAT × target PE` : `${t0}E revenue × Mcap / Sales multiple`} ÷ shares, discounted to today
       </p>
       <table className="vs-t">
         <thead>
@@ -1202,15 +1217,15 @@ function ScenarioValuationTable({
         </thead>
         <tbody>
           <SharedInputRow
-            label={isPe ? "PAT FY28E (₹ Cr)" : "Revenue FY28E (₹ Cr)"}
+            label={isPe ? `PAT ${t0}E (₹ Cr)` : `Revenue ${t0}E (₹ Cr)`}
             value={earnings}
             editable={editable}
-            onSave={(x) => saveField(isPe ? "patFy28eCr" : "revenueFy28eCr", x)}
+            onSave={(x) => saveEstimate(isPe ? "pat" : "revenue", x)}
             decimals={0}
             fmt={inr0}
           />
           <SharedInputRow label="Shares (Cr)" value={m.noOfSharesCr} editable={editable} onSave={(x) => saveField("noOfSharesCr", x)} decimals={2} fmt={sharesFmt} />
-          <ScenarioRow label={isPe ? "EPS FY28E (₹)" : "Revenue / share FY28E (₹)"} values={{ bear: perShare, base: perShare, bull: perShare }} fmt={perShareFmt} />
+          <ScenarioRow label={isPe ? `EPS ${t0}E (₹)` : `Revenue / share ${t0}E (₹)`} values={{ bear: perShare, base: perShare, bull: perShare }} fmt={perShareFmt} />
           <tr className="vs-mult">
             <th scope="row">{isPe ? "PE (x)" : "Mcap / Sales (x)"}</th>
             {multipleFields.map((f, i) => {
@@ -1234,11 +1249,11 @@ function ScenarioValuationTable({
               );
             })}
           </tr>
-          <ScenarioRow label="Price Target FY28" values={v.fy28TargetPriceInr} className="vs-strong" />
+          <ScenarioRow label={`Price Target ${t0}`} values={v.fy28TargetPriceInr} className="vs-strong" />
           <UpsideRow values={v.fy28UpsidePct} />
           <GapRow />
           <SharedInputRow
-            label="Discount % (FY27)"
+            label={`Discount % (${t1})`}
             value={m.discountRateFy27Pct}
             editable={editable}
             onSave={(x) => saveField("discountRateFy27Pct", x)}
@@ -1246,10 +1261,10 @@ function ScenarioValuationTable({
             scale={100}
             fmt={pctFmt}
           />
-          <ScenarioRow label="Target Price FY27" values={v.fy27DiscountedPriceInr} className="vs-strong" />
+          <ScenarioRow label={`Target Price ${t1}`} values={v.fy27DiscountedPriceInr} className="vs-strong" />
           <GapRow />
           <SharedInputRow
-            label="Discount % (FY26)"
+            label={`Discount % (${t2})`}
             value={m.discountRateFy26Pct}
             editable={editable}
             onSave={(x) => saveField("discountRateFy26Pct", x)}
@@ -1257,7 +1272,7 @@ function ScenarioValuationTable({
             scale={100}
             fmt={pctFmt}
           />
-          <ScenarioRow label="Target Price Current" values={v.fy26DiscountedPriceInr} className="vs-strong" />
+          <ScenarioRow label={`Target Price Current (${t2})`} values={v.fy26DiscountedPriceInr} className="vs-strong" />
           <UpsideRow values={v.fy26UpsidePct} />
         </tbody>
       </table>
@@ -1304,9 +1319,17 @@ export function ValuationModelSection({
   const ratioCustomCr = settings.ratioCustomAum[slug] ?? null;
   const bestFitCustomCr = settings.bestFitCustomAum[slug] ?? null;
   const sheetForSlug = inputs && inputs.slug === slug ? inputs : undefined;
+  const { data: targetFyData, mutate: mutateTargetFy } = useValuationTargetFy();
+  const targetFy = targetFyData?.fiscalYear ?? null;
+  // The stored inputs with the target year's PAT and revenue where the
+  // valuation maths reads them; at FY28E, the stored inputs as they are.
+  const yearManual = useMemo(
+    () => (sheetForSlug && targetFy !== null ? manualForTargetYear(sheetForSlug.manual, sheetForSlug.estimates, targetFy) : undefined),
+    [sheetForSlug, targetFy]
+  );
 
   const table = useMemo(() => {
-    if (!entry || !defaults || !sheetForSlug) return null;
+    if (!entry || !defaults || !yearManual) return null;
     return computeTargetPrices({
       aumHistory: entry.aumHistory,
       stockPriceSeries: entry.stockPriceSeries,
@@ -1320,7 +1343,7 @@ export function ValuationModelSection({
       extraLagDays: defaults.extraLagDays,
       bestFitAumDays: settings.bestFitAumDays,
       bestFitAumPct: settings.bestFitAumPct,
-      manual: sheetForSlug.manual,
+      manual: yearManual,
       mcapSalesSeries: withLiveValuationPoint(valuation?.points ?? [], entry.stockPriceSeries.at(-1), entry.stockPriceSeries).flatMap((p) => (p.mcapToSales === null ? [] : [{ date: p.date, value: p.mcapToSales }])),
       cmpInr,
       weights: settings.weights,
@@ -1328,7 +1351,7 @@ export function ValuationModelSection({
   }, [
     entry,
     defaults,
-    sheetForSlug,
+    yearManual,
     valuation,
     settings.ratioRange,
     settings.ratioHistoryDays,
@@ -1370,6 +1393,25 @@ export function ValuationModelSection({
     await saveAmcInput(sheetForSlug.amcId, field, value);
   }
 
+  async function saveEstimate(kind: EstimateKind, value: number | null) {
+    if (!sheetForSlug || targetFy === null) return;
+    await saveValuationEstimate(sheetForSlug.amcId, targetFy, kind, value);
+  }
+
+  // Shared by everyone, saved on click like the blue cells.
+  async function pickTargetFy(fy: number) {
+    if (fy === targetFy) return;
+    const previous = targetFyData;
+    await mutateTargetFy({ fiscalYear: fy }, { revalidate: false });
+    try {
+      await saveValuationTargetFy(fy);
+      toast.success(`Valuation now built on ${fyLabel(fy)}E for everyone`);
+    } catch (err) {
+      await mutateTargetFy(previous, { revalidate: false });
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    }
+  }
+
   async function saveSettings() {
     if (!defaults) return;
     setSaving(true);
@@ -1405,36 +1447,61 @@ export function ValuationModelSection({
     }
   }
 
-  const m = sheetForSlug?.manual;
+  const m = yearManual;
   const editable = !!sheetForSlug;
   const band = table?.mcapSalesBand ?? null;
+  const currentFy = getFiscalYearAndQuarter(getIstDateString()).fy;
+  // Flagged only for an AMC that is otherwise set up (shares entered), so
+  // the ones with no valuation inputs at all look as they always have.
+  const gaps = m && m.noOfSharesCr !== null ? [m.patFy28eCr === null && ["PAT", "PE"], m.revenueFy28eCr === null && ["revenue", "Mcap / Sales"]].filter((g) => !!g) : [];
+  const missing = gaps.length
+    ? `${gaps.map((g) => g[0]).join(" and ")} not entered yet for this AMC, so ${gaps.map((g) => g[1]).join(" and ")} ${gaps.length > 1 ? "show" : "shows"} — and ${gaps.length > 1 ? "drop" : "drops"} out of the Target Price average.`
+    : "";
 
   return (
     <>
-      <section className="pl-panel vm" aria-label="Valuation FY28E" style={{ marginBottom: 16 }}>
+      <section className="pl-panel vm" aria-label={targetFy === null ? "Valuation" : `Valuation ${fyLabel(targetFy)}E`} style={{ marginBottom: 16 }}>
         <div className="pl-band">
-          Valuation · FY28E{" "}
+          Valuation ·
+          {targetFy !== null && (
+            <span className="vs-ty" role="group" aria-label="Target year">
+              {targetYearOptions(currentFy, targetFy).map((fy) => (
+                <button key={fy} type="button" aria-pressed={fy === targetFy} onClick={() => void pickTargetFy(fy)}>
+                  {fyLabel(fy)}E
+                </button>
+              ))}
+            </span>
+          )}{" "}
           <span className="pl-band-unit">
             Bear / Base / Bull · income ₹ Cr · targets ₹ per share · shared with the Fortnightly AMC Update tab
           </span>
         </div>
-        {!m ? (
+        {!m || targetFy === null ? (
           <p className="aa-note" style={{ padding: 12 }}>
             Loading the valuation inputs…
           </p>
         ) : (
-          <AlignedScenarioGrid>
-            <ScenarioValuationTable kind="pe" manual={m} cmpInr={cmpInr} editable={editable} saveField={saveField} />
-            <ScenarioValuationTable
-              kind="mcapSales"
-              manual={m}
-              cmpInr={cmpInr}
-              editable={editable}
-              saveField={saveField}
-              multiples={table?.mcapSalesMultiples}
-              band={band}
-            />
-          </AlignedScenarioGrid>
+          <>
+            {missing && (
+              <p className="aa-warn" style={{ paddingTop: 12, paddingBottom: 0 }}>
+                {fyLabel(targetFy)}E {missing}
+              </p>
+            )}
+            <AlignedScenarioGrid>
+              <ScenarioValuationTable kind="pe" manual={m} cmpInr={cmpInr} editable={editable} saveField={saveField} targetFy={targetFy} saveEstimate={saveEstimate} />
+              <ScenarioValuationTable
+                kind="mcapSales"
+                manual={m}
+                cmpInr={cmpInr}
+                editable={editable}
+                saveField={saveField}
+                targetFy={targetFy}
+                saveEstimate={saveEstimate}
+                multiples={table?.mcapSalesMultiples}
+                band={band}
+              />
+            </AlignedScenarioGrid>
+          </>
         )}
         <p className="aa-note" style={{ padding: "0 12px 12px" }}>
           Blue cells save straight away, to the same stored figures the Fortnightly AMC Update tab shows. Grey Mcap / Sales multiples are the
@@ -1478,7 +1545,7 @@ export function ValuationModelSection({
                   <tr key={row.key}>
                     <th scope="row">
                       <b>{row.name}</b>
-                      <small>{row.how(table, settings)}</small>
+                      <small>{row.how(table, settings, targetFy ?? DEFAULT_TARGET_FY)}</small>
                     </th>
                     <td className="vm-wcol">
                       <WeightSelect
@@ -1638,7 +1705,7 @@ export function ValuationModelSection({
           </p>
         )}
         <p className="aa-note" style={{ padding: "0 12px 12px" }}>
-          PE, Mcap / Sales, PAT, revenue, shares and discount rates are edited in the Valuation · FY28E tables at the top.
+          PE, Mcap / Sales, PAT, revenue, shares and discount rates are edited in the Valuation tables at the top.
         </p>
       </section>
     </>

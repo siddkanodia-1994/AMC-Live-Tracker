@@ -542,7 +542,7 @@
   .aa .vm-t:first-child { border-right: 0; border-bottom: 2px solid var(--pl-color-border); }
 }
 
-/* Valuation · FY28E Bear / Base / Bull tables (user's reference layout) */
+/* Valuation Bear / Base / Bull tables (user's reference layout) */
 .aa .vs-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; padding: 14px 12px; }
 .aa .vs-cap { margin: 0 0 6px; font-size: 12px; color: var(--pl-color-text-muted); }
 .aa .vs-cap b { color: var(--pl-ledger-cell-strong); margin-right: 4px; }
@@ -573,6 +573,12 @@
 .aa .vs-t .vs-up .pl-chg--neu { border-color: #d0d0d0; }
 .aa .vs-t .vs-gap td { height: 10px; padding: 0; background: var(--pl-color-bg); border-top: 2px solid #1a1a1a; border-bottom: 2px solid #1a1a1a; }
 @media (max-width: 900px) { .aa .vs-grid { grid-template-columns: minmax(0, 1fr); } }
+/* The target-year switch in the Valuation band (FY28E | FY29E | FY30E). */
+.aa .vs-ty { display: inline-flex; border: 1px solid rgba(255, 255, 255, 0.7); }
+.aa .vs-ty button { font: 700 11px/1 var(--pl-font-condensed); letter-spacing: 0.05em; padding: 4px 8px; border: 0; border-right: 1px solid rgba(255, 255, 255, 0.5); background: transparent; color: var(--pl-on-dark); cursor: pointer; }
+.aa .vs-ty button:last-child { border-right: 0; }
+.aa .vs-ty button[aria-pressed="true"] { background: #fff; color: var(--pl-color-primary); }
+.aa .vs-ty button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
 
 /* SIP & Score: the Fortnightly SIP and AMC Score cards, two by two */
 .aa .ss-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }

@@ -7,7 +7,8 @@
 
 import { desc, eq } from "drizzle-orm";
 import { db } from "../db/client";
-import { amcFortnightlyUpdate, amcs } from "../db/schema";
+import { amcFortnightlyUpdate, amcs, amcValuationEstimate } from "../db/schema";
+import type { StoredEstimates } from "../valuation/target-year";
 import { getIstDateString } from "../utils/date";
 import { getAmcScoreForOverviewName, type AmcScoreCard } from "./amc-score";
 import { getFiscalYearAndQuarter } from "./report-period";
@@ -79,6 +80,8 @@ export interface AmcAnalyticsInputs {
   sipAmcLatestQuarter: number;
   sipIndustryAuto: SipIndustryAuto | null;
   sipIndustryQuarterlyAuto: SipIndustryQuarterlyAuto | null;
+  /** The Valuation Model's PAT / revenue for years past FY28 (FY26–FY28 are in `manual`). */
+  estimates: StoredEstimates;
 }
 
 const columns = Object.fromEntries(AMC_ANALYTICS_NUMBER_FIELDS.map((f) => [f, amcFortnightlyUpdate[f]])) as {
@@ -95,13 +98,25 @@ async function latestRow(amcId: number) {
   return row ?? null;
 }
 
+/** One AMC's amc_valuation_estimate rows, by fiscal year. */
+async function storedEstimates(amcId: number): Promise<StoredEstimates> {
+  const rows = await db
+    .select({ fiscalYear: amcValuationEstimate.fiscalYear, patCr: amcValuationEstimate.patCr, revenueCr: amcValuationEstimate.revenueCr })
+    .from(amcValuationEstimate)
+    .where(eq(amcValuationEstimate.amcId, amcId));
+  return Object.fromEntries(
+    rows.map((r) => [r.fiscalYear, { patCr: r.patCr === null ? null : Number(r.patCr), revenueCr: r.revenueCr === null ? null : Number(r.revenueCr) }])
+  );
+}
+
 /** One AMC's inputs from its latest snapshot row; null for an unknown AMC. */
 export async function getAmcAnalyticsInputs(amcId: number): Promise<AmcAnalyticsInputs | null> {
-  const [[amc], row, sipIndustryAuto, sipIndustryQuarterlyAuto] = await Promise.all([
+  const [[amc], row, sipIndustryAuto, sipIndustryQuarterlyAuto, estimates] = await Promise.all([
     db.select({ id: amcs.id, slug: amcs.slug }).from(amcs).where(eq(amcs.id, amcId)),
     latestRow(amcId),
     getSipIndustryAutoValues(),
     getSipIndustryQuarterlyAutoValues(),
+    storedEstimates(amcId),
   ]);
   if (!amc) return null;
   const asOfDate = row?.asOfDate ?? getIstDateString();
@@ -123,6 +138,7 @@ export async function getAmcAnalyticsInputs(amcId: number): Promise<AmcAnalytics
     sipAmcLatestQuarter,
     sipIndustryAuto,
     sipIndustryQuarterlyAuto,
+    estimates,
   };
 }
 
