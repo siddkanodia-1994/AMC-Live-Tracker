@@ -911,40 +911,6 @@ export function AmcGrid({
         </button>
       )}
 
-      {history.length > 0 && (
-        // Hidden (not unmounted) on AMC Analytics so that tab opens straight
-        // onto its own content; staying mounted keeps tab switches instant.
-        <Card className={activeTab === "amc-analytics" ? "hidden" : undefined}>
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle>Industry Equity AUM Trend</CardTitle>
-              <div className="flex items-center gap-1 text-sm">
-                {(["absolute", "change"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setChartMode(mode)}
-                    className={`rounded-md px-2 py-1 ${
-                      chartMode === mode ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {mode === "absolute" ? "Absolute" : "% Change"}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <AumTrendChart data={history} mode={chartMode} />
-            {history.some((p) => p.reportPeriod === "") && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Before 1 Jan 2026, industry AUM is modelled from month-end exit AUM using NIFTY 500 daily moves.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
       <Tabs
         value={activeTab}
         onValueChange={(value) => {
@@ -1393,6 +1359,41 @@ export function AmcGrid({
           />
         </TabsContent>
       </Tabs>
+
+      {history.length > 0 && (
+        // The last card on every tab, below that tab's own content. Hidden
+        // (not unmounted) on AMC Analytics so that tab opens straight onto its
+        // own content; staying mounted keeps tab switches instant.
+        <Card className={activeTab === "amc-analytics" ? "hidden" : undefined}>
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle>Industry Equity AUM Trend</CardTitle>
+              <div className="flex items-center gap-1 text-sm">
+                {(["absolute", "change"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setChartMode(mode)}
+                    className={`rounded-md px-2 py-1 ${
+                      chartMode === mode ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {mode === "absolute" ? "Absolute" : "% Change"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <AumTrendChart data={history} mode={chartMode} />
+            {history.some((p) => p.reportPeriod === "") && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Before 1 Jan 2026, industry AUM is modelled from month-end exit AUM using NIFTY 500 daily moves.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
