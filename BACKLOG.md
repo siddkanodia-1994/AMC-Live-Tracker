@@ -21,7 +21,6 @@ merged.
 - **Oct-26 Mirae tracker:** run the `ingest` workflow on it after the 15th of November, then import via /admin.
 - **Daily data-ops schedule:** create a weekday 17:15 IST Claude Code scheduled task that runs the `data-ops` workflow (agent creation of scheduled tasks is blocked).
 - **GitHub PAT** in `~/.claude/settings.json`: revoke it.
-- **Optional:** add `AMC_SCORE_SUPABASE_URL` / `AMC_SCORE_SUPABASE_KEY` as GitHub Actions secrets so the probe checks the AMC Score loader.
 
 ## Done (2026-11-03)
 

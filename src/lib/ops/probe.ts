@@ -1,7 +1,6 @@
 import { and, count, eq, gte, inArray, isNotNull, isNull, max, min, ne, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
-  amcListedStock,
   amcPeriods,
   appSettings,
   dailyDataQuality,
@@ -9,10 +8,10 @@ import {
   foreignPriceCache,
   holdings,
   instrumentMap,
-  isinDailyPrice,
   isinManualMute,
   liveAumDailySnapshot,
   mcxDailyPrice,
+  mcxTrackedContract,
   opsRunLog,
   outageReclaimLog,
   staleMappingUnresolvedLog,
@@ -20,6 +19,7 @@ import {
 import { getDhanTokenStatus } from "../dhan/token";
 import { isUsListedEquityIsin } from "../excel/instrument-classification";
 import { calendarDaysBetween, classifyForeignPriceAge } from "../aum/foreign-price-age";
+import { addDaysToDateString } from "../utils/date";
 import { hasNseHolidayCalendar, isTradingDay, lastTradingDayIstString } from "../utils/market-hours";
 import type { OpsRow } from "./run-log";
 
@@ -103,6 +103,34 @@ export function classifyInstrumentMapGaps(gapCount: number, totalCr: number, top
 export function classifyDailyCronRun(row: { status: string; summary: string } | undefined, closeDate: string): { status: "ok" | "warn" | "fail"; summary: string } {
   if (!row) return { status: "fail", summary: `no daily-snapshot run recorded for ${closeDate}` };
   return { status: row.status === "ok" || row.status === "warn" ? row.status : "fail", summary: row.summary };
+}
+
+export interface McxContractExpiry {
+  metal: string;
+  tradingSymbol: string;
+  expiryDate: string;
+}
+
+/** Days ahead of a tracked MCX contract's expiry when the probe starts warning to roll it. */
+export const MCX_EXPIRY_WARN_DAYS = 7;
+
+/**
+ * Status for mcx-freshness: the latest stored close (one trading day of lag
+ * is normal) and the tracked contracts' expiry. Once a contract has expired
+ * the "price of gold/silver" silently freezes -- that happened to gold in
+ * Oct 2026 for three weeks -- so expiry is a fail, and the week before it a
+ * warn, with the reminder to re-run scripts/seed-mcx-contracts.ts.
+ */
+export function classifyMcx(latest: string | null, expected: string, contracts: McxContractExpiry[], today: string): { status: "ok" | "warn" | "fail"; summary: string } {
+  const expired = contracts.filter((c) => c.expiryDate < today);
+  const expiring = contracts.filter((c) => c.expiryDate >= today && c.expiryDate <= addDaysToDateString(today, MCX_EXPIRY_WARN_DAYS));
+  const stale = latest === null || latest < expected;
+  const parts = [`latest MCX price ${latest ?? "none"} (expected ≥ ${expected})`];
+  if (contracts.length === 0) parts.push("no tracked contracts -- run scripts/seed-mcx-contracts.ts");
+  if (expired.length > 0) parts.push(`EXPIRED: ${expired.map((c) => `${c.tradingSymbol} (${c.expiryDate})`).join(", ")} -- roll via scripts/seed-mcx-contracts.ts`);
+  if (expiring.length > 0) parts.push(`expiring: ${expiring.map((c) => `${c.tradingSymbol} on ${c.expiryDate}`).join(", ")} -- roll via scripts/seed-mcx-contracts.ts`);
+  const status = expired.length > 0 || contracts.length === 0 ? "fail" : stale || expiring.length > 0 ? "warn" : "ok";
+  return { status, summary: parts.join("; ") };
 }
 
 export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
@@ -285,34 +313,10 @@ export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
     // run, 2026-11-03) -- expect one trading day of lag, not zero.
     const expected = lastTradingDayIstString(new Date(`${closeDate}T12:00:00+05:30`));
     const [r] = await db.select({ latest: max(mcxDailyPrice.snapshotDate) }).from(mcxDailyPrice);
-    return {
-      status: r.latest !== null && r.latest >= expected ? "ok" : "warn",
-      summary: `latest MCX price ${r.latest ?? "none"} (expected ≥ ${expected})`,
-      details: { latest: r.latest, expected },
-    };
-  });
-
-  await check("listed-amc-share-prices", async () => {
-    const listed = await db.select({ isin: amcListedStock.isin }).from(amcListedStock);
-    const [r] = await db
-      .select({ latest: max(isinDailyPrice.snapshotDate) })
-      .from(isinDailyPrice)
-      .where(inArray(isinDailyPrice.isin, listed.map((l) => l.isin)));
-    return { status: r.latest !== null && r.latest >= lastTradingDayIstString(now) ? "ok" : "warn", summary: `latest listed-AMC close ${r.latest ?? "none"}`, details: { latest: r.latest, amcs: listed.length } };
-  });
-
-  await check("amc-score-supabase", async () => {
-    const url = process.env.AMC_SCORE_SUPABASE_URL;
-    const key = process.env.AMC_SCORE_SUPABASE_KEY;
-    if (!url || !key) return { status: "skipped", summary: "AMC_SCORE_SUPABASE_* not configured for the probe" };
-    const res = await fetch(`${url}/rest/v1/amc_scores?select=snapshot_date&order=snapshot_date.desc&limit=1`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-    });
-    if (!res.ok) return { status: "fail", summary: `Supabase returned HTTP ${res.status}` };
-    const [latest] = (await res.json()) as { snapshot_date: string }[];
-    const age = ageDaysSince(latest?.snapshot_date ?? null, today);
-    // Scores are fortnightly snapshots; > 35 days means the external loader stalled.
-    return { status: age !== null && age <= 35 ? "ok" : "warn", summary: `latest AMC Score snapshot ${latest?.snapshot_date ?? "none"}`, details: { latest: latest?.snapshot_date ?? null, ageDays: age } };
+    const contracts = await db
+      .select({ metal: mcxTrackedContract.metal, tradingSymbol: mcxTrackedContract.tradingSymbol, expiryDate: mcxTrackedContract.expiryDate })
+      .from(mcxTrackedContract);
+    return { ...classifyMcx(r.latest, expected, contracts, today), details: { latest: r.latest, expected, contracts } };
   });
 
   await check("vendor-file-due", async () => {

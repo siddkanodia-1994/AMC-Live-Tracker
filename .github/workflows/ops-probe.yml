@@ -20,6 +20,3 @@ jobs:
       - run: npx tsx scripts/ops/probe.ts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          # Optional: without these the Supabase AMC Score check is skipped.
-          AMC_SCORE_SUPABASE_URL: ${{ secrets.AMC_SCORE_SUPABASE_URL }}
-          AMC_SCORE_SUPABASE_KEY: ${{ secrets.AMC_SCORE_SUPABASE_KEY }}

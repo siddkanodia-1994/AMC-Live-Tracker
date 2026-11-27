@@ -49,7 +49,68 @@ function latestRun(rows: OpsRunLogRow[], loop: string): OpsRunLogRow[] {
   return rows.filter((r) => r.runId === first.runId).sort((a, b) => a.id - b.id);
 }
 
-function RunTable({ title, rows, emptyText }: { title: string; rows: OpsRunLogRow[]; emptyText: string }) {
+/** Statuses that need no attention: hidden behind the "show ok" toggle. */
+const QUIET: ReadonlySet<OpsStatus> = new Set(["ok", "skipped", "fixed"]);
+
+// The probe's checks, grouped for reading. The probe keeps one row per check
+// (the data-ops loop routes each row to exactly one repair or user action);
+// the grouping is display only. A node not listed here (e.g. a check from an
+// older probe run) lands under "Other".
+const PROBE_GROUPS: { title: string; nodes: string[] }[] = [
+  { title: "Daily run", nodes: ["daily-cron-ran", "snapshot-coverage"] },
+  { title: "Live prices (DHAN)", nodes: ["dhan-token-age", "price-coverage", "outage-reclaims"] },
+  { title: "Unpriced holdings", nodes: ["unresolved-stale-mappings", "instrument-map-gaps"] },
+  { title: "Data feeds", nodes: ["foreign-prices-age", "etf-nav-freshness", "mcx-freshness"] },
+  { title: "Reminders", nodes: ["vendor-file-due", "holiday-calendar"] },
+];
+
+function groupRows(rows: OpsRunLogRow[], groups: { title: string; nodes: string[] }[] | undefined): { title: string | null; rows: OpsRunLogRow[] }[] {
+  if (!groups) return [{ title: null, rows }];
+  const known = new Set(groups.flatMap((g) => g.nodes));
+  const out = groups.map((g) => ({ title: g.title, rows: g.nodes.flatMap((n) => rows.filter((r) => r.node === n)) }));
+  out.push({ title: "Other", rows: rows.filter((r) => !known.has(r.node)) });
+  return out.filter((g) => g.rows.length > 0);
+}
+
+function RunRow({ r }: { r: OpsRunLogRow }) {
+  return (
+    <tr className="border-b border-foreground/10 align-top last:border-0">
+      <td className="py-1.5 pr-3 font-mono text-xs whitespace-nowrap">{r.node}</td>
+      <td className="py-1.5 pr-3">
+        <StatusBadge status={r.status} />
+      </td>
+      <td className="py-1.5 text-muted-foreground">{r.summary}</td>
+    </tr>
+  );
+}
+
+/**
+ * One run's rows with the quiet ones (ok / skipped / fixed) folded behind a
+ * toggle, so the table shows only what needs attention. `pinned` nodes are
+ * always shown (the cron's run-complete line).
+ */
+function RunTable({
+  title,
+  rows,
+  emptyText,
+  groups,
+  pinned = [],
+  noun = "checks",
+}: {
+  title: string;
+  rows: OpsRunLogRow[];
+  emptyText: string;
+  groups?: { title: string; nodes: string[] }[];
+  pinned?: string[];
+  noun?: string;
+}) {
+  const [showQuiet, setShowQuiet] = useState(false);
+  const counted = rows.filter((r) => !pinned.includes(r.node));
+  const quietCount = counted.filter((r) => QUIET.has(r.status)).length;
+  const loudCount = counted.length - quietCount;
+  const visible = showQuiet ? rows : rows.filter((r) => pinned.includes(r.node) || !QUIET.has(r.status));
+  const sections = groupRows(visible, groups);
+
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between gap-2">
@@ -59,21 +120,39 @@ function RunTable({ title, rows, emptyText }: { title: string; rows: OpsRunLogRo
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">{emptyText}</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-b border-foreground/10 align-top last:border-0">
-                  <td className="py-1.5 pr-3 font-mono text-xs whitespace-nowrap">{r.node}</td>
-                  <td className="py-1.5 pr-3">
-                    <StatusBadge status={r.status} />
-                  </td>
-                  <td className="py-1.5 text-muted-foreground">{r.summary}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <p className="text-xs text-muted-foreground">
+            {loudCount === 0 ? `All ${counted.length} ${noun} ok.` : `${loudCount} of ${counted.length} ${noun} need a look; ${quietCount} ok.`}
+            {quietCount > 0 && (
+              <>
+                {" "}
+                <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setShowQuiet((v) => !v)}>
+                  {showQuiet ? "Hide ok" : `Show ${quietCount} ok`}
+                </button>
+              </>
+            )}
+          </p>
+          {visible.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                {sections.map((sec) => (
+                  <tbody key={sec.title ?? "all"}>
+                    {sec.title && (
+                      <tr>
+                        <th colSpan={3} className="pt-3 pb-1 text-left text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                          {sec.title}
+                        </th>
+                      </tr>
+                    )}
+                    {sec.rows.map((r) => (
+                      <RunRow key={r.id} r={r} />
+                    ))}
+                  </tbody>
+                ))}
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -126,8 +205,13 @@ export function AgentOpsPanel({ secret }: { secret: string }) {
       </CardHeader>
       <CardContent className="space-y-6">
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-        <RunTable title="Health probe" rows={probeRun.filter((r) => r.node !== "run-complete")} emptyText="No probe run recorded yet (GitHub Action, 17:00 IST weekdays)." />
-        <RunTable title="Daily cron steps" rows={cronRun} emptyText="No cron run recorded yet (16:05 IST weekdays)." />
+        <RunTable
+          title="Health probe"
+          rows={probeRun.filter((r) => r.node !== "run-complete")}
+          groups={PROBE_GROUPS}
+          emptyText="No probe run recorded yet (GitHub Action, 17:00 IST weekdays)."
+        />
+        <RunTable title="Daily cron steps" rows={cronRun} pinned={["run-complete"]} noun="steps" emptyText="No cron run recorded yet (16:05 IST weekdays)." />
         <RunTable title="Agent repairs & proposals" rows={agentRows} emptyText="Nothing awaiting you." />
       </CardContent>
     </Card>
