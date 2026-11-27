@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, ne } from "drizzle-orm";
 import { db } from "../db/client";
 import { opsRunLog } from "../db/schema";
 
@@ -105,7 +105,8 @@ export async function hasCompletedRunSince(loop: string, sinceIso: string): Prom
   const rows = await db
     .select({ status: opsRunLog.status })
     .from(opsRunLog)
-    .where(and(eq(opsRunLog.loop, loop), eq(opsRunLog.node, "run-complete"), gte(opsRunLog.createdAt, new Date(sinceIso))))
+    // A skipped retry row says nothing about whether the run itself completed.
+    .where(and(eq(opsRunLog.loop, loop), eq(opsRunLog.node, "run-complete"), ne(opsRunLog.status, "skipped"), gte(opsRunLog.createdAt, new Date(sinceIso))))
     .orderBy(desc(opsRunLog.createdAt))
     .limit(1);
   return rows.length > 0 && (rows[0].status === "ok" || rows[0].status === "warn");

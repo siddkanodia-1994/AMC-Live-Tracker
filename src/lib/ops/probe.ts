@@ -1,4 +1,4 @@
-import { and, count, eq, gte, inArray, isNotNull, isNull, max, min, sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNotNull, isNull, max, min, ne, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   amcListedStock,
@@ -94,6 +94,17 @@ export function classifyInstrumentMapGaps(gapCount: number, totalCr: number, top
   };
 }
 
+/**
+ * Status for the daily-cron-ran check, given the newest non-skipped
+ * run-complete row since the expected close date. The 18:05 IST retry writes
+ * a "skipped" row when the 16:05 run already completed; it's filtered out in
+ * the query, so it can never stand in for (and mask) the real run.
+ */
+export function classifyDailyCronRun(row: { status: string; summary: string } | undefined, closeDate: string): { status: "ok" | "warn" | "fail"; summary: string } {
+  if (!row) return { status: "fail", summary: `no daily-snapshot run recorded for ${closeDate}` };
+  return { status: row.status === "ok" || row.status === "warn" ? row.status : "fail", summary: row.summary };
+}
+
 export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
   const rows: OpsRow[] = [];
   const today = istDateOf(now);
@@ -118,11 +129,17 @@ export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
     const [r] = await db
       .select({ status: opsRunLog.status, summary: opsRunLog.summary })
       .from(opsRunLog)
-      .where(and(eq(opsRunLog.loop, "daily-snapshot"), eq(opsRunLog.node, "run-complete"), gte(opsRunLog.createdAt, since)))
+      .where(
+        and(
+          eq(opsRunLog.loop, "daily-snapshot"),
+          eq(opsRunLog.node, "run-complete"),
+          ne(opsRunLog.status, "skipped"),
+          gte(opsRunLog.createdAt, since),
+        ),
+      )
       .orderBy(sql`${opsRunLog.createdAt} desc`)
       .limit(1);
-    if (!r) return { status: "fail", summary: `no daily-snapshot run recorded for ${closeDate}` };
-    return { status: r.status === "ok" || r.status === "warn" ? r.status : "fail", summary: r.summary };
+    return classifyDailyCronRun(r, closeDate);
   });
 
   await check("snapshot-coverage", async () => {

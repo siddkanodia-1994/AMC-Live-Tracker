@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyInstrumentMapGaps, expectedReportPeriod } from "./probe";
+import { classifyDailyCronRun, classifyInstrumentMapGaps, expectedReportPeriod } from "./probe";
 
 describe("expectedReportPeriod", () => {
   it("expects month M's vendor file only after the 15th of M+1", () => {
@@ -41,5 +41,20 @@ describe("classifyInstrumentMapGaps", () => {
     expect(r.summary).toBe(
       "30 priceable ISIN(s) unmapped, ₹683 cr held at reported value (total > ₹500 cr, one ISIN > ₹200 cr); top: HEG Graphite ₹616 cr; TVS Pref ₹67 cr; Crescent ₹0.10 cr"
     );
+  });
+});
+
+describe("classifyDailyCronRun", () => {
+  it("fails when no run is recorded for the close date", () => {
+    expect(classifyDailyCronRun(undefined, "2026-11-23")).toEqual({ status: "fail", summary: "no daily-snapshot run recorded for 2026-11-23" });
+  });
+
+  it("passes through ok and warn runs with their summary", () => {
+    expect(classifyDailyCronRun({ status: "ok", summary: "49 AMCs" }, "2026-11-23")).toEqual({ status: "ok", summary: "49 AMCs" });
+    expect(classifyDailyCronRun({ status: "warn", summary: "DHAN degraded" }, "2026-11-23").status).toBe("warn");
+  });
+
+  it("treats a failed run as a fail", () => {
+    expect(classifyDailyCronRun({ status: "fail", summary: "computeLiveAum threw" }, "2026-11-23").status).toBe("fail");
   });
 });
