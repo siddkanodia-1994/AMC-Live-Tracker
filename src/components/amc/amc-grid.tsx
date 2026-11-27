@@ -912,7 +912,9 @@ export function AmcGrid({
       )}
 
       {history.length > 0 && (
-        <Card>
+        // Hidden (not unmounted) on AMC Analytics so that tab opens straight
+        // onto its own content; staying mounted keeps tab switches instant.
+        <Card className={activeTab === "amc-analytics" ? "hidden" : undefined}>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle>Industry Equity AUM Trend</CardTitle>
