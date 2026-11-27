@@ -124,8 +124,10 @@ async function main() {
   // transactional client.
   const { importWorkbook } = await import("../src/lib/excel/import-workbook");
   const { runPostImportReclaim } = await import("../src/lib/aum/reclaim-forward-gap");
+  const { recordImportClosure } = await import("../src/lib/ops/run-log");
 
   const result = await importWorkbook(buffer, basename(filePath));
+  await recordImportClosure(result, "import script");
 
   console.log(`Report period: ${result.reportPeriod}`);
   console.log(`AMCs imported: ${result.amcsImported}`);

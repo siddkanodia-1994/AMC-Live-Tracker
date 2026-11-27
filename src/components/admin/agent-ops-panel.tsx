@@ -118,10 +118,12 @@ function RunTable({
           {counted.length > 0 && (
             <p className="text-xs text-muted-foreground">
               {loudCount === 0
-                ? `All ${counted.length} ${noun} ok.`
+                ? counted.length === 1
+                  ? `1 ${noun.replace(/s$/, "")} ok.`
+                  : `All ${counted.length} ${noun} ok.`
                 : quietCount === 0
-                  ? `${loudCount} ${noun} need a look.`
-                  : `${loudCount} of ${counted.length} ${noun} need a look; ${quietCount} ok.`}
+                  ? `${loudCount} ${loudCount === 1 ? noun.replace(/s$/, "") : noun} ${loudCount === 1 ? "needs" : "need"} a look.`
+                  : `${loudCount} of ${counted.length} ${noun} ${loudCount === 1 ? "needs" : "need"} a look; ${quietCount} ok.`}
               {quietCount > 0 && (
                 <>
                   {" "}
@@ -210,7 +212,7 @@ export function AgentOpsPanel({ secret }: { secret: string }) {
           title="Health probe"
           rows={probeRun.filter((r) => r.node !== "run-complete")}
           groups={PROBE_GROUPS}
-          emptyText="No probe run recorded yet (GitHub Action, 17:00 IST weekdays)."
+          emptyText="No probe run recorded yet (runs with the 18:05 IST cron on weekdays)."
         />
         <RunTable title="Daily cron steps" rows={cronRun} pinned={["run-complete"]} noun="steps" emptyText="No cron run recorded yet (16:05 IST weekdays)." />
         <RunTable title="Agent repairs & proposals" rows={agentRows} noun="items" emptyText={`Nothing awaiting you (last ${AGENT_ROW_MAX_AGE_DAYS} days).`} />

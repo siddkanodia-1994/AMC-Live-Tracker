@@ -3,6 +3,7 @@ import { withAdminAuth } from "@/lib/api/with-admin-auth";
 import { importWorkbook } from "@/lib/excel/import-workbook";
 import { invalidateLiveAumCache } from "@/lib/aum/cache";
 import { runPostImportReclaim } from "@/lib/aum/reclaim-forward-gap";
+import { recordImportClosure } from "@/lib/ops/run-log";
 
 // Matches reclaim-forward-gap/route.ts's own budget: when this import
 // genuinely advances current_report_period, the after() callback below runs
@@ -20,6 +21,7 @@ export const POST = withAdminAuth(async (request: Request) => {
 
   const buffer = Buffer.from(await file.arrayBuffer());
   const result = await importWorkbook(buffer, file.name);
+  await recordImportClosure(result, "/admin upload");
 
   invalidateLiveAumCache();
 

@@ -111,3 +111,20 @@ export async function hasCompletedRunSince(loop: string, sinceIso: string): Prom
     .limit(1);
   return rows.length > 0 && (rows[0].status === "ok" || rows[0].status === "warn");
 }
+
+/**
+ * Closes the monthly-file loop on the Agent Ops panel: after a successful
+ * import (script or /admin upload) writes an `ingest/validate` "fixed" row,
+ * which supersedes any earlier validate result for the file (see
+ * recentAgentRows). Never throws.
+ */
+export async function recordImportClosure(result: { reportPeriod: string; amcsImported: number; holdingsImported: number }, via: string): Promise<void> {
+  const run = startOpsRun("agent", "ingest");
+  run.rows.push({
+    node: "validate",
+    status: "fixed",
+    summary: `Imported ${result.reportPeriod} via ${via}: ${result.amcsImported} AMCs, ${result.holdingsImported.toLocaleString("en-IN")} holdings (closes any earlier validate result)`,
+    details: { reportPeriod: result.reportPeriod, amcsImported: result.amcsImported, holdingsImported: result.holdingsImported, via },
+  });
+  await flushOpsRun(run);
+}

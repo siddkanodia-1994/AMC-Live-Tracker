@@ -47,6 +47,36 @@ describe("recentAgentRows", () => {
     expect(recentAgentRows(rows, now).map((r) => r.runId)).toEqual(["a", "c"]);
   });
 
+  it("closes an outcome once a newer row for the same loop and node exists", () => {
+    const rows = [
+      row("fix", "ingest", "validate", "fixed", "2026-11-23T06:04:00Z", "agent"), // the import's closing row
+      row("c", "ingest", "validate", "fail", "2026-11-23T04:17:35Z", "agent"),
+      row("m", "data-ops", "mcx-freshness", "proposal", "2026-11-22T06:00:00Z", "agent"),
+    ];
+    // The fail is gone; the "fixed" row stays as a record (the panel folds it behind "Show ok").
+    expect(recentAgentRows(rows, now).map((r) => r.runId)).toEqual(["fix", "m"]);
+  });
+
+  it("a newer fail replaces an older one (no duplicates)", () => {
+    const rows = [row("v2", "ingest", "validate", "fail", "2026-11-24T04:00:00Z", "agent"), row("v1", "ingest", "validate", "fail", "2026-11-23T04:00:00Z", "agent")];
+    expect(recentAgentRows(rows, now).map((r) => r.runId)).toEqual(["v2"]);
+  });
+
+  it("an all-clear data-ops run closes every older data-ops outcome, not other loops'", () => {
+    const rows = [
+      row("s", "data-ops", "sense", "ok", "2026-11-26T06:00:00Z", "agent"),
+      row("m", "data-ops", "mcx-freshness", "proposal", "2026-11-25T06:00:00Z", "agent"),
+      row("c", "ingest", "validate", "fail", "2026-11-24T04:00:00Z", "agent"),
+      row("m0", "data-ops", "dhan-token-age", "proposal", "2026-11-27T06:00:00Z", "agent"), // newer than the all-clear: stays
+    ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    expect(recentAgentRows(rows, now).map((r) => r.runId)).toEqual(["m0", "c"]);
+  });
+
+  it("ignores non-agent rows when deciding what's closed", () => {
+    const rows = [row("x", "ingest", "validate", "ok", "2026-11-25T00:00:00Z", "cron"), row("c", "ingest", "validate", "fail", "2026-11-24T04:00:00Z", "agent")];
+    expect(recentAgentRows(rows, now).map((r) => r.runId)).toEqual(["c"]);
+  });
+
   it("drops the 23 Nov ingest fail once a week has passed", () => {
     const rows = [row("c", "ingest", "validate", "fail", "2026-11-23T04:17:35Z", "agent")];
     expect(recentAgentRows(rows, new Date("2026-11-30T05:00:00Z"))).toEqual([]);

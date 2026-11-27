@@ -30,8 +30,26 @@ export function latestRun<R extends OpsLogViewRow>(rows: R[], loop: string, { sk
   return rows.filter((r) => r.runId === first.runId).sort((a, b) => a.id - b.id);
 }
 
-/** Agent outcomes that need a look (not "ok") from the last 7 days, newest first, at most 20. */
+/**
+ * Agent outcomes still open: not "ok", from the last 7 days, newest first, at
+ * most 20. An outcome is closed by any NEWER agent row for the same loop and
+ * node -- e.g. a failed `ingest/validate` is closed by the `ingest/validate`
+ * "fixed" row a successful import writes, or by next month's validate -- and
+ * a data-ops run that found every probe check ok (`data-ops/sense` "ok")
+ * closes all older data-ops outcomes.
+ */
 export function recentAgentRows<R extends OpsLogViewRow>(rows: R[], now: Date = new Date()): R[] {
   const cutoff = now.getTime() - AGENT_ROW_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
-  return rows.filter((r) => r.source === "agent" && r.status !== "ok" && Date.parse(r.createdAt) >= cutoff).slice(0, 20);
+  const seen = new Set<string>();
+  const allClear = new Set<string>();
+  const open: R[] = [];
+  for (const r of rows) {
+    if (r.source !== "agent") continue;
+    const key = `${r.loop}\u0000${r.node}`;
+    const superseded = seen.has(key) || allClear.has(r.loop);
+    seen.add(key);
+    if (r.node === "sense" && r.status === "ok") allClear.add(r.loop);
+    if (!superseded && r.status !== "ok" && Date.parse(r.createdAt) >= cutoff) open.push(r);
+  }
+  return open.slice(0, 20);
 }
