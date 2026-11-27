@@ -1,8 +1,10 @@
 name: Ops probe
 
 # Deterministic pipeline health checks (no LLM) written to ops_run_log for the
-# /admin Agent Ops panel and the Claude Code data-ops loop. 11:30 UTC = 17:00
-# IST on weekdays, ~55 min after the 16:05 IST daily-snapshot cron.
+# /admin Agent Ops panel and the Claude Code data-ops loop. BACKUP run: the
+# probe's main run is at the end of the 18:05 IST daily-snapshot retry cron.
+# Scheduled for 11:30 UTC = 17:00 IST, but GitHub has been starting it 8-11
+# hours late (Nov 2026), so it lands overnight.
 on:
   schedule:
     - cron: "30 11 * * 1-5"

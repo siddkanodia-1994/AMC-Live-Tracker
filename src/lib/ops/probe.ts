@@ -21,7 +21,7 @@ import { isUsListedEquityIsin } from "../excel/instrument-classification";
 import { calendarDaysBetween, classifyForeignPriceAge } from "../aum/foreign-price-age";
 import { addDaysToDateString } from "../utils/date";
 import { hasNseHolidayCalendar, isTradingDay, lastTradingDayIstString } from "../utils/market-hours";
-import type { OpsRow } from "./run-log";
+import { flushOpsRun, startOpsRun, type OpsRow } from "./run-log";
 
 // Deterministic health checks for the data pipelines -- no LLM involved.
 // Run by the ops-probe GitHub Action (17:00 IST weekdays) and readable by the
@@ -341,4 +341,28 @@ export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
   });
 
   return rows;
+}
+
+/**
+ * Runs the probe and writes it to ops_run_log (source "probe", loop
+ * "ops-probe") with a run-complete summary row -- what the /admin Agent Ops
+ * panel reads. Called by the 18:05 IST retry cron (the GitHub Action's
+ * "17:00" schedule has been starting 8-11 hours late) and by
+ * scripts/ops/probe.ts. Never throws: the probe is observability, not part
+ * of the job that calls it.
+ */
+export async function recordProbeRun(trigger: string): Promise<OpsRow[]> {
+  try {
+    const rows = await runProbe();
+    const run = startOpsRun("probe", "ops-probe");
+    run.rows.push(...rows);
+    const failing = rows.filter((r) => r.status === "fail").length;
+    const warning = rows.filter((r) => r.status === "warn").length;
+    run.rows.push({ node: "run-complete", status: failing > 0 ? "fail" : warning > 0 ? "warn" : "ok", summary: `${failing} failing, ${warning} warning (via ${trigger})` });
+    await flushOpsRun(run);
+    return rows;
+  } catch (err) {
+    console.error(`Ops probe (${trigger}) failed to run:`, err);
+    return [];
+  }
 }

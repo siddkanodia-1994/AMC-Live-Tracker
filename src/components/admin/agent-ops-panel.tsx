@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { adminFetch } from "@/lib/admin-client";
+import { AGENT_ROW_MAX_AGE_DAYS, latestRun, recentAgentRows } from "@/lib/ops/ops-log-view";
 
 type OpsStatus = "ok" | "warn" | "fail" | "proposal" | "fixed" | "skipped";
 
@@ -40,13 +41,6 @@ function StatusBadge({ status }: { status: OpsStatus }) {
 
 function formatWhen(iso: string): string {
   return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-}
-
-/** The rows of the most recent run of `loop`, in the order they were written. */
-function latestRun(rows: OpsRunLogRow[], loop: string): OpsRunLogRow[] {
-  const first = rows.find((r) => r.loop === loop);
-  if (!first) return [];
-  return rows.filter((r) => r.runId === first.runId).sort((a, b) => a.id - b.id);
 }
 
 /** Statuses that need no attention: hidden behind the "show ok" toggle. */
@@ -121,17 +115,23 @@ function RunTable({
         <p className="text-sm text-muted-foreground">{emptyText}</p>
       ) : (
         <>
-          <p className="text-xs text-muted-foreground">
-            {loudCount === 0 ? `All ${counted.length} ${noun} ok.` : `${loudCount} of ${counted.length} ${noun} need a look; ${quietCount} ok.`}
-            {quietCount > 0 && (
-              <>
-                {" "}
-                <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setShowQuiet((v) => !v)}>
-                  {showQuiet ? "Hide ok" : `Show ${quietCount} ok`}
-                </button>
-              </>
-            )}
-          </p>
+          {counted.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {loudCount === 0
+                ? `All ${counted.length} ${noun} ok.`
+                : quietCount === 0
+                  ? `${loudCount} ${noun} need a look.`
+                  : `${loudCount} of ${counted.length} ${noun} need a look; ${quietCount} ok.`}
+              {quietCount > 0 && (
+                <>
+                  {" "}
+                  <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setShowQuiet((v) => !v)}>
+                    {showQuiet ? "Hide ok" : `Show ${quietCount} ok`}
+                  </button>
+                </>
+              )}
+            </p>
+          )}
           {visible.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -192,8 +192,9 @@ export function AgentOpsPanel({ secret }: { secret: string }) {
   }, [refresh]);
 
   const probeRun = useMemo(() => latestRun(rows, "ops-probe"), [rows]);
-  const cronRun = useMemo(() => latestRun(rows, "daily-snapshot"), [rows]);
-  const agentRows = useMemo(() => rows.filter((r) => r.source === "agent" && r.status !== "ok").slice(0, 20), [rows]);
+  // The 16:05 run that did the work, not the 18:05 retry that found it done.
+  const cronRun = useMemo(() => latestRun(rows, "daily-snapshot", { skipSkippedRuns: true }), [rows]);
+  const agentRows = useMemo(() => recentAgentRows(rows), [rows]);
 
   return (
     <Card>
@@ -212,7 +213,7 @@ export function AgentOpsPanel({ secret }: { secret: string }) {
           emptyText="No probe run recorded yet (GitHub Action, 17:00 IST weekdays)."
         />
         <RunTable title="Daily cron steps" rows={cronRun} pinned={["run-complete"]} noun="steps" emptyText="No cron run recorded yet (16:05 IST weekdays)." />
-        <RunTable title="Agent repairs & proposals" rows={agentRows} emptyText="Nothing awaiting you." />
+        <RunTable title="Agent repairs & proposals" rows={agentRows} noun="items" emptyText={`Nothing awaiting you (last ${AGENT_ROW_MAX_AGE_DAYS} days).`} />
       </CardContent>
     </Card>
   );

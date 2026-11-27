@@ -13,6 +13,7 @@ import { runAmfiMonthlyFlowIngestion } from "@/lib/aum/amfi-monthly-flows";
 import { getAllMonthlyFlows, upsertMonthlyFlow } from "@/lib/aum/industry-flows";
 import { getIstDateString } from "@/lib/utils/date";
 import { flushOpsRun, hasCompletedRunSince, runOpsStep, startOpsRun } from "@/lib/ops/run-log";
+import { recordProbeRun } from "@/lib/ops/probe";
 
 // Bumped from 30 -> 180: the outage-reclaim step below can fetch DHAN
 // historical closes for up to a few hundred ISINs (paced ~500ms each) when
@@ -47,6 +48,18 @@ export async function GET(request: Request) {
   // below is idempotent for a same-day re-run (see the pre-mortem notes in
   // runEtfIngestion's split check).
   const mode = new URL(request.url).searchParams.get("mode") === "retry" ? "retry" : "primary";
+  const response = await runDailySnapshot(mode);
+
+  // The health probe rides on the 18:05 IST retry, which fires every weekday
+  // whether or not it has work to do: by then today's close (and its retry)
+  // is settled, so the Agent Ops panel shows today's state the same evening.
+  // The GitHub Action's 17:00 schedule stays as a backup (GitHub has been
+  // starting it 8-11 hours late). Best-effort; never fails the cron.
+  if (mode === "retry") await recordProbeRun("18:05 IST cron");
+  return response;
+}
+
+async function runDailySnapshot(mode: "primary" | "retry"): Promise<NextResponse> {
   const run = startOpsRun("cron", "daily-snapshot");
   const runStarted = Date.now();
   if (mode === "retry") {
