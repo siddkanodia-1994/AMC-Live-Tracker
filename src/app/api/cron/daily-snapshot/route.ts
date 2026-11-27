@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { appSettings, holdings } from "@/lib/db/schema";
 import { computeLiveAum, NoDataImportedError } from "@/lib/aum/compute-live-aum";
 import { upsertDailyDataQuality } from "@/lib/aum/daily-data-quality";
 import { clearRecoveredManualMutes, getAutoMuteThresholdDays, recordLastCloseLog } from "@/lib/aum/last-close-mute";
@@ -64,6 +67,28 @@ export async function GET(request: Request) {
   return response;
 }
 
+// Industry-wide current-period holding value (₹ cr) of each active
+// last-close stock -- what lets classifyLiveAumStep flag one large holding
+// on a stale price. One small grouped read over a handful of ISINs;
+// best-effort (an empty map just means count-only rules apply).
+async function lastCloseHoldingValues(stocks: { isin: string; autoMuted: boolean }[]): Promise<Map<string, number>> {
+  const isins = stocks.filter((s) => !s.autoMuted).map((s) => s.isin);
+  if (isins.length === 0 || isins.length > 500) return new Map();
+  try {
+    const [period] = await db.select({ value: appSettings.value }).from(appSettings).where(eq(appSettings.key, "current_report_period"));
+    if (!period) return new Map();
+    const rows = await db
+      .select({ isin: holdings.isin, valueCr: sql<string>`sum(${holdings.marketValueCr})` })
+      .from(holdings)
+      .where(and(eq(holdings.reportPeriod, period.value), inArray(holdings.isin, isins)))
+      .groupBy(holdings.isin);
+    return new Map(rows.filter((r) => r.isin !== null).map((r) => [r.isin as string, Number(r.valueCr)]));
+  } catch (err) {
+    console.error("lastCloseHoldingValues failed:", err);
+    return new Map();
+  }
+}
+
 // Weekly (Monday 18:05 IST) re-sync of the DHAN instrument master, so a
 // newly listed holding -- a demerged stock like HEG Graphite, which sat
 // unpriced for weeks after listing -- gets mapped without anyone pressing
@@ -95,7 +120,7 @@ async function runDailySnapshot(mode: "primary" | "retry"): Promise<NextResponse
     const snapshot = await computeLiveAum({ forceRefresh: true });
     run.rows.push({
       node: "computeLiveAum",
-      ...classifyLiveAumStep(snapshot.dhanStatus, snapshot.lastCloseStocks, snapshot.amcs.length),
+      ...classifyLiveAumStep(snapshot.dhanStatus, snapshot.lastCloseStocks, snapshot.amcs.length, await lastCloseHoldingValues(snapshot.lastCloseStocks)),
       details: { dhanStatus: snapshot.dhanStatus, priceAsOfDate: snapshot.priceAsOfDate, amcs: snapshot.amcs.length },
       durationMs: Date.now() - computeStarted,
     });
