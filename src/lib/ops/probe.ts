@@ -231,9 +231,18 @@ export async function runProbe(now: Date = new Date()): Promise<OpsRow[]> {
       .select({ isin: staleMappingUnresolvedLog.isin, companyName: staleMappingUnresolvedLog.companyName, firstCheckedAt: staleMappingUnresolvedLog.firstCheckedAt })
       .from(staleMappingUnresolvedLog)
       .leftJoin(isinManualMute, eq(isinManualMute.isin, staleMappingUnresolvedLog.isin))
-      .where(isNull(isinManualMute.isin))
+      .where(
+        and(
+          isNull(isinManualMute.isin),
+          // Only ISINs still held this period: a stale entry for a holding
+          // every fund has since sold (e.g. redeemed preference shares) isn't
+          // pricing anything, and can't be muted either -- the daily cron
+          // clears mutes for ISINs no longer on last close.
+          currentPeriod ? inArray(staleMappingUnresolvedLog.isin, db.select({ isin: holdings.isin }).from(holdings).where(eq(holdings.reportPeriod, currentPeriod))) : undefined,
+        ),
+      )
       .limit(50);
-    if (open.length === 0) return { status: "ok", summary: "none open (muted ISINs excluded)" };
+    if (open.length === 0) return { status: "ok", summary: "none open (muted and no-longer-held ISINs excluded)" };
     const oldestDays = Math.max(...open.map((o) => Math.floor((now.getTime() - o.firstCheckedAt.getTime()) / DAY_MS)));
     return {
       status: oldestDays >= 14 ? "warn" : "ok",

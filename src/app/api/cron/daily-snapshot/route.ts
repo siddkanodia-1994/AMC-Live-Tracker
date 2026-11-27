@@ -14,6 +14,8 @@ import { getAllMonthlyFlows, upsertMonthlyFlow } from "@/lib/aum/industry-flows"
 import { getIstDateString } from "@/lib/utils/date";
 import { flushOpsRun, hasCompletedRunSince, runOpsStep, startOpsRun } from "@/lib/ops/run-log";
 import { recordProbeRun } from "@/lib/ops/probe";
+import { classifyLiveAumStep, isInstrumentSyncDay } from "@/lib/ops/cron-steps";
+import { syncInstrumentMap } from "@/lib/dhan/instrument-master";
 
 // Bumped from 30 -> 180: the outage-reclaim step below can fetch DHAN
 // historical closes for up to a few hundred ISINs (paced ~500ms each) when
@@ -55,8 +57,25 @@ export async function GET(request: Request) {
   // is settled, so the Agent Ops panel shows today's state the same evening.
   // The GitHub Action's 17:00 schedule stays as a backup (GitHub has been
   // starting it 8-11 hours late). Best-effort; never fails the cron.
-  if (mode === "retry") await recordProbeRun("18:05 IST cron");
+  if (mode === "retry") {
+    if (isInstrumentSyncDay(getIstDateString())) await runWeeklyInstrumentSync();
+    await recordProbeRun("18:05 IST cron");
+  }
   return response;
+}
+
+// Weekly (Monday 18:05 IST) re-sync of the DHAN instrument master, so a
+// newly listed holding -- a demerged stock like HEG Graphite, which sat
+// unpriced for weeks after listing -- gets mapped without anyone pressing
+// Sync Instruments. The same idempotent upsert as /admin; runs before the
+// probe so instrument-map-gaps reflects it. Best-effort.
+async function runWeeklyInstrumentSync(): Promise<void> {
+  const run = startOpsRun("cron", "instrument-sync");
+  await runOpsStep(run, "syncInstrumentMap", syncInstrumentMap, (r) => ({
+    summary: `${r.upserted} ISINs upserted, ${r.unmatchedIsins.length} priceable ISINs not in DHAN's master`,
+    details: { upserted: r.upserted, unmatched: r.unmatchedIsins.length },
+  }));
+  await flushOpsRun(run);
 }
 
 async function runDailySnapshot(mode: "primary" | "retry"): Promise<NextResponse> {
@@ -76,8 +95,7 @@ async function runDailySnapshot(mode: "primary" | "retry"): Promise<NextResponse
     const snapshot = await computeLiveAum({ forceRefresh: true });
     run.rows.push({
       node: "computeLiveAum",
-      status: snapshot.dhanStatus === "ok" ? "ok" : snapshot.dhanStatus === "degraded" ? "warn" : "fail",
-      summary: `${snapshot.amcs.length} AMCs snapshotted, DHAN ${snapshot.dhanStatus}, ${snapshot.lastCloseStocks.length} on last close`,
+      ...classifyLiveAumStep(snapshot.dhanStatus, snapshot.lastCloseStocks, snapshot.amcs.length),
       details: { dhanStatus: snapshot.dhanStatus, priceAsOfDate: snapshot.priceAsOfDate, amcs: snapshot.amcs.length },
       durationMs: Date.now() - computeStarted,
     });

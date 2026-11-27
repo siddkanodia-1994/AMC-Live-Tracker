@@ -13,6 +13,12 @@
 // "live" -- found during a full pipeline audit. securityId 495213
 // confirmed against the instrument master as MCX's GOLD DEC FUT contract
 // (the same Dec-2026 expiry Silver is already correctly tracking).
+//
+// Rolled 2026-11-27, a week before both Dec contracts expire (2026-12-04),
+// to the next front months in DHAN's instrument master (MCX, FUTCOM):
+// GOLD FEB FUT 559933 (expires 2027-02-05) and SILVER MAR FUT 564619
+// (expires 2027-03-05). The probe's mcx-freshness check now warns 7 days
+// before expiry, so the next roll shows up on the Agent Ops panel.
 import { db } from "../src/lib/db/client";
 import { mcxTrackedContract } from "../src/lib/db/schema";
 
@@ -24,8 +30,8 @@ interface SeedRow {
 }
 
 const CONTRACTS: SeedRow[] = [
-  { metal: "gold", securityId: "495213", tradingSymbol: "GOLD-04Dec2026-FUT", expiryDate: "2026-12-04" },
-  { metal: "silver", securityId: "495214", tradingSymbol: "SILVER-04Dec2026-FUT", expiryDate: "2026-12-04" },
+  { metal: "gold", securityId: "559933", tradingSymbol: "GOLD-05Feb2027-FUT", expiryDate: "2027-02-05" },
+  { metal: "silver", securityId: "564619", tradingSymbol: "SILVER-05Mar2027-FUT", expiryDate: "2027-03-05" },
 ];
 
 async function main() {
