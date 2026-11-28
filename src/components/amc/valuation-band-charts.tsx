@@ -5,7 +5,7 @@ import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Too
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAmcValuation } from "@/hooks/use-amc-valuation";
 import { computeRangeCutoffDate, filterByCutoff, RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
-import { computeBands, formatDayMonthYear, niceYAxis, rangeTicks, type Bands } from "@/lib/valuation/bands";
+import { computeBands, formatDayMonthYear, niceYAxis, rangeTicks, VALUATION_BAND_DEFAULT_RANGE, type Bands } from "@/lib/valuation/bands";
 import type { ValuationPoint } from "@/lib/valuation/store";
 import { withLiveValuationPoint, type PriceClose } from "@/lib/valuation/provisional";
 import { ValuationUploadPanel } from "./valuation-upload-panel";
@@ -18,7 +18,7 @@ import { ValuationUploadPanel } from "./valuation-upload-panel";
 // the window shown, the x-axis ticks follow the range (weekly on 3M up to
 // quarterly on All), and the y-axis fits the window's values and bands.
 
-const DEFAULT_RANGE: RangeOption = "3y";
+const DEFAULT_RANGE: RangeOption = VALUATION_BAND_DEFAULT_RANGE;
 
 const SERIES = "#1f2a5c";
 const BAND_LINES: { key: keyof Pick<Bands, "mean" | "plus1" | "plus2" | "minus1" | "minus2">; label: string; color: string; dashed: boolean }[] = [

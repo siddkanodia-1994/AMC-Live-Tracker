@@ -21,6 +21,12 @@ merged.
 - **Oct-26 Mirae tracker:** run the `ingest` workflow on it after the 15th of November, then import via /admin.
 - **Daily data-ops schedule:** create a weekday 17:15 IST Claude Code scheduled task that runs the `data-ops` workflow (agent creation of scheduled tasks is blocked).
 - **GitHub PAT** in `~/.claude/settings.json`: revoke it.
+- **Saturday AMC Weekly Update — go-live steps:**
+  1. Apply migration `0039_weekly_report` to production (approval needed).
+  2. Refresh `ADMIN_SECRET` in `.env.local`: `report publish` gets 401 with the stale one.
+  3. Allow the Workflow tool for the scheduled task.
+  4. Create the Saturday 09:00 IST scheduled task `amc-weekly-report`, which runs the `weekly-report` workflow.
+  5. Optional: save FY27E–FY29E PAT for SBI, UTI and Motilal in the Valuation Model, so their targets include PE and Mcap/Sales.
 
 ## Done (2026-11-03)
 

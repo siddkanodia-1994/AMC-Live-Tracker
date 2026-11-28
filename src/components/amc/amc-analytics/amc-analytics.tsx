@@ -8,6 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAmcStockCorrelations } from "@/hooks/use-amc-stock-correlations";
 import { useAmcAnalyticsInputs } from "@/hooks/use-amc-analytics-inputs";
 import { useLiveCorrelationEntries } from "@/hooks/use-amc-live-prices";
+import { currentPriceOf } from "@/lib/amc-stock/fit-section-inputs";
+import { LISTED_AMC_TABS } from "@/lib/amc-stock/listed-amc-tabs";
 import { previousClose } from "@/lib/amc-stock/live-point";
 import { formatLedgerPct } from "@/lib/aum/period-ledger";
 import { useActiveGoldSilverBlendAmcIds } from "@/components/layout/gold-silver-blend-context";
@@ -32,17 +34,7 @@ const plexCondensed = IBM_Plex_Sans_Condensed({
   subsets: ["latin"],
 });
 
-// Tab order and short tab labels for the 8 listed AMCs.
-const AMC_TABS: { slug: string; tab: string }[] = [
-  { slug: "hdfc-mutual-fund", tab: "HDFC" },
-  { slug: "icici-prudential-mutual-fund", tab: "ICICI Pru" },
-  { slug: "sbi-mutual-fund", tab: "SBI" },
-  { slug: "nippon-india-mutual-fund", tab: "Nippon" },
-  { slug: "aditya-birla-sun-life-mutual-fund", tab: "ABSL" },
-  { slug: "uti-mutual-fund", tab: "UTI" },
-  { slug: "canara-robeco-mutual-fund", tab: "Canara Robeco" },
-  { slug: "motilal-oswal-mutual-fund", tab: "Motilal" },
-];
+const AMC_TABS = LISTED_AMC_TABS;
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -232,8 +224,7 @@ export function AmcAnalytics({ liveAum }: { liveAum?: LiveAumSnapshot }) {
   // CMP: today's live price when there is one (after 15:30, the session's
   // last price), else the last stored close the Overview prices come from.
   const livePoint = livePoints.get(slug);
-  const lastClose = data?.amcs.find((a) => a.slug === slug)?.stockPriceSeries.at(-1)?.priceInr ?? null;
-  const cmpInr = livePoint?.priceInr ?? lastClose;
+  const cmpInr = currentPriceOf(data?.amcs.find((a) => a.slug === slug), livePoint?.priceInr);
   const cmpIsLive = livePoint !== undefined && Boolean(livePrices?.marketOpen);
   const amcOptions = tabs.map((t) => ({ slug: t.slug, label: COMPANY_BY_SLUG.get(t.slug) ?? t.tab }));
   const live = liveAum?.amcs.find((a) => a.slug === slug);

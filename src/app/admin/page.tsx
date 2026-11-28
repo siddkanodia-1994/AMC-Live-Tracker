@@ -8,6 +8,7 @@ import { MonthlyFlowForm } from "@/components/admin/monthly-flow-form";
 import { SettingsForm } from "@/components/admin/settings-form";
 import { SyncActions } from "@/components/admin/sync-actions";
 import { WeekendPriceAnomalies } from "@/components/admin/weekend-price-anomalies";
+import { WeeklyReportsPanel } from "@/components/admin/weekly-reports-panel";
 import { adminFetch, clearStoredAdminSecret, getStoredAdminSecret, storeAdminSecret } from "@/lib/admin-client";
 
 export default function AdminPage() {
@@ -76,6 +77,7 @@ export default function AdminPage() {
         </Button>
       </div>
       <AgentOpsPanel secret={secret} />
+      <WeeklyReportsPanel secret={secret} />
       <SettingsForm secret={secret} />
       <SyncActions secret={secret} />
       <WeekendPriceAnomalies secret={secret} />

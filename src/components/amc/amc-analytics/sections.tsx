@@ -9,9 +9,7 @@ import { ValuationBandCharts } from "@/components/amc/valuation-band-charts";
 import {
   computeAumWhatIf,
   parseAumInput,
-  whatIfStartingAum,
   WHAT_IF_AUM_DAYS_OPTIONS,
-  DEFAULT_WHAT_IF_AUM_DAYS,
   type RegressionLine,
 } from "@/lib/amc-stock/aum-what-if";
 import { computeRegressionResult, type ExtraLagDays } from "@/lib/amc-stock/regression-engine";
@@ -24,7 +22,6 @@ import { computeFitCorrelation } from "@/lib/amc-stock/fit-stats";
 import type { StockCorrelationDefaults } from "@/lib/amc-stock/correlation-defaults";
 import type { AmcStockCorrelationEntry } from "@/lib/amc-stock/correlation-summary";
 import { RANGE_OPTIONS, type RangeOption } from "@/lib/aum/date-range";
-import { trimToLastContinuousRun } from "@/lib/aum/series-math";
 import { formatPct, formatPriceInr, formatShortDateWithYear } from "@/lib/utils/format";
 import { formatLedgerInr, formatLedgerPct } from "@/lib/aum/period-ledger";
 import { computeValuationBlock } from "@/lib/valuation/valuation-block";
@@ -34,15 +31,19 @@ import { getIstDateString } from "@/lib/utils/date";
 import type { AmcAnalyticsField, AmcAnalyticsInputs, AmcAnalyticsManual } from "@/lib/aum/amc-analytics-inputs";
 import { saveAmcInput, saveValuationEstimate, saveValuationTargetFy, useValuationTargetFy } from "@/hooks/use-amc-analytics-inputs";
 import { useAmcValuation } from "@/hooks/use-amc-valuation";
-import { withLiveValuationPoint } from "@/lib/valuation/provisional";
 import { computeRatioLadder, RATIO_LADDER_SDS, type RatioLadder } from "@/lib/valuation/ratio-ladder";
 import { computeTargetPrices, SCENARIO_KEYS, type TargetPriceTable, type ValuationMethodKey } from "@/lib/valuation/target-price";
+import { buildTargetPriceInputs, resolveValuationSettings, type ValuationSettings } from "@/lib/valuation/target-price-inputs";
+import {
+  liveFairValueAum,
+  predictorStartAum,
+  savedFitView,
+  savedPredictorInput,
+  savedRegressionConfig,
+  whatIfDaysOf,
+} from "@/lib/amc-stock/fit-section-inputs";
 import {
   CUSTOM_AUM_DAYS,
-  DEFAULT_BEST_FIT_AUM_DAYS,
-  DEFAULT_BEST_FIT_AUM_PCT,
-  DEFAULT_VALUATION_RATIO_DAYS,
-  DEFAULT_VALUATION_WEIGHTS,
   isBestFitAumPct,
   isValuationAvgDays,
   MAX_VALUATION_AVG_DAYS,
@@ -62,11 +63,7 @@ import {
 export function useSavedRegression(entry: AmcStockCorrelationEntry | undefined, defaults: StockCorrelationDefaults | undefined) {
   return useMemo(() => {
     if (!entry || !defaults) return null;
-    return computeRegressionResult(entry.aumHistory, entry.stockPriceSeries, {
-      maWindow: defaults.maDays,
-      extraLagDays: defaults.extraLagDays as ExtraLagDays,
-      range: defaults.range,
-    });
+    return computeRegressionResult(entry.aumHistory, entry.stockPriceSeries, savedRegressionConfig(defaults));
   }, [entry, defaults]);
 }
 
@@ -113,10 +110,9 @@ export function AumPredictorSection({
   const [saving, setSaving] = useState(false);
   if (!entry || !defaults) return null;
 
-  const whatIfDays = days ?? defaults.whatIfAumDays ?? DEFAULT_WHAT_IF_AUM_DAYS;
-  const daily = trimToLastContinuousRun(entry.aumHistory).map((d) => d.liveAumCr);
-  const startAum = whatIfStartingAum(daily, whatIfDays);
-  const savedInput = defaults.aumInputs?.[entry.slug] ?? null;
+  const whatIfDays = days ?? whatIfDaysOf(defaults);
+  const startAum = predictorStartAum(entry, whatIfDays);
+  const savedInput = savedPredictorInput(entry, defaults);
   const inputAum = entry.slug in typed ? typed[entry.slug] : savedInput;
   const aum = inputAum ?? startAum;
   // Same "current price" the table's what-if uses: the latest stored close.
@@ -247,7 +243,7 @@ export function LivePredictorSection({
   const line = lineOf(result);
   if (!entry || !defaults) return null;
   // Today's live snapshot when we have it; else the latest stored day.
-  const aum = liveAumCr ?? whatIfStartingAum(trimToLastContinuousRun(entry.aumHistory).map((d) => d.liveAumCr), 0);
+  const aum = liveFairValueAum(entry, liveAumCr);
   const w = line && aum !== null ? computeAumWhatIf(line, aum, cmpInr) : null;
   return (
     <Panel title="Live fair value" unit={`₹ per share · live AUM on the ${defaults.maDays}D-avg regression line`}>
@@ -337,10 +333,7 @@ export function useFitControls(defaults: StockCorrelationDefaults | undefined): 
   const [aumOnlyChoice, setAumOnlyChoice] = useState<boolean | null>(null);
   const [levelsChoice, setLevelsChoice] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
-  const savedRange = defaults?.fitRange ?? "3y";
-  const savedMa = defaults?.fitMaDays ?? 1;
-  const savedAumOnly = defaults?.fitAumOnlyAveraging ?? false;
-  const savedLevels = defaults?.fitLevelsCorrelation ?? false;
+  const { range: savedRange, maDays: savedMa, aumOnlyAveraging: savedAumOnly, levelsCorrelation: savedLevels } = savedFitView(defaults);
   const maDaysInput = maInputChoice ?? (defaults ? savedMaInput(savedMa) : "");
   // Same clamp and ~300ms debounce as the Stock Correlation table -- but
   // only while someone is typing. On the saved value (first load, Back to
@@ -916,21 +909,6 @@ const METHOD_ROWS: { key: ValuationMethodKey; name: string; how: (t: TargetPrice
   { key: "mcapSales", name: "Mcap / Sales", how: (_t, _s, fy) => `${fyLabel(fy)}E revenue × Mcap / Sales ÷ shares, discounted 2 periods` },
 ];
 
-interface ValuationSettings {
-  ratioRange: RangeOption;
-  ratioHistoryDays: number;
-  ratioTodayDays: number;
-  bestFitRange: RangeOption;
-  bestFitMaDays: number;
-  bestFitAumDays: number;
-  bestFitAumPct: number;
-  /** Each AMC's typed AUM (₹ Cr) for the Custom choice. */
-  ratioCustomAum: Record<string, number>;
-  bestFitCustomAum: Record<string, number>;
-  /** The Average's weight (%) per method, shared like the rest. */
-  weights: ValuationWeights;
-}
-
 function dayText(days: number): string {
   return days === CUSTOM_AUM_DAYS ? "custom" : days === 0 ? "live" : `${days}D-avg`;
 }
@@ -1304,18 +1282,7 @@ export function ValuationModelSection({
   const { data: valuation } = useAmcValuation(slug);
   const [local, setLocal] = useState<Partial<ValuationSettings>>({});
   const [saving, setSaving] = useState(false);
-  const settings: ValuationSettings = {
-    ratioRange: local.ratioRange ?? defaults?.valuationRatioRange ?? "3y",
-    ratioHistoryDays: local.ratioHistoryDays ?? defaults?.valuationRatioHistoryDays ?? DEFAULT_VALUATION_RATIO_DAYS,
-    ratioTodayDays: local.ratioTodayDays ?? defaults?.valuationRatioDays ?? DEFAULT_VALUATION_RATIO_DAYS,
-    bestFitRange: local.bestFitRange ?? defaults?.bestFitRange ?? "3y",
-    bestFitMaDays: local.bestFitMaDays ?? defaults?.bestFitMaDays ?? DEFAULT_VALUATION_RATIO_DAYS,
-    bestFitAumDays: local.bestFitAumDays ?? defaults?.bestFitAumDays ?? DEFAULT_BEST_FIT_AUM_DAYS,
-    bestFitAumPct: local.bestFitAumPct ?? defaults?.bestFitAumPct ?? DEFAULT_BEST_FIT_AUM_PCT,
-    ratioCustomAum: { ...defaults?.valuationRatioCustomAum, ...local.ratioCustomAum },
-    bestFitCustomAum: { ...defaults?.bestFitCustomAum, ...local.bestFitCustomAum },
-    weights: local.weights ?? defaults?.valuationWeights ?? DEFAULT_VALUATION_WEIGHTS,
-  };
+  const settings = useMemo(() => resolveValuationSettings(defaults, local), [defaults, local]);
   const ratioCustomCr = settings.ratioCustomAum[slug] ?? null;
   const bestFitCustomCr = settings.bestFitCustomAum[slug] ?? null;
   const sheetForSlug = inputs && inputs.slug === slug ? inputs : undefined;
@@ -1330,41 +1297,10 @@ export function ValuationModelSection({
 
   const table = useMemo(() => {
     if (!entry || !defaults || !yearManual) return null;
-    return computeTargetPrices({
-      aumHistory: entry.aumHistory,
-      stockPriceSeries: entry.stockPriceSeries,
-      ratioRange: settings.ratioRange,
-      ratioHistoryDays: settings.ratioHistoryDays,
-      ratioTodayDays: settings.ratioTodayDays,
-      ratioCustomAumCr: ratioCustomCr,
-      bestFitCustomAumCr: bestFitCustomCr,
-      bestFitRange: settings.bestFitRange,
-      bestFitMaDays: settings.bestFitMaDays,
-      extraLagDays: defaults.extraLagDays,
-      bestFitAumDays: settings.bestFitAumDays,
-      bestFitAumPct: settings.bestFitAumPct,
-      manual: yearManual,
-      mcapSalesSeries: withLiveValuationPoint(valuation?.points ?? [], entry.stockPriceSeries.at(-1), entry.stockPriceSeries).flatMap((p) => (p.mcapToSales === null ? [] : [{ date: p.date, value: p.mcapToSales }])),
-      cmpInr,
-      weights: settings.weights,
-    });
-  }, [
-    entry,
-    defaults,
-    yearManual,
-    valuation,
-    settings.ratioRange,
-    settings.ratioHistoryDays,
-    settings.ratioTodayDays,
-    settings.bestFitRange,
-    settings.bestFitMaDays,
-    settings.bestFitAumDays,
-    settings.bestFitAumPct,
-    ratioCustomCr,
-    bestFitCustomCr,
-    cmpInr,
-    settings.weights,
-  ]);
+    return computeTargetPrices(
+      buildTargetPriceInputs({ entry, defaults, settings, manual: yearManual, valuationPoints: valuation?.points ?? [], cmpInr })
+    );
+  }, [entry, defaults, yearManual, valuation, settings, cmpInr]);
 
   // Picking Custom starts this AMC's box at the AUM the previous choice gave.
   const pickRatioDays = (v: number) =>

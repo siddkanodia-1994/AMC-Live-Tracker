@@ -1096,3 +1096,25 @@ export const amcValuationRevision = pgTable(
   },
   (t) => [index("amc_valuation_revision_amc_date_idx").on(t.amcId, t.date)]
 );
+
+// The Saturday "AMC Weekly Update" (combined report on the 8 listed AMCs,
+// built from the AMC Analytics tab): one row per week, keyed by the as-of
+// trading day, uploaded by `agent-cli report publish` after the commentary
+// passes its number check. Shown only on /admin. The list query must never
+// select html / pdf_base64 / figures / commentary (Neon egress).
+export const weeklyReport = pgTable(
+  "weekly_report",
+  {
+    id: serial("id").primaryKey(),
+    weekEnding: date("week_ending").notNull(),
+    asOfDate: date("as_of_date").notNull(),
+    html: text("html").notNull(),
+    // Base64 text rather than bytea: simplest round trip through the Neon HTTP driver.
+    pdfBase64: text("pdf_base64"),
+    figures: jsonb("figures").$type<Record<string, unknown>>(),
+    commentary: jsonb("commentary").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("weekly_report_week_ending_idx").on(t.weekEnding)]
+);

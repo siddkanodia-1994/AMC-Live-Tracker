@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { MonthlyFlowPoint } from "@/lib/aum/industry-flows";
-import { buildIndustrySipLedger, monthKey, monthLabel, monthShortLabel, shiftMonth, type IndustrySipRow } from "@/lib/aum/industry-sip";
+import { buildIndustrySipLedger, buildIndustrySipSeries, meanSdPopulation, monthKey, monthLabel, monthShortLabel, type IndustrySipRow } from "@/lib/aum/industry-sip";
 import { formatLedgerInr, formatLedgerPct } from "@/lib/aum/period-ledger";
 import { Pct } from "./sections";
 
@@ -28,30 +28,9 @@ const MONTH_COUNTS: { value: number | null; label: string }[] = [
 
 const pctText = (v: number) => formatLedgerPct(v)?.text ?? "—";
 
-interface SeriesPoint {
-  key: string;
-  value: number;
-  yoyPct: number | null;
-}
-
-// YoY comes from the full series (the first month of a 1Y view still needs
-// the year before it); the range only trims what's shown and the bands.
-function buildSeries(points: readonly MonthlyFlowPoint[]): SeriesPoint[] {
-  const byKey = new Map(points.map((p) => [monthKey(p.monthEndDate), p.sipContributionsCr]));
-  return [...byKey.keys()].sort().map((key) => {
-    const value = byKey.get(key)!;
-    const base = byKey.get(shiftMonth(key, -12));
-    return { key, value, yoyPct: base ? value / base - 1 : null };
-  });
-}
-
-// Population SD, as the Summary tab's chart.
-function meanSd(values: number[]): { mean: number; sd: number; n: number } | null {
-  if (values.length < 2) return null;
-  const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const sd = Math.sqrt(values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length);
-  return { mean, sd, n: values.length };
-}
+// Series and bands are shared with the weekly report (lib/aum/industry-sip).
+const buildSeries = buildIndustrySipSeries;
+const meanSd = meanSdPopulation;
 
 // Round axis ends and ticks to a 1 / 2 / 2.5 / 5 step, so the axis reads
 // 10,000 / 20,000 rather than the padded data range's own odd ends.

@@ -1,7 +1,9 @@
+import "./neon-dns-fallback";
 import { neon } from "@neondatabase/serverless";
 import { refreshForeignPrices, syncForeignInstrumentMap } from "../../src/lib/aum/foreign-pricing";
 import { runProbe } from "../../src/lib/ops/probe";
 import { flushOpsRun, startOpsRun, type OpsStatus } from "../../src/lib/ops/run-log";
+import { reportFigures, reportPublish, reportRender, reportStamp, reportVerify } from "./weekly-report-cli";
 
 // The ONLY way the Claude Code agent loops (.claude/workflows/*) touch data.
 // Hooks in .claude/settings.json block agents from running any other script
@@ -11,6 +13,7 @@ import { flushOpsRun, startOpsRun, type OpsStatus } from "../../src/lib/ops/run-
 //   probe                              run the deterministic probe, print rows (no write)
 //   repair <action>                    one allowlisted, idempotent repair via the production admin API
 //   log <loop> <node> <status> <summary> [detailsJson]   append an agent row to ops_run_log
+//   report <figures|verify|render|publish> [YYYY-MM-DD]  the Saturday AMC Weekly Update (see weekly-report-cli.ts)
 //
 // Local dev shares the production database, so "read-only" is enforced by
 // the database itself (READ ONLY transaction), not by inspecting the text.
@@ -18,7 +21,9 @@ import { flushOpsRun, startOpsRun, type OpsStatus } from "../../src/lib/ops/run-
 const PROD_URL = process.env.OPS_APP_URL ?? "https://amc-live-aum-tracker.vercel.app";
 
 // Allowlisted repairs: each is an existing, idempotent admin endpoint the
-// user already runs by hand from /admin. Nothing else is reachable.
+// user already runs by hand from /admin. The only other admin write is
+// `report publish` (weekly-report-cli.ts), which refuses anything that
+// doesn't re-verify against production.
 const REPAIRS: Record<string, { path: string; what: string }> = {
   "reclaim-outages": { path: "/api/admin/reclaim-outages", what: "re-fetch DHAN historical closes for detected outage days" },
   "reclaim-forward-gap": { path: "/api/admin/reclaim-forward-gap", what: "backfill days since the current period began" },
@@ -42,6 +47,8 @@ function usage(): never {
       "  agent-cli probe",
       `  agent-cli repair <${[...Object.keys(REPAIRS), ...Object.keys(LOCAL_REPAIRS)].join("|")}>`,
       "  agent-cli log <loop> <node> <ok|warn|fail|proposal|fixed|skipped> <summary> [detailsJson]",
+      "  agent-cli report <figures|verify|render|publish> [YYYY-MM-DD]",
+      "  agent-cli report stamp <YYYY-MM-DD> <pass|fail> [notes]",
     ].join("\n")
   );
   process.exit(2);
@@ -124,14 +131,26 @@ async function main() {
     case "log":
       if (rest.length < 4) usage();
       return log(rest[0], rest[1], rest[2], rest[3], rest[4]);
+    case "report": {
+      if (rest[0] === "stamp") return reportStamp(rest[1], rest[2], rest[3]);
+      const commands = { figures: reportFigures, verify: reportVerify, render: reportRender, publish: reportPublish };
+      if (!Object.hasOwn(commands, rest[0] ?? "")) usage();
+      return commands[rest[0] as keyof typeof commands](rest[1]);
+    }
     default:
       usage();
   }
 }
 
+// Exit only once stdout has flushed: piped output (e.g. `| jq`) is written
+// asynchronously, and exiting straight away cuts long JSON short.
+function exitAfterFlush(code: number) {
+  process.stdout.write("", () => process.exit(code));
+}
+
 main()
-  .then(() => process.exit(process.exitCode ?? 0))
+  .then(() => exitAfterFlush(Number(process.exitCode ?? 0)))
   .catch((err) => {
     console.error(err instanceof Error ? err.message : err);
-    process.exit(1);
+    exitAfterFlush(1);
   });

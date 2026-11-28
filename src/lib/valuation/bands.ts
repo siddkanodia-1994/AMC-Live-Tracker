@@ -4,6 +4,9 @@ import type { RangeOption } from "../aum/date-range";
 // charts: the mean / ±1 / ±2 SD lines over whatever window is shown, and
 // x-axis ticks whose spacing follows the selected Range.
 
+/** The PE / Mcap-Sales band charts' opening Valuation range (the weekly report uses it too). */
+export const VALUATION_BAND_DEFAULT_RANGE: RangeOption = "3y";
+
 export interface Bands {
   mean: number;
   sd: number;

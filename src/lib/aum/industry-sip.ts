@@ -194,3 +194,30 @@ export function buildIndustrySipLedger(points: readonly MonthlyFlowPoint[], mont
 
   return { latestMonth: latest, financialYear, quarter, month };
 }
+
+// ── Trend chart series (AMC Analytics' Industry SIP graph, weekly report) ──
+
+export interface IndustrySipSeriesPoint {
+  key: string;
+  value: number;
+  yoyPct: number | null;
+}
+
+// YoY comes from the full series (the first month of a 1Y view still needs
+// the year before it); a range only trims what's shown and the bands.
+export function buildIndustrySipSeries(points: readonly Pick<MonthlyFlowPoint, "monthEndDate" | "sipContributionsCr">[]): IndustrySipSeriesPoint[] {
+  const byKey = new Map(points.map((p) => [monthKey(p.monthEndDate), p.sipContributionsCr]));
+  return [...byKey.keys()].sort().map((key) => {
+    const value = byKey.get(key)!;
+    const base = byKey.get(shiftMonth(key, -12));
+    return { key, value, yoyPct: base ? value / base - 1 : null };
+  });
+}
+
+// Population SD, as the Summary tab's chart.
+export function meanSdPopulation(values: number[]): { mean: number; sd: number; n: number } | null {
+  if (values.length < 2) return null;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const sd = Math.sqrt(values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length);
+  return { mean, sd, n: values.length };
+}

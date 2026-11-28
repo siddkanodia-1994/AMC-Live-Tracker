@@ -274,6 +274,13 @@
       "when": 1795501363915,
       "tag": "0038_valuation_estimate",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1795849612851,
+      "tag": "0039_weekly_report",
+      "breakpoints": true
     }
   ]
 }
