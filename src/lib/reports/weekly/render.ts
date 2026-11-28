@@ -4,6 +4,7 @@
 // (written separately and number-checked) fills the bullet slots.
 
 import type { AmcWeekly, CommentaryBullet, CommentarySection, WeeklyCommentary, WeeklyReportData } from "./types";
+import { weeklyReportFileBase } from "./file-name";
 import { shortDate } from "./next-week";
 
 const COLOR: Record<string, string> = {
@@ -71,7 +72,9 @@ function quarterBars(a: AmcWeekly): string {
     s += `<rect x="${x.toFixed(1)}" y="${(base - h).toFixed(1)}" width="${(bw - 4).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${COLOR[a.short]}" opacity="${last ? 1 : 0.38}"/>`;
     if (i >= vals.length - 2) s += `<text x="${(x + (bw - 4) / 2).toFixed(1)}" y="${(base - h - 3).toFixed(1)}" class="vl" text-anchor="middle">${Math.round(v)}</text>`;
     const [qq, fy] = qLabel(qs[i].label).split(" ");
-    s += `<text x="${(x + (bw - 4) / 2).toFixed(1)}" y="${base + 9}" class="ax" text-anchor="middle">${qq}</text><text x="${(x + (bw - 4) / 2).toFixed(1)}" y="${base + 17}" class="ax" text-anchor="middle">${fy}</text>`;
+    // The FY only under the first bar and each Q1, so the labels don't run together.
+    s += `<text x="${(x + (bw - 4) / 2).toFixed(1)}" y="${base + 9}" class="ax" text-anchor="middle">${qq}</text>`;
+    if (i === 0 || qq === "Q1") s += `<text x="${(x + (bw - 4) / 2).toFixed(1)}" y="${base + 17}" class="ax" text-anchor="middle">${fy}</text>`;
   });
   return `${s}</svg>`;
 }
@@ -317,7 +320,7 @@ export function renderWeeklyReportHtml(data: WeeklyReportData, commentary: Weekl
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AMC Weekly Update ${escapeHtml(data.asOf)}</title>
+<title>${escapeHtml(weeklyReportFileBase(data.asOf))}</title>
 <style>
 :root{--navy:#1d3557;--ink:#1f2933;--muted:#6b7280;--rule:#d6dbe3;--pos:#1a8a3a;--neg:#cf2e2e;--box:#eef4fb;--blue:#2f80d1}
 *{box-sizing:border-box}body{margin:0;background:#e9ecf1;color:var(--ink);font:13px/1.5 -apple-system,"Helvetica Neue",Arial,sans-serif}
@@ -329,7 +332,7 @@ h3{font-size:14px;color:var(--navy);margin:16px 0 4px}
 h2{font-size:18px;color:var(--navy);border-bottom:2px solid var(--rule);padding-bottom:5px;margin:26px 0 10px}
 table{width:100%;border-collapse:collapse;font-size:12.3px;margin:6px 0}th{background:var(--navy);color:#fff;font-weight:600;padding:6px 7px;text-align:left}th.num,td.num{text-align:right;white-space:nowrap}
 td{padding:5px 7px;border-bottom:1px solid #e5e8ee}tr.tot td{font-weight:700;background:#f3f5f8}tr.tgt td{background:#f3f6fa}td.co{vertical-align:middle;background:#fff}td.mean{font-weight:700}
-.pos{color:var(--pos);font-weight:600}.neg{color:var(--neg);font-weight:600}.d{color:var(--muted);font-size:11px;font-weight:400}.amc{font-weight:700}.muted{color:var(--muted);font-weight:400;font-size:11.5px}
+.pos{color:var(--pos);font-weight:600}.neg{color:var(--neg);font-weight:600}.d{color:var(--muted);font-size:11px;font-weight:400}.amc{font-weight:700;white-space:nowrap}tr.tot td:first-child{white-space:nowrap}.muted{color:var(--muted);font-weight:400;font-size:11.5px}
 .statline{font-size:12px;color:var(--muted);margin:10px 0 0}.statline b{color:var(--ink)}
 .cap{font-style:italic;color:var(--muted);font-size:11.3px;margin:4px 0 8px}ul.b{padding-left:18px;margin:6px 0}ul.b li{margin:0 0 6px}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px 14px}.grid4 h4{margin:6px 0 0;font-size:12.5px}
@@ -338,7 +341,9 @@ svg .grid{stroke:#e6e9ef}svg .ax{font-size:8.5px;fill:#8a93a3}svg .vl{font-size:
 .foot{font-size:11px;color:var(--muted);font-style:italic;margin-top:18px;border-top:1px solid var(--rule);padding-top:8px}
 .tw{overflow-x:auto}
 @media (max-width:700px){.page{padding:16px;margin:0}.grid4{grid-template-columns:repeat(2,1fr)}.rbs{grid-template-columns:1fr}table{font-size:11px}}
-@media print{body{background:#fff}.page{box-shadow:none;margin:0;max-width:none;padding:0}h2{break-after:avoid}tr,.grid4,.rbs,svg{break-inside:avoid}}
+@page{size:A4;margin:12mm 11mm}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+@media print{body{background:#fff}.page{box-shadow:none;margin:0;max-width:none;padding:0}h2,h3,.statline{break-after:avoid}tr,.grid4,.rbs,svg,.fig,ul.b li,table:not(.tall){break-inside:avoid}.cap{break-before:avoid}.tw{overflow:visible}}
 </style></head><body><div class="page">
 ${banner}
 <header><h1>AMC Update: ${A.map((a) => escapeHtml(a.short === "Motilal" ? "Motilal Oswal" : a.short)).join(" · ")}</h1>
@@ -348,65 +353,65 @@ ${banner}
 <div class="kt"><h2>Key takeaways</h2>${takeaways}</div>
 
 <h2>1. Equity AUM run-rate</h2>
-<div class="tw"><table><tr><th>₹ Cr, average daily AUM</th><th class="num">${qPrev}</th><th class="num">${qCur} QTD</th><th class="num">QoQ</th><th class="num">YoY</th><th class="num">${mLabel(data.month.prevLabel)}</th><th class="num">${mLabel(data.month.label)}</th><th class="num">MoM</th><th class="num">${mLabel(data.month.label)} YoY</th><th class="num">${qCur} if ${mLabel(data.month.label)} holds</th></tr>${t1}</table></div>
+<div class="tw"><table><thead><tr><th>₹ Cr, average daily AUM</th><th class="num">${qPrev}</th><th class="num">${qCur} QTD</th><th class="num">QoQ</th><th class="num">YoY</th><th class="num">${mLabel(data.month.prevLabel)}</th><th class="num">${mLabel(data.month.label)}</th><th class="num">MoM</th><th class="num">${mLabel(data.month.label)} YoY</th><th class="num">${qCur} if ${mLabel(data.month.label)} holds</th></tr></thead><tbody>${t1}</tbody></table></div>
 <div class="cap">Every figure is an average of daily AUM (the AUM Summary ledger's method), not an exit figure. QoQ = ${qCur} average so far (${days} sessions) ÷ ${qPrev} average − 1. YoY = ${qCur} average so far ÷ the full ${qLabel(data.quarter.yoyLabel)} average (${A[0]?.aum.qYoy.days ?? "–"} sessions; modelled AUM before 2026) − 1. ${mLabel(data.month.label)} YoY = ${mLabel(data.month.label)} average so far ÷ the ${mLabel(data.month.label)} ${Number(data.asOf.slice(0, 4)) - 1} average − 1. Last column: QoQ if the ${mLabel(data.month.label)} average holds for the ${data.quarter.sessionsLeft} sessions left in the quarter. * Nippon is equity + gold/silver ETF AUM, as the AMC Analytics tab shows it by default. Rows sorted by QoQ, highest first.</div>
-<div class="grid4">${byQoq.map((a) => `<div><h4 style="color:${COLOR[a.short]}">${escapeHtml(a.short)}</h4>${quarterBars(a)}</div>`).join("")}</div>
-<div class="cap">Average daily equity AUM by quarter, ₹ '000 Cr. Current quarter (${qCur}, ${days} sessions to ${dd(data.asOf)}) in full colour.</div>
+<div class="fig"><div class="grid4">${byQoq.map((a) => `<div><h4 style="color:${COLOR[a.short]}">${escapeHtml(a.short)}</h4>${quarterBars(a)}</div>`).join("")}</div>
+<div class="cap">Average daily equity AUM by quarter, ₹ '000 Cr. Current quarter (${qCur}, ${days} sessions to ${dd(data.asOf)}) in full colour.</div></div>
 ${section(commentary, "aum")}
 
 <h2>2. AUM vs share price this quarter</h2>
-<h3>Exit equity AUM this quarter (daily)</h3>
+<div class="fig"><h3>Exit equity AUM this quarter (daily)</h3>
 ${aumIdx}
-<div class="cap">Each day's exit equity AUM (that day's AUM, not an average) indexed to ${qsDate ? ddy(qsDate) : "the previous quarter's last session"} = 100, the previous quarter's last session; dashed grey = industry equity. Nippon includes its gold/silver ETFs.</div>
+<div class="cap">Each day's exit equity AUM (that day's AUM, not an average) indexed to ${qsDate ? ddy(qsDate) : "the previous quarter's last session"} = 100, the previous quarter's last session; dashed grey = industry equity. Nippon includes its gold/silver ETFs.</div></div>
 ${section(commentary, "aumPath")}
-<h3>Share prices this quarter</h3>
+<div class="fig"><h3>Share prices this quarter</h3>
 ${pxIdx}
-<div class="cap">Closing share prices indexed to ${qsDate ? ddy(qsDate) : "the previous quarter's last close"} = 100.</div>
-<div class="tw"><table><tr><th>${qsDate ? dd(qsDate) : "Quarter start"} → ${dd(data.asOf)}</th><th class="num">Exit AUM</th><th class="num">Share price</th><th class="num">Price vs exit AUM</th><th class="num">Price high (index)</th><th class="num">Price low (index)</th></tr>${tGap}</table></div>
+<div class="cap">Closing share prices indexed to ${qsDate ? ddy(qsDate) : "the previous quarter's last close"} = 100.</div></div>
+<div class="tw"><table><thead><tr><th>${qsDate ? dd(qsDate) : "Quarter start"} → ${dd(data.asOf)}</th><th class="num">Exit AUM</th><th class="num">Share price</th><th class="num">Price vs exit AUM</th><th class="num">Price high (index)</th><th class="num">Price low (index)</th></tr></thead><tbody>${tGap}</tbody></table></div>
 <div class="cap">Point to point, ${qsDate ? dd(qsDate) : "quarter start"} → ${dd(data.asOf)}: Exit AUM = AUM on ${dd(data.asOf)} ÷ AUM on ${qsDate ? dd(qsDate) : "the quarter start"} − 1 (single days, not averages, to match the share price's closes). Price vs exit AUM = (1 + price change) ÷ (1 + exit AUM change) − 1: positive means the share price has run ahead of the AMC's AUM (the market pays more per rupee of AUM), negative means it has lagged. Rows sorted by Price vs exit AUM. Section 1's QoQ uses average daily AUM instead, so the two differ.</div>
 ${section(commentary, "pricePath")}
 
 <h2>3. Market share of industry equity AUM</h2>
-<div class="tw"><table><tr><th>Share of industry, average AUM</th>${shareLabels.map((l, i) => `<th class="num">${qLabel(l)}${i === shareLabels.length - 1 ? " QTD" : ""}</th>`).join("")}<th class="num">QoQ</th><th class="num">Last 5 d</th><th class="num">Growth vs industry</th></tr>${t2}</table></div>
+<div class="tw"><table><thead><tr><th>Share of industry, average AUM</th>${shareLabels.map((l, i) => `<th class="num">${qLabel(l)}${i === shareLabels.length - 1 ? " QTD" : ""}</th>`).join("")}<th class="num">QoQ</th><th class="num">Last 5 d</th><th class="num">Growth vs industry</th></tr></thead><tbody>${t2}</tbody></table></div>
 <div class="cap">Each AMC's equity AUM (equity only, Nippon too) ÷ the dashboard's industry equity total, as quarterly averages. Growth vs industry = AMC QoQ − industry QoQ. Rows sorted by the QoQ change in share.</div>
 ${section(commentary, "share")}
 
 <h2>4. Flows, SIP and AMC Score</h2>
-<div class="tw"><table><tr><th>Industry, ₹ Cr (AMFI)</th>${fHead}</tr>${t3a}</table></div>
+<div class="tw"><table><thead><tr><th>Industry, ₹ Cr (AMFI)</th>${fHead}</tr></thead><tbody>${t3a}</tbody></table></div>
 ${
   I.sipYoy && I.sipYoy.mean != null
-    ? `<p class="statline"><b>Industry SIP contributions, YoY %</b> · Mean YoY ${(I.sipYoy.mean * 100).toFixed(1)}% · Current ${I.sipYoy.current == null ? "–" : `${(I.sipYoy.current * 100).toFixed(1)}%`} (${I.sipYoy.currentMonth ? monYy(`${I.sipYoy.currentMonth}-01`) : "–"}) · Z-score <span class="${tone(I.sipYoy.z == null ? null : -I.sipYoy.z)}">${I.sipYoy.z == null ? "–" : `${I.sipYoy.z >= 0 ? "+" : "−"}${Math.abs(I.sipYoy.z).toFixed(2)}σ`}</span> · ${I.sipYoy.months} months</p>${sipYoyChart(I.sipYoy)}<div class="cap">AMFI monthly SIP contributions against the same month a year earlier, over the last ${I.sipYoy.months} months, with the mean and ±1 / ±2 SD (population): the AMC Analytics Industry SIP graph's ${Math.round(I.sipYoy.months / 12)}Y view in YoY % mode.</div>`
+    ? `<div class="fig"><p class="statline"><b>Industry SIP contributions, YoY %</b> · Mean YoY ${(I.sipYoy.mean * 100).toFixed(1)}% · Current ${I.sipYoy.current == null ? "–" : `${(I.sipYoy.current * 100).toFixed(1)}%`} (${I.sipYoy.currentMonth ? monYy(`${I.sipYoy.currentMonth}-01`) : "–"}) · Z-score <span class="${tone(I.sipYoy.z == null ? null : -I.sipYoy.z)}">${I.sipYoy.z == null ? "–" : `${I.sipYoy.z >= 0 ? "+" : "−"}${Math.abs(I.sipYoy.z).toFixed(2)}σ`}</span> · ${I.sipYoy.months} months</p>${sipYoyChart(I.sipYoy)}<div class="cap">AMFI monthly SIP contributions against the same month a year earlier, over the last ${I.sipYoy.months} months, with the mean and ±1 / ±2 SD (population): the AMC Analytics Industry SIP graph's ${Math.round(I.sipYoy.months / 12)}Y view in YoY % mode.</div></div>`
     : ""
 }
-<div class="tw"><table><tr><th>AMC SIP book, ₹ Cr / month</th>${sipLabels.map((l) => `<th class="num">${l}</th>`).join("")}<th class="num">QoQ</th><th class="num">YoY</th><th class="num">SIP / Eq AUM</th><th class="num">AMC Score</th><th class="num">vs 1Y ago</th></tr>${t3b}</table></div>
+<div class="tw"><table><thead><tr><th>AMC SIP book, ₹ Cr / month</th>${sipLabels.map((l) => `<th class="num">${l}</th>`).join("")}<th class="num">QoQ</th><th class="num">YoY</th><th class="num">SIP / Eq AUM</th><th class="num">AMC Score</th><th class="num">vs 1Y ago</th></tr></thead><tbody>${t3b}</tbody></table></div>
 <div class="cap">AMC SIP and AMC Score from the AMC Analytics tab's SIP &amp; Score section; the score is its 6-month average. Rows sorted by SIP YoY; AMCs without SIP data last.</div>
 ${section(commentary, "flows")}
 
 <h2>5. This week</h2>
-<div class="tw"><table><tr><th>₹ Cr, average daily AUM</th><th class="num">Last 5</th><th class="num">Prev 5</th><th class="num">Change</th><th class="num">Last 20</th><th class="num">Last 45</th><th class="num">Last 5 vs 45</th><th class="num">Share, last 5</th></tr>${t4}</table></div>
+<div class="tw"><table><thead><tr><th>₹ Cr, average daily AUM</th><th class="num">Last 5</th><th class="num">Prev 5</th><th class="num">Change</th><th class="num">Last 20</th><th class="num">Last 45</th><th class="num">Last 5 vs 45</th><th class="num">Share, last 5</th></tr></thead><tbody>${t4}</tbody></table></div>
 <div class="cap">Last 5 vs previous 5 trading sessions, as in the AUM Summary ledger (Muhurat and DR-test sessions excluded). Rows sorted by the week's change.</div>
 ${section(commentary, "week")}
 
 <h2>6. Ratio ladder</h2>
-<div class="tw"><table><tr><th>Price at ratio level</th><th class="num">Price</th><th class="num">−2 SD</th><th class="num">−1 SD</th><th class="num">Mean</th><th class="num">+1 SD</th><th class="num">+2 SD</th><th class="num">Mean vs price</th><th class="num">Now</th><th class="num">Corr</th><th class="num">R²</th></tr>${t5}</table></div>
+<div class="tw"><table><thead><tr><th>Price at ratio level</th><th class="num">Price</th><th class="num">−2 SD</th><th class="num">−1 SD</th><th class="num">Mean</th><th class="num">+1 SD</th><th class="num">+2 SD</th><th class="num">Mean vs price</th><th class="num">Now</th><th class="num">Corr</th><th class="num">R²</th></tr></thead><tbody>${t5}</tbody></table></div>
 <div class="cap">The Ratio section's saved view: ${escapeHtml(fv.range.toUpperCase())} · moving avg ${fv.maDays}D${fv.aumOnlyAveraging ? " (AUM only)" : ""} · ${fv.levelsCorrelation ? "levels" : "daily % change"} correlation. Price = (mean ratio ± k·SD) × today's AUM; Mean vs price = mean-ratio price ÷ close − 1 (sorted on it).</div>
 ${section(commentary, "ratio")}
 
 <h2>7. Regression</h2>
-<div class="tw"><table><tr><th>₹ per share</th><th class="num">Price</th><th class="num">Regression</th><th class="num">vs price</th><th class="num">Corr</th><th class="num">R²</th></tr>${t6}</table></div>
+<div class="tw"><table><thead><tr><th>₹ per share</th><th class="num">Price</th><th class="num">Regression</th><th class="num">vs price</th><th class="num">Corr</th><th class="num">R²</th></tr></thead><tbody>${t6}</tbody></table></div>
 <div class="cap">The Regression section's saved view (${escapeHtml(fv.range.toUpperCase())} · moving avg ${fv.maDays}D · ${fv.levelsCorrelation ? "price on the AUM level" : "daily % change model"}), sorted by vs price.</div>
 ${section(commentary, "regression")}
 
 <h2>8. Earnings and PE</h2>
-<div class="tw"><table><tr><th>PAT, ₹ Cr</th>${patYears.map((y) => `<th class="num">${fyName(y)}</th>`).join("")}${patYears.slice(1).map((y) => `<th class="num">${fyName(y).slice(0, 4)} g</th>`).join("")}<th class="num">${fy} EPS</th><th class="num">PE now</th><th class="num">${escapeHtml(data.peRange.toUpperCase())} mean</th><th class="num">vs mean</th></tr>${t7}</table></div>
+<div class="tw"><table><thead><tr><th>PAT, ₹ Cr</th>${patYears.map((y) => `<th class="num">${fyName(y)}</th>`).join("")}${patYears.slice(1).map((y) => `<th class="num">${fyName(y).slice(0, 4)} g</th>`).join("")}<th class="num">${fy} EPS</th><th class="num">PE now</th><th class="num">${escapeHtml(data.peRange.toUpperCase())} mean</th><th class="num">vs mean</th></tr></thead><tbody>${t7}</tbody></table></div>
 <div class="cap">All from the AMC Analytics Valuation Model: PAT estimates and shares from its inputs, the ${fy} target year from its year switch, trailing PE from its PE series (Ace Equity uploads; provisional days after the last upload), with its mean and SD over the PE band chart's default ${escapeHtml(data.peRange.toUpperCase())} window. Rows sorted by ${fy.slice(0, 4)} PAT growth; AMCs without it last.</div>
 ${section(commentary, "earnings")}
 
 <h2>9. Share prices vs targets</h2>
-<div class="tw"><table><tr><th>AMC</th><th class="num">Price ${dd(data.asOf)}</th><th class="num">Week</th><th class="num">Since ${qsDate ? dd(qsDate) : "quarter start"}</th><th>Method (weight)</th><th class="num">Bear</th><th class="num">Base</th><th class="num">Bull</th><th class="num">Base vs price</th></tr>${t8}</table></div>
+<div class="tw"><table class="tall"><thead><tr><th>AMC</th><th class="num">Price ${dd(data.asOf)}</th><th class="num">Week</th><th class="num">Since ${qsDate ? dd(qsDate) : "quarter start"}</th><th>Method (weight)</th><th class="num">Bear</th><th class="num">Base</th><th class="num">Bull</th><th class="num">Base vs price</th></tr></thead><tbody>${t8}</tbody></table></div>
 <div class="cap">The Valuation Model's Target Price table on ${fy}: saved weights (Ratio ${data.weights.ratio} / Best fit ${data.weights.bestFit} / PE ${data.weights.pe} / Mcap-Sales ${data.weights.mcapSales}) rescaled over the methods with a price, shown in brackets. AMCs sorted by Base vs price; those without a ${fy} PAT estimate last.${noPat.length ? ` ${escapeHtml(noPat.join(", "))}: no ${fy} PAT estimate saved, so PE and Mcap/Sales drop out.` : ""}</div>
-<div class="rbs">${byUpside.map(rangeBar).join("")}</div>
-<div class="cap">Bear–Bull range of the weighted target, Base marked; dashed line = latest close.</div>
+<div class="fig"><div class="rbs">${byUpside.map(rangeBar).join("")}</div>
+<div class="cap">Bear–Bull range of the weighted target, Base marked; dashed line = latest close.</div></div>
 ${section(commentary, "targets")}
 
 <h2>10. Next week (${shortDate(data.nextWeek.from)} – ${shortDate(data.nextWeek.to)})</h2>

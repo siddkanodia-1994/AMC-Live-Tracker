@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { withAdminAuth } from "@/lib/api/with-admin-auth";
 import { db } from "@/lib/db/client";
 import { weeklyReport } from "@/lib/db/schema";
+import { weeklyReportFileBase } from "@/lib/reports/weekly/file-name";
 
 // One weekly report's HTML or PDF (?format=pdf), admin only. Reads just the
 // one column asked for.
@@ -18,7 +19,7 @@ export const GET = withAdminAuth(async (request: Request, ctx: { params: Promise
     return new Response(new Uint8Array(Buffer.from(row.pdf, "base64")), {
       headers: {
         "content-type": "application/pdf",
-        "content-disposition": `attachment; filename="AMC Weekly Update ${row.weekEnding}.pdf"`,
+        "content-disposition": `attachment; filename="${weeklyReportFileBase(row.weekEnding)}.pdf"`,
         "cache-control": "no-store",
       },
     });

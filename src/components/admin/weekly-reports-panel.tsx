@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { adminFetch } from "@/lib/admin-client";
+import { weeklyReportFileBase } from "@/lib/reports/weekly/file-name";
 
 interface WeeklyReportRow {
   id: number;
@@ -24,6 +25,18 @@ function kb(bytes: number | null): string {
 
 function weekLabel(date: string): string {
   return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+// Time limits, so a stalled connection can't leave a button on "Downloading…"
+// for good. The server sends a report file in about a second; the live route
+// may take up to its 60 s maxDuration. The signal also covers reading the body.
+const FILE_TIMEOUT_MS = 30_000;
+const GENERATE_TIMEOUT_MS = 70_000;
+
+function errorMessage(err: unknown, what: string, ms: number, fallback: string): string {
+  const name = (err as { name?: unknown } | null)?.name;
+  if (name === "TimeoutError" || name === "AbortError") return `${what} didn't arrive within ${ms / 1000} s (the connection stalled). Try again.`;
+  return err instanceof Error ? err.message : fallback;
 }
 
 /**
@@ -47,12 +60,12 @@ export function WeeklyReportsPanel({ secret }: { secret: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await adminFetch("/api/admin/weekly-reports", secret);
+      const res = await adminFetch("/api/admin/weekly-reports", secret, { signal: AbortSignal.timeout(FILE_TIMEOUT_MS) });
       if (!res.ok) throw new Error("Failed to load the weekly reports");
       const data: { reports: WeeklyReportRow[] } = await res.json();
       setRows(data.reports);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load the weekly reports");
+      setError(errorMessage(err, "The list", FILE_TIMEOUT_MS, "Failed to load the weekly reports"));
     } finally {
       setLoading(false);
     }
@@ -66,12 +79,13 @@ export function WeeklyReportsPanel({ secret }: { secret: string }) {
 
   async function open(row: WeeklyReportRow) {
     setBusy(`html-${row.id}`);
+    setError(null);
     try {
-      const res = await adminFetch(`/api/admin/weekly-reports/${row.id}`, secret);
+      const res = await adminFetch(`/api/admin/weekly-reports/${row.id}`, secret, { signal: AbortSignal.timeout(FILE_TIMEOUT_MS) });
       if (!res.ok) throw new Error("Failed to open the report");
       setViewing({ id: row.id, label: `AMC Update, data to ${weekLabel(row.asOfDate)}`, html: await res.text() });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to open the report");
+      setError(errorMessage(err, "The report", FILE_TIMEOUT_MS, "Failed to open the report"));
     } finally {
       setBusy(null);
     }
@@ -81,11 +95,11 @@ export function WeeklyReportsPanel({ secret }: { secret: string }) {
     setBusy("live");
     setError(null);
     try {
-      const res = await adminFetch(`/api/admin/weekly-reports/live${asOf ? `?asOf=${asOf}` : ""}`, secret);
+      const res = await adminFetch(`/api/admin/weekly-reports/live${asOf ? `?asOf=${asOf}` : ""}`, secret, { signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS) });
       if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? "Failed to generate the report");
       setViewing({ id: -1, label: `Live figures${asOf ? ` to ${weekLabel(asOf)}` : ", latest trading day"} (no commentary)`, html: await res.text() });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate the report");
+      setError(errorMessage(err, "The live report", GENERATE_TIMEOUT_MS, "Failed to generate the report"));
     } finally {
       setBusy(null);
     }
@@ -93,17 +107,18 @@ export function WeeklyReportsPanel({ secret }: { secret: string }) {
 
   async function download(row: WeeklyReportRow) {
     setBusy(`pdf-${row.id}`);
+    setError(null);
     try {
-      const res = await adminFetch(`/api/admin/weekly-reports/${row.id}?format=pdf`, secret);
+      const res = await adminFetch(`/api/admin/weekly-reports/${row.id}?format=pdf`, secret, { signal: AbortSignal.timeout(FILE_TIMEOUT_MS) });
       if (!res.ok) throw new Error("Failed to download the PDF");
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement("a");
       a.href = url;
-      a.download = `AMC Weekly Update ${row.weekEnding}.pdf`;
+      a.download = `${weeklyReportFileBase(row.weekEnding)}.pdf`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to download the PDF");
+      setError(errorMessage(err, "The PDF", FILE_TIMEOUT_MS, "Failed to download the PDF"));
     } finally {
       setBusy(null);
     }

@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { getFiscalQuarterBounds } from "../../src/lib/aum/report-period";
 import { addDaysToDateString, getIstDateString } from "../../src/lib/utils/date";
 import { buildWeeklyReportData, figureProblems } from "../../src/lib/reports/weekly/compute";
+import { weeklyReportFileBase } from "../../src/lib/reports/weekly/file-name";
 import { renderWeeklyReportHtml } from "../../src/lib/reports/weekly/render";
 import type { RawReportInputs, WeeklyCommentary, WeeklyReportData } from "../../src/lib/reports/weekly/types";
 import { verifyCommentary } from "../../src/lib/reports/weekly/verify";
@@ -141,7 +142,7 @@ function findChrome(): string {
 
 /** Writes the HTML and prints it to PDF in `dir`; returns both paths. */
 function renderFiles(dir: string, asOf: string, data: WeeklyReportData, commentary: WeeklyCommentary | null): { html: string; pdf: string } {
-  const base = `AMC Weekly Update ${asOf}`;
+  const base = weeklyReportFileBase(asOf);
   const html = join(dir, `${base}.html`);
   const pdf = join(dir, `${base}.pdf`);
   writeFileSync(html, renderWeeklyReportHtml(data, commentary));
