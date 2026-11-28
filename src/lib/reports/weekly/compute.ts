@@ -127,6 +127,20 @@ export function industrySipYoy(flows: RawReportInputs["flows"], asOf: string, mo
   };
 }
 
+/** What stops a report being trusted: missing AMCs, a lagging AUM day, no price or no Base target. */
+export function figureProblems(data: WeeklyReportData): string[] {
+  const problems: string[] = [];
+  if (data.amcs.length !== 8) problems.push(`${data.amcs.length} of 8 AMCs computed`);
+  for (const a of data.amcs) {
+    // A lagging AUM day would mix quarters (projection, daily chart): stop rather than mislead.
+    if (a.aum.daily.at(-1)?.date !== data.asOf) problems.push(`${a.short}: AUM not stored for ${data.asOf} yet`);
+    if (a.aum.qCur.value == null) problems.push(`${a.short}: no quarter-to-date AUM`);
+    if (a.price.close == null) problems.push(`${a.short}: no share price`);
+    if (a.targets.average.base == null) problems.push(`${a.short}: no Base target`);
+  }
+  return problems;
+}
+
 export const ALERT_Z = 2;
 export const ALERT_SHARE_BPS = 10;
 

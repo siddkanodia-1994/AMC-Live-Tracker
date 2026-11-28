@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getFiscalQuarterBounds } from "../../src/lib/aum/report-period";
 import { addDaysToDateString, getIstDateString } from "../../src/lib/utils/date";
-import { buildWeeklyReportData } from "../../src/lib/reports/weekly/compute";
+import { buildWeeklyReportData, figureProblems } from "../../src/lib/reports/weekly/compute";
 import { renderWeeklyReportHtml } from "../../src/lib/reports/weekly/render";
 import type { RawReportInputs, WeeklyCommentary, WeeklyReportData } from "../../src/lib/reports/weekly/types";
 import { verifyCommentary } from "../../src/lib/reports/weekly/verify";
@@ -82,16 +82,7 @@ async function computeFigures(requested: string): Promise<{ data: WeeklyReportDa
     requested,
     new Date().toISOString()
   );
-  const problems: string[] = [];
-  if (data.amcs.length !== 8) problems.push(`${data.amcs.length} of 8 AMCs computed`);
-  for (const a of data.amcs) {
-    // A lagging AUM day would mix quarters (projection, daily chart): stop rather than mislead.
-    if (a.aum.daily.at(-1)?.date !== data.asOf) problems.push(`${a.short}: AUM not stored for ${data.asOf} yet`);
-    if (a.aum.qCur.value == null) problems.push(`${a.short}: no quarter-to-date AUM`);
-    if (a.price.close == null) problems.push(`${a.short}: no share price`);
-    if (a.targets.average.base == null) problems.push(`${a.short}: no Base target`);
-  }
-  return { data, problems };
+  return { data, problems: figureProblems(data) };
 }
 
 /** The figures without their run timestamps, for comparing two runs. */

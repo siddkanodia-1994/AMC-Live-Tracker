@@ -189,7 +189,12 @@ export function targetYearGrowth(a: AmcWeekly, targetFy: number): number | null 
 }
 
 // ---------- page ----------
-export function renderWeeklyReportHtml(data: WeeklyReportData, commentary: WeeklyCommentary | null): string {
+export interface RenderOptions {
+  /** Built from /admin's "Generate report now": live figures, no commentary, with any blocking problems listed. */
+  onDemand?: { problems: string[] };
+}
+
+export function renderWeeklyReportHtml(data: WeeklyReportData, commentary: WeeklyCommentary | null, opts: RenderOptions = {}): string {
   const A = data.amcs;
   const I = data.industry;
   const fy = `FY${String(data.targetFy).slice(2)}E`;
@@ -199,7 +204,9 @@ export function renderWeeklyReportHtml(data: WeeklyReportData, commentary: Weekl
   const asOfText = ddy(data.asOf);
   const qsDate = A.find((a) => a.price.quarterStartDate)?.price.quarterStartDate ?? null;
   const checked = commentary?.check?.verdict === "pass";
-  const banner = !commentary
+  const banner = opts.onDemand
+    ? `<div class="draft"><b>Generated on demand</b> from the dashboard's live data to ${ddy(data.asOf)}: figures, tables and charts only. The written commentary and its number check are added by the Saturday run.${opts.onDemand.problems.length ? `<br><b>Check before relying on it:</b> ${escapeHtml(opts.onDemand.problems.join("; "))}.` : ""}</div>`
+    : !commentary
     ? `<div class="draft">Figures only: the commentary has not been written yet.</div>`
     : !checked
       ? `<div class="draft"><b>DRAFT.</b> The commentary has not passed the number check; treat its figures with care.</div>`
@@ -306,7 +313,7 @@ export function renderWeeklyReportHtml(data: WeeklyReportData, commentary: Weekl
   const nextWeek = commentary?.nextWeek?.length ? commentary.nextWeek : nextWeekItems;
   const takeaways = commentary?.takeaways?.length
     ? bullets(commentary.takeaways)
-    : `<p class="d">Commentary pending: the tables below are complete.</p>`;
+    : `<p class="d">${opts.onDemand ? "Written by the Saturday run; this on-demand version has the figures only." : "Commentary pending: the tables below are complete."}</p>`;
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

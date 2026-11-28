@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { adminFetch } from "@/lib/admin-client";
 
 interface WeeklyReportRow {
@@ -28,9 +29,10 @@ function weekLabel(date: string): string {
 /**
  * The Saturday AMC Weekly Update, one row per week. The files are behind
  * the admin secret, so they're fetched with it (a plain link can't send the
- * header). The HTML is shown in a fully sandboxed iframe -- no scripts, no
- * same-origin access -- so nothing in a stored report can read this page's
- * admin secret.
+ * header). The HTML is shown in a sandboxed iframe that may not run any
+ * script (no allow-scripts), so nothing in a report can read this page's
+ * admin secret; same-origin is allowed only so this page can print it.
+ * "Generate report now" builds the figures-only report from live data.
  */
 export function WeeklyReportsPanel({ secret }: { secret: string }) {
   const [rows, setRows] = useState<WeeklyReportRow[]>([]);
@@ -38,6 +40,8 @@ export function WeeklyReportsPanel({ secret }: { secret: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [viewing, setViewing] = useState<{ id: number; label: string; html: string } | null>(null);
+  const [asOf, setAsOf] = useState("");
+  const frameRef = useRef<HTMLIFrameElement>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -73,6 +77,20 @@ export function WeeklyReportsPanel({ secret }: { secret: string }) {
     }
   }
 
+  async function generate() {
+    setBusy("live");
+    setError(null);
+    try {
+      const res = await adminFetch(`/api/admin/weekly-reports/live${asOf ? `?asOf=${asOf}` : ""}`, secret);
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? "Failed to generate the report");
+      setViewing({ id: -1, label: `Live figures${asOf ? ` to ${weekLabel(asOf)}` : ", latest trading day"} (no commentary)`, html: await res.text() });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate the report");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function download(row: WeeklyReportRow) {
     setBusy(`pdf-${row.id}`);
     try {
@@ -100,6 +118,14 @@ export function WeeklyReportsPanel({ secret }: { secret: string }) {
         </Button>
       </CardHeader>
       <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed p-2">
+          <span className="text-sm font-medium">Generate report now</span>
+          <Input type="date" value={asOf} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setAsOf(e.target.value)} className="h-8 w-40" aria-label="Report date (blank = latest)" />
+          <Button size="sm" disabled={busy !== null} onClick={generate}>
+            {busy === "live" ? "Generating…" : "Generate"}
+          </Button>
+          <span className="text-xs text-muted-foreground">Live figures, tables and charts (blank date = latest); the commentary comes with the Saturday run.</span>
+        </div>
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         {!loading && rows.length === 0 && !error && <p className="text-sm text-muted-foreground">No weekly report yet (runs Saturdays 09:00 IST).</p>}
         {rows.length > 0 && (
@@ -141,11 +167,16 @@ export function WeeklyReportsPanel({ secret }: { secret: string }) {
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-medium">{viewing.label}</p>
-              <Button variant="ghost" size="sm" onClick={() => setViewing(null)}>
-                Close
-              </Button>
+              <div className="flex gap-1">
+                <Button variant="outline" size="sm" onClick={() => frameRef.current?.contentWindow?.print()}>
+                  Print / Save as PDF
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setViewing(null)}>
+                  Close
+                </Button>
+              </div>
             </div>
-            <iframe title={viewing.label} sandbox="" srcDoc={viewing.html} className="h-[80vh] w-full rounded-md border bg-white" />
+            <iframe ref={frameRef} title={viewing.label} sandbox="allow-same-origin allow-modals" srcDoc={viewing.html} className="h-[80vh] w-full rounded-md border bg-white" />
           </div>
         )}
       </CardContent>
